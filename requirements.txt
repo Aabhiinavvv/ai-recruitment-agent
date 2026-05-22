@@ -1,0 +1,9 @@
+streamlit
+python-dotenv
+langchain==0.1.14
+langchain-core
+langchain-community
+langchain-google-genai
+langchain-text-splitters
+pypdf
+faiss-cpu
