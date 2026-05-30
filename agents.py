@@ -30,6 +30,7 @@ class RecruitmentAgent:
         self.jd_text = ""
         self.resume_file_path = None
         self.improved_resume_path = None
+        self.vectorstore = None
 
     # ---------------- SAFE LLM ----------------
     def _get_llm(self):
@@ -41,6 +42,19 @@ class RecruitmentAgent:
             google_api_key=api_key,
             temperature=0.2,
         )
+
+    def _parse_json_response(self, response_text, default):
+        try:
+            cleaned = re.sub(r"```(?:json)?|```", "", str(response_text)).strip()
+            return json.loads(cleaned)
+        except Exception:
+            try:
+                match = re.search(r"(\{.*\}|\[.*\])", str(response_text), re.DOTALL)
+                if match:
+                    return json.loads(match.group(0))
+            except Exception:
+                pass
+        return default
 
     # ---------------- FILE EXTRACTION ----------------
     def extract_text_from_pdf(self, file):
@@ -184,6 +198,20 @@ class RecruitmentAgent:
         except Exception:
             return skill, 0
 
+    def _keyword_skill_score(self, text, skill):
+        text_lower = text.lower()
+        words = [w for w in re.split(r"[^a-zA-Z0-9+#.]+", skill.lower()) if len(w) > 1]
+        if not words:
+            return 0
+        matched = sum(1 for word in words if word in text_lower)
+        if skill.lower() in text_lower:
+            return 8
+        if matched == len(words):
+            return 7
+        if matched:
+            return 4
+        return 0
+
     def analyze_skills(self, text, skills):
         if not text or not skills:
             return {
@@ -195,30 +223,34 @@ class RecruitmentAgent:
                 "selected": False,
             }
 
-        vectorstore = self.create_vector_store(text)
-        if not vectorstore:
-            return {
-                "overall_score": 0,
-                "skill_scores": {},
-                "missing_skills": skills,
-                "strengths": [],
-                "improvement_areas": skills,
-                "selected": False,
-            }
-
         scores = {}
-        missing = []
-        total = 0
+        llm = self._get_llm()
 
-        max_workers = int(os.getenv("MAX_SKILL_WORKERS", "2"))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            results = list(executor.map(lambda s: self._score_skill(vectorstore, s), skills))
+        if llm:
+            try:
+                prompt = (
+                    "Score this resume against the required skills. "
+                    "Use evidence from the resume only. "
+                    "Return ONLY valid JSON where each key is exactly one skill name "
+                    "and each value is an integer from 0 to 10.\n\n"
+                    f"Required skills:\n{json.dumps(skills)}\n\n"
+                    f"Resume:\n{text[:12000]}"
+                )
+                parsed = self._parse_json_response(llm.invoke(prompt).content, {})
+                if isinstance(parsed, dict):
+                    for skill in skills:
+                        try:
+                            scores[skill] = max(0, min(10, int(parsed.get(skill, 0))))
+                        except Exception:
+                            scores[skill] = 0
+            except Exception as e:
+                print(f"Batch skill scoring failed: {e}")
 
-        for skill, score in results:
-            scores[skill] = score
-            total += score
-            if score <= 5:
-                missing.append(skill)
+        if not scores:
+            scores = {skill: self._keyword_skill_score(text, skill) for skill in skills}
+
+        missing = [skill for skill, score in scores.items() if score <= 5]
+        total = sum(scores.values())
 
         overall = int((total / (10 * len(skills))) * 100) if skills else 0
         strengths = [s for s, v in scores.items() if v >= 7]
@@ -239,33 +271,46 @@ class RecruitmentAgent:
         if not llm or not self.analysis_results:
             return []
 
+        missing_skills = self.analysis_results.get("missing_skills", [])
+        if not missing_skills:
+            self.resume_weaknesses = []
+            return []
+
         weaknesses = []
+        try:
+            prompt = (
+                "Analyze the resume weaknesses for the missing or weak skills. "
+                "Return ONLY valid JSON as a list. Each item must contain: "
+                'skill, weakness, suggestions, example.\n\n'
+                f"Skills:\n{json.dumps(missing_skills)}\n\n"
+                f"Resume excerpt:\n{self.resume_text[:5000]}"
+            )
+            data = self._parse_json_response(llm.invoke(prompt).content, [])
+            if not isinstance(data, list):
+                data = []
 
-        for skill in self.analysis_results.get("missing_skills", []):
-            try:
-                prompt = (
-                    f"Analyze why this resume is weak in '{skill}'.\n"
-                    f"Resume excerpt:\n{self.resume_text[:2000]}\n\n"
-                    "Return ONLY valid JSON (no markdown, no extra text):\n"
-                    '{"weakness":"...","suggestions":["...","...","..."],"example":"..."}'
-                )
-                response = llm.invoke(prompt).content.strip()
-                response = re.sub(r"```(?:json)?|```", "", response).strip()
-                data = json.loads(response)
+            by_skill = {
+                str(item.get("skill", "")).lower(): item
+                for item in data
+                if isinstance(item, dict)
+            }
 
+            for skill in missing_skills:
+                item = by_skill.get(skill.lower(), {})
                 weaknesses.append({
                     "skill": skill,
                     "score": self.analysis_results.get("skill_scores", {}).get(skill, 0),
-                    "details": data.get("weakness", ""),
-                    "suggestions": data.get("suggestions", []),
-                    "example": data.get("example", ""),
+                    "details": item.get("weakness", "Add clearer resume evidence for this skill."),
+                    "suggestions": item.get("suggestions", []),
+                    "example": item.get("example", ""),
                 })
-            except Exception as e:
-                print(f"Error analyzing weakness for {skill}: {e}")
+        except Exception as e:
+            print(f"Batch weakness analysis failed: {e}")
+            for skill in missing_skills:
                 weaknesses.append({
                     "skill": skill,
                     "score": self.analysis_results.get("skill_scores", {}).get(skill, 0),
-                    "details": "Could not analyze this weakness.",
+                    "details": "Add clearer resume evidence for this skill.",
                     "suggestions": [],
                     "example": "",
                 })
@@ -276,6 +321,7 @@ class RecruitmentAgent:
     # ---------------- MAIN ANALYZE ----------------
     def analyze_resume(self, file, role=None, role_requirements=None, custom_jd=None):
         self.resume_text = self.extract_text(file)
+        self.vectorstore = None
 
         try:
             with tempfile.NamedTemporaryFile(
@@ -307,9 +353,10 @@ class RecruitmentAgent:
             if not self.resume_text:
                 return "Please analyze a resume first."
 
-            vectorstore = self.create_vector_store(self.resume_text)
+            vectorstore = self.vectorstore or self.create_vector_store(self.resume_text)
             if not vectorstore:
                 return "Unable to process resume for Q&A."
+            self.vectorstore = vectorstore
 
             chain = self._build_rag_chain(
                 vectorstore,
@@ -346,7 +393,8 @@ class RecruitmentAgent:
                 "Format each question as a tuple on its own line:\n"
                 '("Question Type", "Full question text")\n'
                 "Return only the tuples, nothing else."
-            )
+                )            
+
             response = llm.invoke(prompt).content
 
             questions = []
