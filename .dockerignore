@@ -1,9 +1,11 @@
-Copy
 .git
 .github
 .gitignore
+.env
 README.md
 *.pyc
 __pycache__/
 .DS_Store
+*.log
+*.zip
 
