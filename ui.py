@@ -62,6 +62,10 @@ def display_analysis_result(result, type="primary"):
         else:
             st.error("❌ Not Selected")
 
+    analysis_note = result.get("analysis_note")
+    if analysis_note:
+        st.caption(analysis_note)
+
     skill_scores = result.get("skill_scores", {})
     if skill_scores:
         st.subheader("Skill Scores")

@@ -148,6 +148,17 @@ def generate_interview_questions(agent, question_types, difficulty, num_question
         return []
 
 
+def generate_detailed_weaknesses(agent):
+    try:
+        with st.spinner("Generating detailed weakness analysis..."):
+            weaknesses = agent.generate_detailed_weaknesses()
+        st.session_state.analysis_result = agent.analysis_results
+        return weaknesses
+    except Exception as e:
+        st.error(f"Error generating detailed weakness analysis: {e}")
+        return []
+
+
 def improve_resume(agent, improvement_areas, target_role):
     try:
         with st.spinner("Generating resume improvement suggestions…"):
@@ -193,12 +204,18 @@ def main():
             if st.button("Analyze Resume", use_container_width=True):
                 if agent and uploaded_resume:
                     result = analyze_resume(agent, uploaded_resume, role, custom_jd)
-                    if result:
-                        ui.display_analysis_result(result, type="primary")
 
         # Persist result across reruns
         if st.session_state.analysis_result:
             ui.display_analysis_result(st.session_state.analysis_result, type="primary")
+            if (
+                agent
+                and st.session_state.analysis_result.get("missing_skills")
+                and not st.session_state.analysis_result.get("detailed_weaknesses")
+            ):
+                if st.button("Generate Detailed Weakness Analysis"):
+                    generate_detailed_weaknesses(agent)
+                    st.rerun()
 
     # ── Tab 1: Q&A ───────────────────────────────────────────────────────────
     with tabs[1]:

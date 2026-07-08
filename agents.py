@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 import ast
-from concurrent.futures import ThreadPoolExecutor
+import hashlib
 
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -16,6 +16,11 @@ import pypdf
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from dotenv import load_dotenv
 load_dotenv()
+
+MAX_SKILLS_FOR_FAST_ANALYSIS = 14
+MAX_RESUME_CHARS_FOR_SCORING = 7000
+MAX_JD_CHARS_FOR_SKILL_EXTRACTION = 5000
+MAX_RESUME_CHARS_FOR_WEAKNESS = 3500
 
 class RecruitmentAgent:
     def __init__(self, api_key=None, cutoff_score=75, model=None):
@@ -31,6 +36,9 @@ class RecruitmentAgent:
         self.resume_file_path = None
         self.improved_resume_path = None
         self.vectorstore = None
+        self._resume_signature = None
+        self._text_cache = {}
+        self._vectorstore_signature = None
 
     # ---------------- SAFE LLM ----------------
     def _get_llm(self):
@@ -57,6 +65,19 @@ class RecruitmentAgent:
         return default
 
     # ---------------- FILE EXTRACTION ----------------
+    def _get_file_signature(self, file):
+        try:
+            name = file.name if hasattr(file, "name") else str(file)
+            if hasattr(file, "getvalue"):
+                content = file.getvalue()
+            else:
+                with open(file, "rb") as f:
+                    content = f.read()
+            digest = hashlib.sha256(content).hexdigest()
+            return f"{name}:{digest}"
+        except Exception:
+            return None
+
     def extract_text_from_pdf(self, file):
         try:
             if hasattr(file, "getvalue"):
@@ -86,13 +107,23 @@ class RecruitmentAgent:
 
     def extract_text(self, file):
         try:
+            signature = self._get_file_signature(file)
+            if signature and signature in self._text_cache:
+                return self._text_cache[signature]
+
             name = file.name if hasattr(file, "name") else str(file)
             ext = name.split(".")[-1].lower()
 
             if ext == "pdf":
-                return self.extract_text_from_pdf(file)
+                text = self.extract_text_from_pdf(file)
             elif ext == "txt":
-                return self.extract_text_from_text(file)
+                text = self.extract_text_from_text(file)
+            else:
+                text = ""
+
+            if signature:
+                self._text_cache[signature] = text
+            return text
         except Exception as e:
             print(f"Error extracting text: {e}")
 
@@ -107,7 +138,7 @@ class RecruitmentAgent:
             prompt = (
                 "Extract the key skills required for the job from the following job description.\n"
                 "Return ONLY a valid Python list of strings, no explanation, no markdown.\n\n"
-                f"Job description:\n{jd_text}"
+                f"Job description:\n{jd_text[:MAX_JD_CHARS_FOR_SKILL_EXTRACTION]}"
             )
             response = llm.invoke(prompt).content
             match = re.search(r"\[.*\]", response, re.DOTALL)
@@ -124,6 +155,10 @@ class RecruitmentAgent:
         try:
             if not text:
                 return None
+            signature = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            if self.vectorstore is not None and self._vectorstore_signature == signature:
+                return self.vectorstore
+
             splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
             chunks = splitter.split_text(text)
             if not chunks:
@@ -136,6 +171,8 @@ class RecruitmentAgent:
                 google_api_key=api_key,
             )
             vectorstore = FAISS.from_texts(chunks, embeddings)
+            self.vectorstore = vectorstore
+            self._vectorstore_signature = signature
             return vectorstore
         except Exception as e:
             print(f"Error creating vector store: {e}")
@@ -225,6 +262,7 @@ class RecruitmentAgent:
 
         scores = {}
         llm = self._get_llm()
+        llm_scored_skills = skills[:MAX_SKILLS_FOR_FAST_ANALYSIS]
 
         if llm:
             try:
@@ -233,12 +271,12 @@ class RecruitmentAgent:
                     "Use evidence from the resume only. "
                     "Return ONLY valid JSON where each key is exactly one skill name "
                     "and each value is an integer from 0 to 10.\n\n"
-                    f"Required skills:\n{json.dumps(skills)}\n\n"
-                    f"Resume:\n{text[:12000]}"
+                    f"Required skills:\n{json.dumps(llm_scored_skills)}\n\n"
+                    f"Resume:\n{text[:MAX_RESUME_CHARS_FOR_SCORING]}"
                 )
                 parsed = self._parse_json_response(llm.invoke(prompt).content, {})
                 if isinstance(parsed, dict):
-                    for skill in skills:
+                    for skill in llm_scored_skills:
                         try:
                             scores[skill] = max(0, min(10, int(parsed.get(skill, 0))))
                         except Exception:
@@ -248,6 +286,10 @@ class RecruitmentAgent:
 
         if not scores:
             scores = {skill: self._keyword_skill_score(text, skill) for skill in skills}
+        else:
+            for skill in skills:
+                if skill not in scores:
+                    scores[skill] = self._keyword_skill_score(text, skill)
 
         missing = [skill for skill, score in scores.items() if score <= 5]
         total = sum(scores.values())
@@ -283,7 +325,7 @@ class RecruitmentAgent:
                 "Return ONLY valid JSON as a list. Each item must contain: "
                 'skill, weakness, suggestions, example.\n\n'
                 f"Skills:\n{json.dumps(missing_skills)}\n\n"
-                f"Resume excerpt:\n{self.resume_text[:5000]}"
+                f"Resume excerpt:\n{self.resume_text[:MAX_RESUME_CHARS_FOR_WEAKNESS]}"
             )
             data = self._parse_json_response(llm.invoke(prompt).content, [])
             if not isinstance(data, list):
@@ -320,8 +362,13 @@ class RecruitmentAgent:
 
     # ---------------- MAIN ANALYZE ----------------
     def analyze_resume(self, file, role=None, role_requirements=None, custom_jd=None):
+        new_signature = self._get_file_signature(file)
         self.resume_text = self.extract_text(file)
-        self.vectorstore = None
+        if new_signature != self._resume_signature:
+            self.vectorstore = None
+            self._vectorstore_signature = None
+        self._resume_signature = new_signature
+        self.resume_weaknesses = []
 
         try:
             with tempfile.NamedTemporaryFile(
@@ -342,10 +389,21 @@ class RecruitmentAgent:
             self.extracted_skills = role_requirements or []
 
         self.analysis_results = self.analyze_skills(self.resume_text, self.extracted_skills)
-        self.analysis_results["weaknesses"] = self.analyze_resume_weaknesses()
-        self.analysis_results["detailed_weaknesses"] = self.analysis_results["weaknesses"]
+        self.analysis_results["weaknesses"] = []
+        self.analysis_results["detailed_weaknesses"] = []
+        self.analysis_results["analysis_note"] = (
+            "Fast analysis uses Gemini for priority skills and local keyword scoring for the rest. "
+            "Generate detailed weakness analysis only when needed."
+        )
 
         return self.analysis_results
+
+    def generate_detailed_weaknesses(self):
+        weaknesses = self.analyze_resume_weaknesses()
+        if self.analysis_results is not None:
+            self.analysis_results["weaknesses"] = weaknesses
+            self.analysis_results["detailed_weaknesses"] = weaknesses
+        return weaknesses
 
     # ---------------- Q&A ----------------
     def ask_question(self, question):
@@ -353,7 +411,7 @@ class RecruitmentAgent:
             if not self.resume_text:
                 return "Please analyze a resume first."
 
-            vectorstore = self.vectorstore or self.create_vector_store(self.resume_text)
+            vectorstore = self.create_vector_store(self.resume_text)
             if not vectorstore:
                 return "Unable to process resume for Q&A."
             self.vectorstore = vectorstore
