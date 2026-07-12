@@ -38,7 +38,7 @@ ROLE_REQUIREMENTS = {
         "CI/CD Pipelines (Jenkins, GitLab CI)", "Monitoring and Logging (Prometheus, ELK Stack)",
         "Scripting Languages (Python, Bash)", "Version Control (Git)", "Security Best Practices",
         "Networking Concepts", "Configuration Management", "Serverless Architecture",
-        "CloudFormation", "Puppet", "Nagios", "Grafana", "Istio", "Service Mesh",
+        "CloudFormation",  "Nagios","Puppet", "Grafana", "Istio", "Service Mesh",
     ],
     "Full Stack Engineer": [
         "Frontend Development (HTML, CSS, JavaScript, React, Vue.js)",
