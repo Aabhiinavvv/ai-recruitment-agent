@@ -269,6 +269,10 @@ def main():
                 "Please upload and analyze a resume first in the 'Resume Analysis' tab."
             )
 
+    # ── Tab 5: AI Interview ─────────────────────────────────────────────────
+    with tabs[5]:
+        ui.ai_interview_section(st.session_state.resume_agent)
+
 
 if __name__ == "__main__":
     main()

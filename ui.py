@@ -1,4 +1,9 @@
+import time
+import cv2
+import numpy as np
 import streamlit as st
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+import av
 
 def display_header():
     st.title("🤖 Recruitment Agent")
@@ -31,7 +36,8 @@ def create_tabs():
         "💬 Q&A",
         "🎯 Interview Questions",
         "✍️ Resume Improvement",
-        "⬆️ Improved Resume"
+        "⬆️ Improved Resume",
+        "🎤 AI Interview"
     ])
 
 def role_selection_section(role_requirements):
@@ -164,3 +170,105 @@ def improved_resume_section(has_resume, get_improved_resume_func):
             st.download_button("⬇️ Download", content, file_name="improved_resume.txt")
         else:
             st.error("Failed to generate improved resume.")
+
+
+class MotionDetector(VideoTransformerBase):
+    def __init__(self):
+        self.prev_frame = None
+        self.last_alert = None
+
+    def transform(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        if self.prev_frame is None:
+            self.prev_frame = gray
+            return frame
+
+        diff = cv2.absdiff(self.prev_frame, gray)
+        motion_score = float(np.mean(diff))
+        self.prev_frame = gray
+        if motion_score > 25 and (self.last_alert is None or (time.time() - self.last_alert) > 5):
+            self.last_alert = time.time()
+            st.session_state["live_motion_alert"] = round(motion_score, 2)
+        return frame
+
+
+def ai_interview_section(agent):
+    st.subheader("🎤 AI Interview Coach")
+    st.caption("The assistant asks a question, scores each answer, and monitors the camera for suspicious movement.")
+
+    if not agent:
+        st.warning("Connect your Gemini API key in the sidebar to enable interview coaching.")
+        return
+
+    role = st.text_input("Interview Role", value="Software Engineer")
+    if "ai_interview_question" not in st.session_state:
+        st.session_state.ai_interview_question = None
+    if "ai_interview_history" not in st.session_state:
+        st.session_state.ai_interview_history = []
+    if "live_motion_alert" not in st.session_state:
+        st.session_state.live_motion_alert = None
+
+    if st.button("Start Interview"):
+        st.session_state.ai_interview_question = agent.generate_interview_question(role)
+        st.session_state.ai_interview_history = []
+        st.session_state.live_motion_alert = None
+
+    if st.session_state.ai_interview_question:
+        st.info(f"Question: {st.session_state.ai_interview_question}")
+
+        answer = st.text_area("Your answer")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Submit Answer") and answer:
+                with st.spinner("Scoring your answer..."):
+                    result = agent.evaluate_interview_answer(st.session_state.ai_interview_question, answer)
+                st.session_state.ai_interview_history.append({
+                    "question": st.session_state.ai_interview_question,
+                    "answer": answer,
+                    "result": result,
+                })
+                st.session_state.ai_interview_question = agent.generate_interview_question(role)
+                st.metric("Score", f"{result['score']}/10")
+                st.success(result["feedback"])
+                if result.get("improvement"):
+                    st.caption(f"Improvement tip: {result['improvement']}")
+
+        with col2:
+            if st.button("Skip Question"):
+                st.session_state.ai_interview_question = agent.generate_interview_question(role)
+
+    if st.session_state.live_motion_alert is not None:
+        st.warning(f"Suspicious movement detected: {st.session_state.live_motion_alert}")
+
+    st.markdown("---")
+    st.subheader("Live camera")
+    webrtc_streamer(
+        key="ai-interview-camera",
+        video_transformer_factory=MotionDetector,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,
+    )
+
+    if st.session_state.ai_interview_history:
+        st.markdown("---")
+        st.subheader("Recent responses")
+        for entry in reversed(st.session_state.ai_interview_history[-5:]):
+            with st.expander(f"Score {entry['result']['score']}/10"):
+                st.markdown(f"**Q:** {entry['question']}")
+                st.markdown(f"**A:** {entry['answer']}")
+                st.markdown(f"**Feedback:** {entry['result']['feedback']}")
+
+    st.markdown("---")
+    st.subheader("Cheating / movement check")
+    st.caption("Upload two frames from the camera to estimate sudden movement and trigger an alert.")
+    before_frame = st.file_uploader("Frame before", type=["png", "jpg", "jpeg"], key="before_frame")
+    after_frame = st.file_uploader("Frame after", type=["png", "jpg", "jpeg"], key="after_frame")
+    if st.button("Check Movement") and before_frame and after_frame:
+        with st.spinner("Inspecting movement..."):
+            detection = agent.flag_suspicious_behavior(before_frame.getvalue(), after_frame.getvalue(), context=role)
+        if detection["suspicious"]:
+            st.warning(f"Suspicious movement detected with score {detection['motion_score']:.2f}.")
+            st.info("An alert has been sent if email/Telegram/WhatsApp webhook settings are configured.")
+        else:
+            st.success(f"Movement score: {detection['motion_score']:.2f}. No suspicious movement detected.")

@@ -7,3 +7,5 @@ langchain-google-genai
 langchain-text-splitters
 pypdf
 faiss-cpu
+streamlit-webrtc
+opencv-python-headless

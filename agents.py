@@ -5,6 +5,11 @@ import os
 import tempfile
 import ast
 import hashlib
+import smtplib
+import urllib.request
+import urllib.parse
+import ssl
+from email.message import EmailMessage
 
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -39,6 +44,15 @@ class RecruitmentAgent:
         self._resume_signature = None
         self._text_cache = {}
         self._vectorstore_signature = None
+        self.alert_email_to = os.getenv("ALERT_EMAIL_TO") or os.getenv("EMAIL_ALERT_TO")
+        self.alert_email_from = os.getenv("ALERT_EMAIL_FROM") or os.getenv("EMAIL_ALERT_FROM")
+        self.alert_smtp_host = os.getenv("ALERT_SMTP_HOST") or os.getenv("EMAIL_SMTP_HOST")
+        self.alert_smtp_port = int(os.getenv("ALERT_SMTP_PORT") or os.getenv("EMAIL_SMTP_PORT") or 587)
+        self.alert_smtp_username = os.getenv("ALERT_SMTP_USERNAME") or os.getenv("EMAIL_SMTP_USERNAME")
+        self.alert_smtp_password = os.getenv("ALERT_SMTP_PASSWORD") or os.getenv("EMAIL_SMTP_PASSWORD")
+        self.alert_telegram_token = os.getenv("ALERT_TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
+        self.alert_telegram_chat = os.getenv("ALERT_TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
+        self.alert_webhook_url = os.getenv("ALERT_WEBHOOK_URL") or os.getenv("WHATSAPP_WEBHOOK_URL")
 
     # ---------------- SAFE LLM ----------------
     def _get_llm(self):
@@ -359,6 +373,161 @@ class RecruitmentAgent:
 
         self.resume_weaknesses = weaknesses
         return weaknesses
+
+    # ---------------- AI INTERVIEW HELPERS ----------------
+    def generate_interview_question(self, role=None):
+        llm = self._get_llm()
+        if llm:
+            try:
+                prompt = (
+                    "Generate one practical interview question for a candidate. "
+                    "Return only the question text."
+                )
+                if role:
+                    prompt += f" The role is {role}."
+                question = str(llm.invoke(prompt).content).strip()
+                if question:
+                    return question
+            except Exception as e:
+                print(f"Interview question generation failed: {e}")
+
+        defaults = [
+            "Tell me about a project where you solved a difficult problem.",
+            "What would you do if a production issue appeared during deployment?",
+            "Describe a time you had to learn a new technology quickly.",
+        ]
+        return defaults[0]
+
+    def evaluate_interview_answer(self, question, answer):
+        llm = self._get_llm()
+        if llm and answer:
+            try:
+                prompt = (
+                    "Evaluate the interview answer strictly and briefly. "
+                    "Return ONLY valid JSON with keys: score, feedback, strengths, improvement. "
+                    f"Question: {question}\nAnswer: {answer}"
+                )
+                parsed = self._parse_json_response(llm.invoke(prompt).content, {})
+                if isinstance(parsed, dict):
+                    score = parsed.get("score", 0)
+                    if isinstance(score, str):
+                        try:
+                            score = int(re.search(r"\d+", score).group())
+                        except Exception:
+                            score = 0
+                    return {
+                        "score": max(0, min(10, int(score))),
+                        "feedback": str(parsed.get("feedback") or "Good effort, please add more specifics."),
+                        "strengths": parsed.get("strengths") or [],
+                        "improvement": parsed.get("improvement") or "Add a concrete example and a measurable outcome.",
+                    }
+            except Exception as e:
+                print(f"Interview answer evaluation failed: {e}")
+
+        text = " ".join(str(answer or "").lower().split())
+        score = 2
+        if len(text) > 20:
+            score += 2
+        if any(word in text for word in ["i", "have", "built", "worked", "developed", "led", "designed", "used"]):
+            score += 2
+        if any(word in text for word in ["team", "project", "customer", "data", "python", "api", "cloud", "deploy", "test"]):
+            score += 2
+        if len(text.split()) > 12:
+            score += 2
+        score = max(0, min(10, score))
+        feedback = "Good attempt. Add a concrete example and explain the impact of your contribution."
+        if score >= 7:
+            feedback = "Strong answer. It is specific and shows relevant experience."
+        elif score <= 3:
+            feedback = "This answer is too brief. Add more detail about your actions and the outcome."
+        return {
+            "score": score,
+            "feedback": feedback,
+            "strengths": ["Relevant experience mentioned"],
+            "improvement": "Include a specific project example, your role, and the measurable result.",
+        }
+
+    def detect_motion(self, frame_before, frame_after):
+        if not frame_before or not frame_after:
+            return 0.0
+        try:
+            from PIL import Image
+            import io
+
+            img1 = Image.open(io.BytesIO(frame_before)).convert("L")
+            img2 = Image.open(io.BytesIO(frame_after)).convert("L")
+            if img1.size != img2.size:
+                return 100.0
+
+            data1 = list(img1.getdata())
+            data2 = list(img2.getdata())
+            diff = sum(abs(a - b) for a, b in zip(data1, data2)) / max(1, len(data1))
+            return round(min(100.0, diff / 2.55), 2)
+        except Exception:
+            hash1 = hashlib.sha256(frame_before).hexdigest()
+            hash2 = hashlib.sha256(frame_after).hexdigest()
+            return 100.0 if hash1 != hash2 else 0.0
+
+    def send_alert(self, reason, details):
+        message = f"AI Interview Alert: {reason}\n\n{details}"
+        results = []
+
+        if self.alert_email_to and self.alert_email_from and self.alert_smtp_host:
+            try:
+                msg = EmailMessage()
+                msg["Subject"] = "AI Interview Alert"
+                msg["From"] = self.alert_email_from
+                msg["To"] = self.alert_email_to
+                msg.set_content(message)
+                context = ssl.create_default_context()
+                with smtplib.SMTP(self.alert_smtp_host, self.alert_smtp_port) as server:
+                    if self.alert_smtp_username and self.alert_smtp_password:
+                        server.starttls(context=context)
+                        server.login(self.alert_smtp_username, self.alert_smtp_password)
+                    server.send_message(msg)
+                results.append("email")
+            except Exception as e:
+                print(f"Email alert failed: {e}")
+
+        if self.alert_telegram_token and self.alert_telegram_chat:
+            try:
+                payload = urllib.parse.urlencode({"chat_id": self.alert_telegram_chat, "text": message})
+                req = urllib.request.Request(
+                    f"https://api.telegram.org/bot{self.alert_telegram_token}/sendMessage",
+                    data=payload.encode("utf-8"),
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    if response.status < 400:
+                        results.append("telegram")
+            except Exception as e:
+                print(f"Telegram alert failed: {e}")
+
+        if self.alert_webhook_url:
+            try:
+                data = json.dumps({"text": message}).encode("utf-8")
+                req = urllib.request.Request(self.alert_webhook_url, data=data, method="POST")
+                req.add_header("Content-Type", "application/json")
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    if response.status < 400:
+                        results.append("webhook")
+            except Exception as e:
+                print(f"Webhook alert failed: {e}")
+
+        return results
+
+    def flag_suspicious_behavior(self, frame_before, frame_after, context=None):
+        motion_score = self.detect_motion(frame_before, frame_after)
+        suspicious = motion_score > 8.0
+        if suspicious:
+            self.send_alert(
+                "Suspicious movement detected",
+                f"The interview camera detected a motion score of {motion_score:.2f}. Context: {context or 'Unknown'}",
+            )
+        return {
+            "suspicious": suspicious,
+            "motion_score": motion_score,
+        }
 
     # ---------------- MAIN ANALYZE ----------------
     def analyze_resume(self, file, role=None, role_requirements=None, custom_jd=None):
