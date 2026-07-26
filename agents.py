@@ -398,6 +398,15 @@ class RecruitmentAgent:
         ]
         return defaults[0]
 
+    def build_interview_snapshot(self, question, answer, result=None, motion_alert=None, voice_answer=None):
+        return {
+            "question": question,
+            "answer": answer,
+            "voice_answer": voice_answer or answer,
+            "result": result or {},
+            "motion_alert": motion_alert,
+        }
+
     def evaluate_interview_answer(self, question, answer):
         llm = self._get_llm()
         if llm and answer:
@@ -515,6 +524,24 @@ class RecruitmentAgent:
                 print(f"Webhook alert failed: {e}")
 
         return results
+
+    def detect_repeated_motion(self, motion_scores, threshold=12.0, repeated_count=2):
+        if not motion_scores:
+            return {
+                "suspicious": False,
+                "motion_score": 0.0,
+                "repeated_spikes": 0,
+            }
+
+        recent_scores = [float(score) for score in motion_scores[-6:]]
+        high_scores = [score for score in recent_scores if score >= threshold]
+        repeated_spikes = len(high_scores)
+        suspicious = repeated_spikes >= repeated_count or max(recent_scores) >= 25.0
+        return {
+            "suspicious": suspicious,
+            "motion_score": round(max(recent_scores), 2),
+            "repeated_spikes": repeated_spikes,
+        }
 
     def flag_suspicious_behavior(self, frame_before, frame_after, context=None):
         motion_score = self.detect_motion(frame_before, frame_after)

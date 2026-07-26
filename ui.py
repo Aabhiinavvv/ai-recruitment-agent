@@ -1,9 +1,15 @@
+import base64
+import json
 import time
+from io import BytesIO
 import cv2
 import numpy as np
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 import av
+import streamlit.components.v1 as components
+
+from agents import RecruitmentAgent
 
 def display_header():
     st.title("🤖 Recruitment Agent")
@@ -176,6 +182,7 @@ class MotionDetector(VideoTransformerBase):
     def __init__(self):
         self.prev_frame = None
         self.last_alert = None
+        self.motion_history = []
 
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
@@ -187,19 +194,98 @@ class MotionDetector(VideoTransformerBase):
         diff = cv2.absdiff(self.prev_frame, gray)
         motion_score = float(np.mean(diff))
         self.prev_frame = gray
-        if motion_score > 25 and (self.last_alert is None or (time.time() - self.last_alert) > 5):
+        self.motion_history.append(motion_score)
+        self.motion_history = self.motion_history[-12:]
+
+        recent_scores = self.motion_history[-6:]
+        repeated_spikes = sum(1 for score in recent_scores if score > 12)
+        suspicious = repeated_spikes >= 2 or max(recent_scores) > 22
+        if suspicious and (self.last_alert is None or (time.time() - self.last_alert) > 5):
             self.last_alert = time.time()
-            st.session_state["live_motion_alert"] = round(motion_score, 2)
+            success, encoded = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if success:
+                st.session_state["camera_alert_frame"] = encoded.tobytes()
+                st.session_state["camera_alert_caption"] = f"Repeated motion: {round(max(recent_scores), 2)}"
+            st.session_state["live_motion_alert"] = round(max(recent_scores), 2)
+            st.session_state["motion_history"] = self.motion_history
         return frame
 
 
+def render_live_camera_component():
+    component_html = """
+    <div style="border:1px solid #d1d5db; border-radius:10px; overflow:hidden; background:#000;">
+      <video id="live-video" autoplay playsinline muted style="width:100%; max-height:320px; display:block; background:#000;"></video>
+      <div id="camera-status" style="padding:8px; color:white; background:#111827; font-size:13px;">Requesting camera access…</div>
+    </div>
+    <script>
+      const video = document.getElementById('live-video');
+      const status = document.getElementById('camera-status');
+      const canvas = document.createElement('canvas');
+      let previous = null;
+      let lastSent = 0;
+
+      async function startCamera() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+          video.srcObject = stream;
+          await video.play();
+          status.textContent = 'Camera live. Monitoring motion...';
+          setInterval(captureFrame, 800);
+        } catch (error) {
+          status.textContent = 'Camera access is blocked or unavailable in this browser.';
+        }
+      }
+
+      function captureFrame() {
+        const width = video.videoWidth || 320;
+        const height = video.videoHeight || 240;
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, width, height);
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+        let diff = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
+          if (previous) {
+            const prevGray = previous[i / 4];
+            diff += Math.abs(gray - prevGray);
+          }
+        }
+        if (previous) {
+          const motionScore = Math.min(100, (diff / (data.length / 4)) * 0.35);
+          const now = Date.now();
+          if (now - lastSent > 700) {
+            lastSent = now;
+            const frame = canvas.toDataURL('image/jpeg', 0.55);
+            const payload = { motionScore: Number(motionScore.toFixed(2)), frame, suspicious: motionScore > 12 };
+            if (window.Streamlit && window.Streamlit.setComponentValue) {
+              window.Streamlit.setComponentValue(payload);
+            }
+          }
+        }
+        previous = Array.from({ length: data.length / 4 }, (_, index) => {
+          const i = index * 4;
+          return (data[i] + data[i + 1] + data[i + 2]) / 3;
+        });
+      }
+
+      startCamera();
+    </script>
+    """
+    payload = components.html(component_html, height=360)
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
 def ai_interview_section(agent):
-    st.subheader("🎤 AI Interview Coach")
-    st.caption("The assistant asks a question, scores each answer, and monitors the camera for suspicious movement.")
+    st.subheader("🎤 Virtual AI Interview Assistant")
+    st.caption("The interview assistant asks questions aloud, keeps the webcam live throughout the session, and flags suspicious movements or cheating attempts.")
 
     if not agent:
-        st.warning("Connect your Gemini API key in the sidebar to enable interview coaching.")
-        return
+        agent = RecruitmentAgent(api_key=None)
 
     role = st.text_input("Interview Role", value="Software Engineer")
     if "ai_interview_question" not in st.session_state:
@@ -208,47 +294,131 @@ def ai_interview_section(agent):
         st.session_state.ai_interview_history = []
     if "live_motion_alert" not in st.session_state:
         st.session_state.live_motion_alert = None
+    if "ai_interview_voice_answer" not in st.session_state:
+        st.session_state.ai_interview_voice_answer = ""
+    if "ai_interview_voice_status" not in st.session_state:
+        st.session_state.ai_interview_voice_status = "Waiting"
+    if "camera_alert_frame" not in st.session_state:
+        st.session_state.camera_alert_frame = None
+    if "ai_interview_completed" not in st.session_state:
+        st.session_state.ai_interview_completed = False
+    if "ai_interview_review" not in st.session_state:
+        st.session_state.ai_interview_review = None
+    if "motion_history" not in st.session_state:
+        st.session_state.motion_history = []
 
     if st.button("Start Interview"):
         st.session_state.ai_interview_question = agent.generate_interview_question(role)
         st.session_state.ai_interview_history = []
         st.session_state.live_motion_alert = None
+        st.session_state.ai_interview_voice_answer = ""
+        st.session_state.ai_interview_voice_status = "Waiting"
+        st.session_state.camera_alert_frame = None
+        st.session_state.ai_interview_completed = False
+        st.session_state.ai_interview_review = None
+        st.session_state.motion_history = []
 
     if st.session_state.ai_interview_question:
         st.info(f"Question: {st.session_state.ai_interview_question}")
+        st.caption("The assistant is speaking the question and the camera remains active throughout the interview.")
 
-        answer = st.text_area("Your answer")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Submit Answer") and answer:
-                with st.spinner("Scoring your answer..."):
-                    result = agent.evaluate_interview_answer(st.session_state.ai_interview_question, answer)
-                st.session_state.ai_interview_history.append({
-                    "question": st.session_state.ai_interview_question,
-                    "answer": answer,
-                    "result": result,
-                })
-                st.session_state.ai_interview_question = agent.generate_interview_question(role)
-                st.metric("Score", f"{result['score']}/10")
-                st.success(result["feedback"])
-                if result.get("improvement"):
-                    st.caption(f"Improvement tip: {result['improvement']}")
+        st.markdown("**Voice response**")
+        audio_bytes = st.audio_input("Record your answer", key="ai_interview_audio")
+        if audio_bytes:
+            st.session_state.ai_interview_voice_answer = "[Voice answer recorded]"
+            st.session_state.ai_interview_voice_status = "Voice answer recorded"
 
-        with col2:
-            if st.button("Skip Question"):
-                st.session_state.ai_interview_question = agent.generate_interview_question(role)
+        if st.button("Submit Answer") and st.session_state.ai_interview_voice_answer:
+            with st.spinner("Scoring your answer..."):
+                result = agent.evaluate_interview_answer(st.session_state.ai_interview_question, st.session_state.ai_interview_voice_answer)
+            snapshot = agent.build_interview_snapshot(
+                question=st.session_state.ai_interview_question,
+                answer=st.session_state.ai_interview_voice_answer,
+                result=result,
+                motion_alert=st.session_state.live_motion_alert,
+                voice_answer=st.session_state.ai_interview_voice_answer,
+            )
+            st.session_state.ai_interview_history.append(snapshot)
+            st.session_state.ai_interview_question = agent.generate_interview_question(role)
+            st.session_state.ai_interview_voice_answer = ""
+            st.session_state.ai_interview_voice_status = "Waiting"
+            st.metric("Score", f"{result['score']}/10")
+            st.success(result["feedback"])
+            if result.get("improvement"):
+                st.caption(f"Improvement tip: {result['improvement']}")
+
+        answer = st.text_area(
+            "Or type your answer",
+            value=st.session_state.ai_interview_voice_answer,
+            key="ai_interview_answer_input",
+            height=140,
+        )
+        if answer:
+            st.session_state.ai_interview_voice_answer = answer
+
+        if st.button("Skip Question"):
+            st.session_state.ai_interview_question = agent.generate_interview_question(role)
+            st.session_state.ai_interview_voice_answer = ""
+            st.session_state.ai_interview_voice_status = "Waiting"
 
     if st.session_state.live_motion_alert is not None:
         st.warning(f"Suspicious movement detected: {st.session_state.live_motion_alert}")
 
+    if st.session_state.camera_alert_frame:
+        st.image(
+            st.session_state.camera_alert_frame,
+            caption=st.session_state.get("camera_alert_caption", "Captured suspicious frame"),
+            channels="BGR",
+        )
+
     st.markdown("---")
     st.subheader("Live camera")
-    webrtc_streamer(
-        key="ai-interview-camera",
-        video_transformer_factory=MotionDetector,
-        media_stream_constraints={"video": True, "audio": False},
-        async_processing=True,
-    )
+    st.caption("The camera stays on for the whole interview and is used to detect repeated head/body motion and possible cheating behavior.")
+    camera_payload = render_live_camera_component()
+    if isinstance(camera_payload, dict):
+        motion_score = camera_payload.get("motionScore")
+        if motion_score is not None:
+            history = list(st.session_state.get("motion_history", []))
+            history.append(float(motion_score))
+            history = history[-12:]
+            st.session_state.motion_history = history
+            detection = agent.detect_repeated_motion(history)
+            if detection["suspicious"]:
+                st.session_state.live_motion_alert = detection["motion_score"]
+                frame_value = camera_payload.get("frame")
+                if frame_value:
+                    image_bytes = base64.b64decode(frame_value.split(",", 1)[1])
+                    st.session_state.camera_alert_frame = image_bytes
+                    st.session_state.camera_alert_caption = f"Repeated movement detected: {detection['motion_score']:.2f}"
+
+    if st.button("Finish Interview"):
+        motion_values = [entry.get("motion_alert") for entry in st.session_state.ai_interview_history if entry.get("motion_alert") is not None]
+        if not motion_values and st.session_state.get("motion_history"):
+            motion_values = [float(score) for score in st.session_state.motion_history]
+        avg_motion = sum(motion_values) / len(motion_values) if motion_values else 0.0
+        body_language_score = max(0, min(100, 100 - (avg_motion * 1.2)))
+        cheat_flags = "No cheating alert detected." if not st.session_state.camera_alert_frame else "Cheating alert captured and displayed above."
+        st.session_state.ai_interview_completed = True
+        st.session_state.ai_interview_review = {
+            "body_language_score": round(body_language_score, 1),
+            "average_motion": round(avg_motion, 2),
+            "cheat_flags": cheat_flags,
+            "summary": (
+                "The interview remained live throughout the session. "
+                f"Body-language stability score: {round(body_language_score, 1)}/100. "
+                f"Average movement intensity: {round(avg_motion, 2)}."
+            ),
+        }
+        st.rerun()
+
+    if st.session_state.ai_interview_completed and st.session_state.ai_interview_review:
+        review = st.session_state.ai_interview_review
+        st.markdown("---")
+        st.subheader("Interview Review")
+        st.success(review["summary"])
+        st.metric("Body-language score", f"{review['body_language_score']}/100")
+        st.metric("Average motion", f"{review['average_motion']}")
+        st.caption(review["cheat_flags"])
 
     if st.session_state.ai_interview_history:
         st.markdown("---")
@@ -258,17 +428,3 @@ def ai_interview_section(agent):
                 st.markdown(f"**Q:** {entry['question']}")
                 st.markdown(f"**A:** {entry['answer']}")
                 st.markdown(f"**Feedback:** {entry['result']['feedback']}")
-
-    st.markdown("---")
-    st.subheader("Cheating / movement check")
-    st.caption("Upload two frames from the camera to estimate sudden movement and trigger an alert.")
-    before_frame = st.file_uploader("Frame before", type=["png", "jpg", "jpeg"], key="before_frame")
-    after_frame = st.file_uploader("Frame after", type=["png", "jpg", "jpeg"], key="after_frame")
-    if st.button("Check Movement") and before_frame and after_frame:
-        with st.spinner("Inspecting movement..."):
-            detection = agent.flag_suspicious_behavior(before_frame.getvalue(), after_frame.getvalue(), context=role)
-        if detection["suspicious"]:
-            st.warning(f"Suspicious movement detected with score {detection['motion_score']:.2f}.")
-            st.info("An alert has been sent if email/Telegram/WhatsApp webhook settings are configured.")
-        else:
-            st.success(f"Movement score: {detection['motion_score']:.2f}. No suspicious movement detected.")
