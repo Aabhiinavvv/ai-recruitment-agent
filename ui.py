@@ -12,12 +12,53 @@ import streamlit.components.v1 as components
 from agents import RecruitmentAgent
 
 def display_header():
-    st.title("🤖 Recruitment Agent")
-    st.markdown("AI-powered resume analysis and interview preparation tool.")
+    st.markdown("""
+    <style>
+      #MainMenu, footer, header {visibility: hidden;}
+      .stApp { background: #f4f5f8; color: #202126; }
+      .block-container { max-width: 1480px; padding: 2rem 2.4rem 3rem; }
+      [data-testid="stSidebar"] { background: #151719; border: 0; }
+      [data-testid="stSidebar"] * { color: #f4f2fa; }
+      [data-testid="stSidebar"] .stTextInput input { background: #272a2e; color: white; border-color: #44474d; }
+      [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div { background: #272a2e; border-color: #44474d; }
+      .portal-title { display:flex; align-items:center; justify-content:space-between; margin: 0 0 1.35rem; }
+      .portal-title h1 { margin:0; font-size:1.5rem; font-weight:700; letter-spacing:-.03em; }
+      .portal-title p { margin: .25rem 0 0; color:#7a7c85; font-size:.92rem; }
+      .portal-status { color:#6940e8; background:#eeeaff; border-radius:999px; padding:.45rem .8rem; font-weight:600; font-size:.8rem; }
+      .workspace-card, .metric-card { background: #fff; border: 1px solid #e9e9ef; border-radius: 22px; box-shadow: 0 9px 25px rgba(35, 28, 55, .045); }
+      .workspace-card { padding: 1.05rem 1.2rem; }
+      .metric-card { padding: 1.1rem; min-height: 130px; }
+      .metric-card .label { color:#777984; font-size:.8rem; margin-top:.35rem; }
+      .metric-card .value { color:#7540eb; font-size:1.7rem; font-weight:750; line-height:1.1; }
+      .section-kicker { color:#777984; font-size:.84rem; margin:.15rem 0 .7rem; }
+      .question-card { background:linear-gradient(135deg,#6837e6,#8a45f2); color:white; border-radius:18px; padding:1rem 1.2rem; margin:.8rem 0; }
+      .question-card small { color:#e6dcff; } .question-card p { font-size:1.05rem; font-weight:600; margin:.35rem 0 0; }
+      .chat-bubble { background:#f5f2ff; color:#4e28b1; border-radius:14px 14px 4px 14px; padding:.7rem .85rem; margin:.6rem 0 .6rem auto; max-width:86%; font-size:.9rem; }
+      .stButton > button { border:0; border-radius:12px; background:#7440e8; color:white; font-weight:650; min-height:2.65rem; }
+      .stButton > button:hover { background:#5d2bca; color:white; border:0; }
+      .stTextArea textarea, .stTextInput input { border-radius:12px; border-color:#e2e0e9; }
+      [data-testid="stTabs"] [role="tablist"] { gap:.45rem; }
+      [data-testid="stTabs"] [role="tab"] { border-radius:10px; padding:.55rem .8rem; background:white; border:1px solid #eceaf1; }
+      [data-testid="stTabs"] [aria-selected="true"] { color:#6d3ce4; border-color:#6d3ce4; }
+    </style>
+    <div class="portal-title">
+      <div><h1>InterviewAI</h1><p>Recruit smarter. Interview with confidence.</p></div>
+      <div class="portal-status">● Live interview workspace</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 def setup_sidebar():
     with st.sidebar:
-        st.header("⚙️ Configuration")
+        st.markdown("## ◉ InterviewAI")
+        st.caption("AI recruitment portal")
+        st.markdown("---")
+        st.markdown("**MAIN MENU**")
+        st.markdown("⌘ &nbsp; Dashboard")
+        st.markdown("▣ &nbsp; **Interview**")
+        st.markdown("◌ &nbsp; Insights")
+        st.markdown("♙ &nbsp; Talent")
+        st.markdown("---")
+        st.markdown("**INTERVIEW SETTINGS**")
         api_key = st.text_input(
             "Gemini API Key",
             type="password",
@@ -281,8 +322,7 @@ def render_live_camera_component():
 
 
 def ai_interview_section(agent):
-    st.subheader("🎤 Virtual AI Interview Assistant")
-    st.caption("The interview assistant asks questions aloud, keeps the webcam live throughout the session, and flags suspicious movements or cheating attempts.")
+    st.markdown("<div class='workspace-card'><b>Interview for your selected role</b><div class='section-kicker'>Live AI-led practice session with camera monitoring and real-time feedback.</div></div>", unsafe_allow_html=True)
 
     if not agent:
         agent = RecruitmentAgent(api_key=None)
@@ -307,6 +347,42 @@ def ai_interview_section(agent):
     if "motion_history" not in st.session_state:
         st.session_state.motion_history = []
 
+    completed_answers = st.session_state.ai_interview_history
+    answer_scores = [item.get("result", {}).get("score", 0) for item in completed_answers]
+    interview_score = round((sum(answer_scores) / len(answer_scores)) * 10) if answer_scores else 0
+    readiness_score = st.session_state.get("analysis_result", {}).get("overall_score", 0)
+
+    workspace_left, workspace_right = st.columns([1.85, 0.85], gap="large")
+    with workspace_left:
+        st.markdown("**◉ People attending the call** <span style='float:right;color:#7440e8;'>＋ Add participant</span>", unsafe_allow_html=True)
+        st.markdown("<div class='section-kicker'>Candidate camera is live during the interview.</div>", unsafe_allow_html=True)
+        camera_payload = render_live_camera_component()
+    with workspace_right:
+        score_a, score_b = st.columns(2)
+        with score_a:
+            st.markdown(f"<div class='metric-card'><div class='value'>{interview_score}%</div><div class='label'>AI Interview Score</div></div>", unsafe_allow_html=True)
+        with score_b:
+            st.markdown(f"<div class='metric-card'><div class='value' style='color:#ff935b'>{readiness_score}%</div><div class='label'>Resume Readiness</div></div>", unsafe_allow_html=True)
+        st.markdown("<div class='workspace-card' style='margin-top:1rem'><b>Interview chat</b><div class='section-kicker'>Your AI interviewer is ready.</div><div class='chat-bubble'>Welcome! Start the interview when you are ready.</div></div>", unsafe_allow_html=True)
+
+    if isinstance(camera_payload, dict):
+        motion_score = camera_payload.get("motionScore")
+        if motion_score is not None:
+            history = list(st.session_state.get("motion_history", []))
+            history.append(float(motion_score))
+            history = history[-12:]
+            st.session_state.motion_history = history
+            detection = agent.detect_repeated_motion(history)
+            if detection["suspicious"]:
+                st.session_state.live_motion_alert = detection["motion_score"]
+                frame_value = camera_payload.get("frame")
+                if frame_value:
+                    image_bytes = base64.b64decode(frame_value.split(",", 1)[1])
+                    st.session_state.camera_alert_frame = image_bytes
+                    st.session_state.camera_alert_caption = f"Repeated movement detected: {detection['motion_score']:.2f}"
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
     if st.button("Start Interview"):
         st.session_state.ai_interview_question = agent.generate_interview_question(role)
         st.session_state.ai_interview_history = []
@@ -319,7 +395,7 @@ def ai_interview_section(agent):
         st.session_state.motion_history = []
 
     if st.session_state.ai_interview_question:
-        st.info(f"Question: {st.session_state.ai_interview_question}")
+        st.markdown(f"<div class='question-card'><small>CONVERSATION NOW</small><p>{st.session_state.ai_interview_question}</p></div>", unsafe_allow_html=True)
         st.caption("The assistant is speaking the question and the camera remains active throughout the interview.")
 
         st.markdown("**Voice response**")
@@ -370,26 +446,6 @@ def ai_interview_section(agent):
             caption=st.session_state.get("camera_alert_caption", "Captured suspicious frame"),
             channels="BGR",
         )
-
-    st.markdown("---")
-    st.subheader("Live camera")
-    st.caption("The camera stays on for the whole interview and is used to detect repeated head/body motion and possible cheating behavior.")
-    camera_payload = render_live_camera_component()
-    if isinstance(camera_payload, dict):
-        motion_score = camera_payload.get("motionScore")
-        if motion_score is not None:
-            history = list(st.session_state.get("motion_history", []))
-            history.append(float(motion_score))
-            history = history[-12:]
-            st.session_state.motion_history = history
-            detection = agent.detect_repeated_motion(history)
-            if detection["suspicious"]:
-                st.session_state.live_motion_alert = detection["motion_score"]
-                frame_value = camera_payload.get("frame")
-                if frame_value:
-                    image_bytes = base64.b64decode(frame_value.split(",", 1)[1])
-                    st.session_state.camera_alert_frame = image_bytes
-                    st.session_state.camera_alert_caption = f"Repeated movement detected: {detection['motion_score']:.2f}"
 
     if st.button("Finish Interview"):
         motion_values = [entry.get("motion_alert") for entry in st.session_state.ai_interview_history if entry.get("motion_alert") is not None]

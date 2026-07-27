@@ -14,7 +14,7 @@ def ensure_event_loop():
 ensure_event_loop()
 
 # set_page_config MUST be the very first Streamlit call — only called once here, NOT in ui.py
-st.set_page_config(page_title="Recruitment Agent", page_icon=":sparkles:", layout="centered")
+st.set_page_config(page_title="InterviewAI", page_icon=":sparkles:", layout="wide")
 
 import ui
 from agents import RecruitmentAgent  # matches class name in agents.py
