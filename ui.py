@@ -350,7 +350,7 @@ def ai_interview_section(agent):
     completed_answers = st.session_state.ai_interview_history
     answer_scores = [item.get("result", {}).get("score", 0) for item in completed_answers]
     interview_score = round((sum(answer_scores) / len(answer_scores)) * 10) if answer_scores else 0
-    readiness_score = st.session_state.get("analysis_result", {}).get("overall_score", 0)
+    readiness_score = (st.session_state.get("analysis_result") or {}).get("overall_score", 0)
 
     workspace_left, workspace_right = st.columns([1.85, 0.85], gap="large")
     with workspace_left:
