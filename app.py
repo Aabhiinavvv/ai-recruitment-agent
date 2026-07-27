@@ -1,5 +1,17 @@
 import streamlit as st
 import os
+import asyncio
+
+
+def ensure_event_loop():
+    """Provide an event loop for libraries imported by Streamlit's script thread."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+
+ensure_event_loop()
 
 # set_page_config MUST be the very first Streamlit call — only called once here, NOT in ui.py
 st.set_page_config(page_title="Recruitment Agent", page_icon=":sparkles:", layout="centered")
