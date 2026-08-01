@@ -23,9 +23,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 MAX_SKILLS_FOR_FAST_ANALYSIS = 14
-MAX_RESUME_CHARS_FOR_SCORING = 7000
+MAX_RESUME_CHARS_FOR_SCORING = 3600
 MAX_JD_CHARS_FOR_SKILL_EXTRACTION = 5000
 MAX_RESUME_CHARS_FOR_WEAKNESS = 3500
+MAX_RESUME_CHARS_FOR_QA = 4500
 
 class RecruitmentAgent:
     def __init__(self, api_key=None, cutoff_score=75, model=None):
@@ -34,6 +35,7 @@ class RecruitmentAgent:
         self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
         self.resume_text = ""
+        self.resume_profile = ""
         self.analysis_results = {}
         self.extracted_skills = []
         self.resume_weaknesses = []
@@ -44,6 +46,8 @@ class RecruitmentAgent:
         self._resume_signature = None
         self._text_cache = {}
         self._vectorstore_signature = None
+        self._llm = None
+        self._llm_config = None
         self.alert_email_to = os.getenv("ALERT_EMAIL_TO") or os.getenv("EMAIL_ALERT_TO")
         self.alert_email_from = os.getenv("ALERT_EMAIL_FROM") or os.getenv("EMAIL_ALERT_FROM")
         self.alert_smtp_host = os.getenv("ALERT_SMTP_HOST") or os.getenv("EMAIL_SMTP_HOST")
@@ -59,11 +63,16 @@ class RecruitmentAgent:
         api_key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not api_key:
             return None
-        return ChatGoogleGenerativeAI(
-            model=self.model,
-            google_api_key=api_key,
-            temperature=0.2,
-        )
+        config = (api_key, self.model)
+        if self._llm is None or self._llm_config != config:
+            self._llm = ChatGoogleGenerativeAI(
+                model=self.model,
+                google_api_key=api_key,
+                temperature=0.2,
+                max_output_tokens=1024,
+            )
+            self._llm_config = config
+        return self._llm
 
     def _parse_json_response(self, response_text, default):
         try:
@@ -263,7 +272,76 @@ class RecruitmentAgent:
             return 4
         return 0
 
-    def analyze_skills(self, text, skills):
+    def _build_resume_profile(self, text, skills):
+        """Create a small, readable resume summary without making an LLM request."""
+        if not text:
+            return ""
+
+        section_aliases = {
+            "skills": ("skill", "technology", "technical"),
+            "experience": ("experience", "employment", "work history", "professional"),
+            "projects": ("project", "portfolio"),
+            "education": ("education", "academic", "qualification"),
+            "certifications": ("certification", "certificate", "training"),
+        }
+        section_limits = {
+            "skills": 700,
+            "experience": 1500,
+            "projects": 800,
+            "education": 350,
+            "certifications": 300,
+            "other": 450,
+        }
+        section_order = ("skills", "experience", "projects", "education", "certifications", "other")
+        grouped = {section: [] for section in section_order}
+        current_section = "other"
+        skill_terms = {
+            term.lower() for skill in skills
+            for term in re.findall(r"[A-Za-z0-9+#.]{2,}", skill)
+        }
+
+        for raw_line in text.splitlines():
+            line = re.sub(r"\s+", " ", raw_line).strip()
+            if not line:
+                continue
+            normalized = line.lower().strip(": -|")
+            heading = next(
+                (name for name, aliases in section_aliases.items()
+                 if len(normalized) <= 45 and any(alias in normalized for alias in aliases)),
+                None,
+            )
+            if heading:
+                current_section = heading
+                continue
+            grouped[current_section].append(line)
+
+        profile_parts = []
+        for section in section_order:
+            lines = grouped[section]
+            if not lines:
+                continue
+            limit = section_limits[section]
+            selected = []
+            used = 0
+            for line in lines:
+                line_lower = line.lower()
+                relevant = section == "skills" or any(term in line_lower for term in skill_terms)
+                meaningful = relevant or bool(re.search(r"\b\d+(?:%|\+)?\b", line)) or line.startswith(("-", "•", "*"))
+                if not meaningful and selected:
+                    continue
+                remaining = limit - used
+                if remaining <= 0:
+                    break
+                selected_line = line[:remaining]
+                selected.append(selected_line)
+                used += len(selected_line) + 1
+            if selected:
+                profile_parts.append(f"{section.title()}:\n" + "\n".join(selected))
+
+        profile = "\n\n".join(profile_parts)
+        return profile[:MAX_RESUME_CHARS_FOR_SCORING] or text[:MAX_RESUME_CHARS_FOR_SCORING]
+
+    def analyze_skills(self, text, skills, keyword_text=None):
         if not text or not skills:
             return {
                 "overall_score": 0,
@@ -275,6 +353,7 @@ class RecruitmentAgent:
             }
 
         scores = {}
+        keyword_text = keyword_text or text
         llm = self._get_llm()
         llm_scored_skills = skills[:MAX_SKILLS_FOR_FAST_ANALYSIS]
 
@@ -299,11 +378,11 @@ class RecruitmentAgent:
                 print(f"Batch skill scoring failed: {e}")
 
         if not scores:
-            scores = {skill: self._keyword_skill_score(text, skill) for skill in skills}
+            scores = {skill: self._keyword_skill_score(keyword_text, skill) for skill in skills}
         else:
             for skill in skills:
                 if skill not in scores:
-                    scores[skill] = self._keyword_skill_score(text, skill)
+                    scores[skill] = self._keyword_skill_score(keyword_text, skill)
 
         missing = [skill for skill, score in scores.items() if score <= 5]
         total = sum(scores.values())
@@ -584,11 +663,18 @@ class RecruitmentAgent:
         else:
             self.extracted_skills = role_requirements or []
 
-        self.analysis_results = self.analyze_skills(self.resume_text, self.extracted_skills)
+        self.resume_profile = self._build_resume_profile(
+            self.resume_text, self.extracted_skills
+        )
+        self.analysis_results = self.analyze_skills(
+            self.resume_profile,
+            self.extracted_skills,
+            keyword_text=self.resume_text,
+        )
         self.analysis_results["weaknesses"] = []
         self.analysis_results["detailed_weaknesses"] = []
         self.analysis_results["analysis_note"] = (
-            "Fast analysis uses Gemini for priority skills and local keyword scoring for the rest. "
+            "Fast analysis sends Gemini a compact resume profile and uses local keyword scoring for the rest. "
             "Generate detailed weakness analysis only when needed."
         )
 
@@ -602,26 +688,53 @@ class RecruitmentAgent:
         return weaknesses
 
     # ---------------- Q&A ----------------
+    def _select_resume_context(self, question):
+        """Choose relevant resume passages locally, avoiding a slow embedding API call."""
+        if len(self.resume_text) <= MAX_RESUME_CHARS_FOR_QA:
+            return self.resume_text
+
+        chunks = RecursiveCharacterTextSplitter(
+            chunk_size=1200, chunk_overlap=150
+        ).split_text(self.resume_text)
+        keywords = {
+            word.lower() for word in re.findall(r"[A-Za-z0-9+#.]{3,}", question)
+        }
+
+        def relevance(chunk):
+            chunk_lower = chunk.lower()
+            return sum(keyword in chunk_lower for keyword in keywords)
+
+        ranked = sorted(enumerate(chunks), key=lambda item: (-relevance(item[1]), item[0]))
+        selected = []
+        total_chars = 0
+        for _, chunk in ranked:
+            if total_chars + len(chunk) > MAX_RESUME_CHARS_FOR_QA:
+                continue
+            selected.append(chunk)
+            total_chars += len(chunk)
+            if total_chars >= MAX_RESUME_CHARS_FOR_QA:
+                break
+        return "\n\n".join(selected) or self.resume_text[:MAX_RESUME_CHARS_FOR_QA]
+
     def ask_question(self, question):
         try:
             if not self.resume_text:
                 return "Please analyze a resume first."
+            llm = self._get_llm()
+            if not llm:
+                return "Gemini is not configured. Add a valid API key and try again."
 
-            vectorstore = self.create_vector_store(self.resume_text)
-            if not vectorstore:
-                return "Unable to process resume for Q&A."
-            self.vectorstore = vectorstore
-
-            chain = self._build_rag_chain(
-                vectorstore,
-                "You are a helpful assistant that answers questions about a candidate's resume. "
-                "Use only the provided context to answer."
+            context = self._select_resume_context(question)
+            prompt = (
+                "Answer the question using only the resume context below. "
+                "If the resume does not contain the answer, say so clearly. "
+                "Keep the answer concise.\n\n"
+                f"Resume context:\n{context}\n\nQuestion: {question}"
             )
-            response = chain.invoke({"input": question})
-            return response.get("answer", "")
+            return str(llm.invoke(prompt).content).strip()
         except Exception as e:
             print(f"Error in ask_question: {e}")
-            return "Error answering question. Please try again."
+            return "Unable to answer right now. Please verify your Gemini API key and try again."
 
     # ---------------- INTERVIEW QUESTIONS ----------------
     def generate_interview_questions(self, question_types, difficulty, num_questions=5):
