@@ -15,7 +15,7 @@ def display_header():
     st.markdown("""
     <style>
       #MainMenu, footer, header {visibility: hidden;}
-      .stApp { background: #f4f5f8; color: #202126; }
+      .stApp { background: #000000; color: #202126; }
       .block-container { max-width: 1480px; padding: 2rem 2.4rem 3rem; }
       [data-testid="stSidebar"] { background: #151719; border: 0; }
       [data-testid="stSidebar"] * { color: #f4f2fa; }
