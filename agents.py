@@ -22,8 +22,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from dotenv import load_dotenv
 load_dotenv()
 
-MAX_SKILLS_FOR_FAST_ANALYSIS = 14
 MAX_RESUME_CHARS_FOR_SCORING = 3600
+MAX_SKILLS_FOR_FAST_ANALYSIS = 14
 MAX_JD_CHARS_FOR_SKILL_EXTRACTION = 5000
 MAX_RESUME_CHARS_FOR_WEAKNESS = 3500
 MAX_RESUME_CHARS_FOR_QA = 4500
