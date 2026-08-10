@@ -58,7 +58,6 @@ class RecruitmentAgent:
         self.alert_telegram_chat = os.getenv("ALERT_TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
         self.alert_webhook_url = os.getenv("ALERT_WEBHOOK_URL") or os.getenv("WHATSAPP_WEBHOOK_URL")
 
-    # ---------------- SAFE LLM ----------------
     def _get_llm(self):
         api_key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not api_key:
