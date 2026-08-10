@@ -18,9 +18,9 @@ ensure_event_loop()
 # set_page_config MUST be the very first Streamlit call — only called once here, NOT in ui.py
 st.set_page_config(page_title="InterviewAI", page_icon=":sparkles:", layout="wide")
 
-import ui
 from agents import RecruitmentAgent  # matches class name in agents.py
 import atexit
+import ui
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -36,7 +36,7 @@ ROLE_REQUIREMENTS = {
         "HTML", "CSS", "JavaScript", "React", "Vue.js", "Angular", "Responsive Design",
         "Cross-Browser Compatibility", "Web Performance Optimization", "Version Control (Git)",
         "UI/UX Design Principles", "Testing and Debugging", "TypeScript", "SASS", "Bootstrap",
-        "Tailwind CSS", "GraphQL", "Redux", "Performance Optimization",
+        "Tailwind CSS", "Redux","GraphQL", "Performance Optimization",
     ],
     "Backend Engineer": [
         "Python", "Java", "Node.js", "Ruby", "Go", "Database Management (SQL/NoSQL)",
