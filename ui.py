@@ -87,6 +87,146 @@ def create_tabs():
         "🎤 AI Interview"
     ])
 
+
+def display_interactive_dashboard(analysis_result=None):
+        """Render a polished interactive skill radar + animated bars using Chart.js (no extra Python deps).
+
+        If `analysis_result` contains `skill_scores` it will be used, otherwise a friendly demo dataset
+        will be shown so the dashboard looks alive even before analysis.
+        """
+        # Prepare skill data
+        skill_scores = {}
+        if analysis_result and isinstance(analysis_result, dict):
+                skill_scores = analysis_result.get("skill_scores") or {}
+
+        if not skill_scores:
+                # demo data
+                skill_scores = {
+                        "Python": 9,
+                        "Machine Learning": 8,
+                        "Data Engineering": 6,
+                        "NLP": 7,
+                        "DevOps": 5,
+                        "System Design": 7,
+                }
+
+        # normalize to 0-10
+        labels = list(skill_scores.keys())
+        values = [min(10, max(0, float(v))) for v in skill_scores.values()]
+
+        payload = {
+                "labels": labels,
+                "values": values,
+        }
+
+        # Nicely styled card + Chart.js radar + bars with toggle
+        html = f"""
+        <style>
+        .hero-card {{
+            background: linear-gradient(135deg,#0f172a 0%, #111827 60%);
+            color: #e6eef8; border-radius:16px; padding:18px; box-shadow: 0 10px 30px rgba(2,6,23,0.6);
+            margin-bottom: 18px; overflow:hidden;
+        }}
+        .hero-header {{display:flex; align-items:center; justify-content:space-between}}
+        .hero-title {{font-size:1.05rem; font-weight:700}}
+        .hero-sub {{color:#9aa7bf; font-size:0.9rem}}
+        .view-toggle button {{background:#111827;color:#cbd5e1;border:0;padding:8px 12px;margin-left:6px;border-radius:8px;cursor:pointer}}
+        .view-toggle button.active {{background:linear-gradient(90deg,#7c3aed,#4f46e5); color:white}}
+        </style>
+        <div class="hero-card">
+            <div class="hero-header">
+                <div>
+                    <div class="hero-title">Candidate Insights</div>
+                    <div class="hero-sub">Interactive skill snapshot — hover metrics, toggle views, and explore.</div>
+                </div>
+                <div class="view-toggle">
+                    <button id="radarBtn" class="active">Radar</button>
+                    <button id="barsBtn">Bars</button>
+                </div>
+            </div>
+            <canvas id="skillChart" style="width:100%;height:300px"></canvas>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script>
+        const payload = {json.dumps(payload)};
+        const ctx = document.getElementById('skillChart').getContext('2d');
+
+        const baseOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: { enabled: true, backgroundColor: '#111827', titleColor: '#e6eef8', bodyColor: '#cbd5e1' }
+            }
+        };
+
+        const radarConfig = {
+            type: 'radar',
+            data: {
+                labels: payload.labels,
+                datasets: [{
+                    label: 'Skill level',
+                    data: payload.values,
+                    backgroundColor: 'rgba(124,58,237,0.18)',
+                    borderColor: 'rgba(124,58,237,0.95)',
+                    pointBackgroundColor: '#7c3aed',
+                    pointBorderColor: '#fff',
+                    pointHoverRadius: 7,
+                    pointRadius: 5,
+                }]
+            },
+            options: Object.assign({}, baseOptions, {
+                scales: {
+                    r: { min:0, max:10, grid: {color: 'rgba(255,255,255,0.04)'}, angleLines: {color:'rgba(255,255,255,0.03)'}, ticks:{display:false} }
+                }
+            })
+        };
+
+        const barsConfig = {
+            type: 'bar',
+            data: {
+                labels: payload.labels,
+                datasets: [{
+                    label: 'Skill level',
+                    data: payload.values,
+                    backgroundColor: payload.values.map(v => v >= 8 ? 'rgba(34,197,94,0.9)' : 'rgba(124,58,237,0.9)'),
+                    borderRadius: 8,
+                }]
+            },
+            options: Object.assign({}, baseOptions, {
+                indexAxis: 'y',
+                scales: { x: { min:0, max:10, grid:{display:false} }, y: { grid:{display:false} } }
+            })
+        };
+
+        let chart = new Chart(ctx, radarConfig);
+
+        document.getElementById('radarBtn').addEventListener('click', () => {
+            document.getElementById('radarBtn').classList.add('active');
+            document.getElementById('barsBtn').classList.remove('active');
+            chart.destroy(); chart = new Chart(ctx, radarConfig);
+        });
+        document.getElementById('barsBtn').addEventListener('click', () => {
+            document.getElementById('barsBtn').classList.add('active');
+            document.getElementById('radarBtn').classList.remove('active');
+            chart.destroy(); chart = new Chart(ctx, barsConfig);
+        });
+
+        // tiny animation: pulse the highest skill
+        const maxIndex = payload.values.indexOf(Math.max(...payload.values));
+        setInterval(() => {
+            if (!chart) return;
+            const meta = chart.getDatasetMeta(0);
+            if (meta && meta.data && meta.data[maxIndex]) {
+                meta.data[maxIndex].transition(400).draw();
+            }
+        }, 2200);
+        </script>
+        """
+
+        components.html(html, height=360)
+
 def role_selection_section(role_requirements):
     st.subheader("Job Role Selection")
     roles = list(role_requirements.keys())

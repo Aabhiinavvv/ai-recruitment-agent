@@ -206,6 +206,12 @@ def main():
     ui.display_header()
     config = ui.setup_sidebar()
     agent = setup_agent(config)
+    # Render an interactive dashboard hero (radar + bars) to give the page a modern, website-like feel
+    try:
+        ui.display_interactive_dashboard(st.session_state.get('analysis_result'))
+    except Exception:
+        # non-fatal: keep app running if the component fails
+        pass
     tabs = ui.create_tabs()
 
     # ── Tab 0: Resume Analysis ───────────────────────────────────────────────
