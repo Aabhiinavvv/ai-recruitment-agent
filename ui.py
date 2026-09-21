@@ -15,31 +15,31 @@ def display_header():
     st.markdown("""
     <style>
       #MainMenu, footer, header {visibility: hidden;}
-      .stApp { background: #000000; color: #202126; }
+      .stApp { background: #f4f7fb; color: #1f2937; }
       .block-container { max-width: 1480px; padding: 2rem 2.4rem 3rem; }
-      [data-testid="stSidebar"] { background: #151719; border: 0; }
-      [data-testid="stSidebar"] * { color: #f4f2fa; }
-      [data-testid="stSidebar"] .stTextInput input { background: #272a2e; color: white; border-color: #44474d; }
-      [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div { background: #272a2e; border-color: #44474d; }
+      [data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid #e5e7eb; }
+      [data-testid="stSidebar"] * { color: #1f2937; }
+      [data-testid="stSidebar"] .stTextInput input { background: #f9fafb; color: #111827; border-color: #d1d5db; }
+      [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div { background: #f9fafb; border-color: #d1d5db; }
       .portal-title { display:flex; align-items:center; justify-content:space-between; margin: 0 0 1.35rem; }
-      .portal-title h1 { margin:0; font-size:1.5rem; font-weight:700; letter-spacing:-.03em; }
-      .portal-title p { margin: .25rem 0 0; color:#7a7c85; font-size:.92rem; }
-      .portal-status { color:#6940e8; background:#eeeaff; border-radius:999px; padding:.45rem .8rem; font-weight:600; font-size:.8rem; }
-      .workspace-card, .metric-card { background: #fff; border: 1px solid #e9e9ef; border-radius: 22px; box-shadow: 0 9px 25px rgba(35, 28, 55, .045); }
+      .portal-title h1 { margin:0; font-size:1.5rem; font-weight:700; letter-spacing:-.03em; color:#111827; }
+      .portal-title p { margin: .25rem 0 0; color:#6b7280; font-size:.92rem; }
+      .portal-status { color:#5b43d6; background:#f0ebff; border-radius:999px; padding:.45rem .8rem; font-weight:600; font-size:.8rem; }
+      .workspace-card, .metric-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 22px; box-shadow: 0 8px 20px rgba(15, 23, 42, .05); }
       .workspace-card { padding: 1.05rem 1.2rem; }
       .metric-card { padding: 1.1rem; min-height: 130px; }
-      .metric-card .label { color:#777984; font-size:.8rem; margin-top:.35rem; }
-      .metric-card .value { color:#7540eb; font-size:1.7rem; font-weight:750; line-height:1.1; }
-      .section-kicker { color:#777984; font-size:.84rem; margin:.15rem 0 .7rem; }
-      .question-card { background:linear-gradient(135deg,#6837e6,#8a45f2); color:white; border-radius:18px; padding:1rem 1.2rem; margin:.8rem 0; }
-      .question-card small { color:#e6dcff; } .question-card p { font-size:1.05rem; font-weight:600; margin:.35rem 0 0; }
-      .chat-bubble { background:#f5f2ff; color:#4e28b1; border-radius:14px 14px 4px 14px; padding:.7rem .85rem; margin:.6rem 0 .6rem auto; max-width:86%; font-size:.9rem; }
-      .stButton > button { border:0; border-radius:12px; background:#7440e8; color:white; font-weight:650; min-height:2.65rem; }
-      .stButton > button:hover { background:#5d2bca; color:white; border:0; }
-      .stTextArea textarea, .stTextInput input { border-radius:12px; border-color:#e2e0e9; }
+      .metric-card .label { color:#6b7280; font-size:.8rem; margin-top:.35rem; }
+      .metric-card .value { color:#5b43d6; font-size:1.7rem; font-weight:750; line-height:1.1; }
+      .section-kicker { color:#6b7280; font-size:.84rem; margin:.15rem 0 .7rem; }
+      .question-card { background:linear-gradient(135deg,#6d5ef5,#8a72ff); color:white; border-radius:18px; padding:1rem 1.2rem; margin:.8rem 0; }
+      .question-card small { color:#e8e3ff; } .question-card p { font-size:1.05rem; font-weight:600; margin:.35rem 0 0; }
+      .chat-bubble { background:#f3f0ff; color:#4c3fb6; border-radius:14px 14px 4px 14px; padding:.7rem .85rem; margin:.6rem 0 .6rem auto; max-width:86%; font-size:.9rem; }
+      .stButton > button { border:0; border-radius:12px; background:#6743ee; color:white; font-weight:650; min-height:2.65rem; }
+      .stButton > button:hover { background:#5637d2; color:white; border:0; }
+      .stTextArea textarea, .stTextInput input { border-radius:12px; border-color:#d1d5db; background:#ffffff; color:#111827; }
       [data-testid="stTabs"] [role="tablist"] { gap:.45rem; }
-      [data-testid="stTabs"] [role="tab"] { border-radius:10px; padding:.55rem .8rem; background:white; border:1px solid #eceaf1; }
-      [data-testid="stTabs"] [aria-selected="true"] { color:#6d3ce4; border-color:#6d3ce4; }
+      [data-testid="stTabs"] [role="tab"] { border-radius:10px; padding:.55rem .8rem; background:white; border:1px solid #e5e7eb; color:#374151; }
+      [data-testid="stTabs"] [aria-selected="true"] { color:#5b43d6; border-color:#5b43d6; background:#f3f0ff; }
     </style>
     <div class="portal-title">
       <div><h1>InterviewAI</h1><p>Recruit smarter. Interview with confidence.</p></div>
@@ -110,6 +110,10 @@ def display_interactive_dashboard(analysis_result=None):
                         "System Design": 7,
                 }
 
+                overall_score = analysis_result.get("overall_score") if isinstance(analysis_result, dict) else None
+                score_status = "Selected" if analysis_result and analysis_result.get("selected") else "Not selected"
+                score_display = f"{overall_score}%" if overall_score is not None else "Awaiting analysis"
+
         # normalize to 0-10
         labels = list(skill_scores.keys())
         values = [min(10, max(0, float(v))) for v in skill_scores.values()]
@@ -119,19 +123,21 @@ def display_interactive_dashboard(analysis_result=None):
                 "values": values,
         }
 
-        # Nicely styled card + Chart.js radar + bars with toggle
-        html = f"""
+        payload_json = json.dumps(payload)
+        html = """
         <style>
-        .hero-card {{
-            background: linear-gradient(135deg,#0f172a 0%, #111827 60%);
-            color: #e6eef8; border-radius:16px; padding:18px; box-shadow: 0 10px 30px rgba(2,6,23,0.6);
-            margin-bottom: 18px; overflow:hidden;
-        }}
-        .hero-header {{display:flex; align-items:center; justify-content:space-between}}
-        .hero-title {{font-size:1.05rem; font-weight:700}}
-        .hero-sub {{color:#9aa7bf; font-size:0.9rem}}
-        .view-toggle button {{background:#111827;color:#cbd5e1;border:0;padding:8px 12px;margin-left:6px;border-radius:8px;cursor:pointer}}
-        .view-toggle button.active {{background:linear-gradient(90deg,#7c3aed,#4f46e5); color:white}}
+        .hero-card {
+            background: linear-gradient(135deg,#f3f4f6 0%, #ffffff 60%);
+            color: #1f2937; border-radius:16px; padding:18px; box-shadow: 0 8px 24px rgba(15,23,42,0.08);
+            margin-bottom: 18px; overflow:hidden; border: 1px solid #e5e7eb;
+        }
+        .hero-header {display:flex; align-items:center; justify-content:space-between; gap:16px}
+        .hero-title {font-size:1.05rem; font-weight:700; color:#111827}
+        .hero-sub {color:#6b7280; font-size:0.9rem}
+        .hero-score {min-width:140px; text-align:right; color:#111827; font-size:1.35rem; font-weight:750}
+        .hero-score small {display:block; color:#6b7280; font-size:0.72rem; font-weight:600; margin-top:3px}
+        .view-toggle button {background:#eef2ff;color:#4338ca;border:0;padding:8px 12px;margin-left:6px;border-radius:8px;cursor:pointer; font-weight:600}
+        .view-toggle button.active {background:linear-gradient(90deg,#7c3aed,#4f46e5); color:white}
         </style>
         <div class="hero-card">
             <div class="hero-header">
@@ -139,6 +145,7 @@ def display_interactive_dashboard(analysis_result=None):
                     <div class="hero-title">Candidate Insights</div>
                     <div class="hero-sub">Interactive skill snapshot — hover metrics, toggle views, and explore.</div>
                 </div>
+                <div class="hero-score">SCORE: __SCORE__<small>__STATUS__</small></div>
                 <div class="view-toggle">
                     <button id="radarBtn" class="active">Radar</button>
                     <button id="barsBtn">Bars</button>
@@ -149,7 +156,7 @@ def display_interactive_dashboard(analysis_result=None):
 
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <script>
-        const payload = {json.dumps(payload)};
+        const payload = """ + payload_json + """;
         const ctx = document.getElementById('skillChart').getContext('2d');
 
         const baseOptions = {
@@ -178,7 +185,7 @@ def display_interactive_dashboard(analysis_result=None):
             },
             options: Object.assign({}, baseOptions, {
                 scales: {
-                    r: { min:0, max:10, grid: {color: 'rgba(255,255,255,0.04)'}, angleLines: {color:'rgba(255,255,255,0.03)'}, ticks:{display:false} }
+                    r: { min:0, max:10, grid: {color: 'rgba(15,23,42,0.08)'}, angleLines: {color:'rgba(15,23,42,0.08)'}, ticks:{display:false} }
                 }
             })
         };
@@ -213,7 +220,6 @@ def display_interactive_dashboard(analysis_result=None):
             chart.destroy(); chart = new Chart(ctx, barsConfig);
         });
 
-        // tiny animation: pulse the highest skill
         const maxIndex = payload.values.indexOf(Math.max(...payload.values));
         setInterval(() => {
             if (!chart) return;
@@ -223,7 +229,7 @@ def display_interactive_dashboard(analysis_result=None):
             }
         }, 2200);
         </script>
-        """
+        """.replace('""" + payload_json + """', payload_json).replace('__SCORE__', score_display).replace('__STATUS__', score_status)
 
         components.html(html, height=360)
 
