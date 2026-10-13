@@ -25,8 +25,8 @@ def selection_rate_audit(
         totals[group] += 1
         selected[group] += int(score >= threshold)
     rates = {g: selected[g] / n for g, n in totals.items() if n}
-    positive = [rate for rate in rates.values() if rate > 0]
-    ratio = min(positive) / max(positive) if positive else None
+    observed_rates = list(rates.values())
+    ratio = min(observed_rates) / max(observed_rates) if observed_rates and max(observed_rates) > 0 else None
     return {
         "threshold": threshold,
         "sample_sizes": dict(totals),
