@@ -18,9 +18,10 @@ class MatchingTests(unittest.TestCase):
         self.assertTrue(result.review_required)
         self.assertIn("Power BI", result.explanation)
 
-    def test_empty_skills(self):
+    def test_missing_job_criteria_is_not_perfect_score(self):
         result = score_candidate(CandidateProfile("c-2"), JobCriteria("Intern"))
-        self.assertEqual(result.score, 100.0)
+        self.assertEqual(result.score, 0.0)
+        self.assertIn("Insufficient job criteria", result.explanation)
 
 
 class FairnessTests(unittest.TestCase):
@@ -31,6 +32,7 @@ class FairnessTests(unittest.TestCase):
         ], threshold=75)
         self.assertEqual(result["selection_rates"]["A"], 0.5)
         self.assertEqual(result["selection_rates"]["B"], 0.0)
+        self.assertEqual(result["min_max_selection_rate_ratio"], 0.0)
 
 
 class MemoryTests(unittest.TestCase):
