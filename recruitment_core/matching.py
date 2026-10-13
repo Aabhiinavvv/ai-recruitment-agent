@@ -70,18 +70,25 @@ def score_candidate(candidate: CandidateProfile, job: JobCriteria) -> MatchResul
     elif preferred:
         skill_score = 100 * len(matched_preferred) / len(preferred)
     else:
-        skill_score = 100.0
+        skill_score = 0.0
 
     minimum = max(0.0, float(job.minimum_experience_years or 0.0))
     years = max(0.0, float(candidate.experience_years or 0.0))
     experience_score = 100.0 if minimum == 0 else min(100.0, years / minimum * 100.0)
-    score = round(job.skill_weight * skill_score + job.experience_weight * experience_score, 2)
+    no_criteria = not required and not preferred and minimum == 0
+    if no_criteria:
+        experience_score = 0.0
+        score = 0.0
+    else:
+        score = round(job.skill_weight * skill_score + job.experience_weight * experience_score, 2)
 
     evidence = {
         skill: candidate.evidence.get(skill, "Candidate-listed skill; supporting evidence needs review.")
         for skill in matched_required + matched_preferred
     }
-    if missing_required:
+    if no_criteria:
+        explanation = "Insufficient job criteria to calculate a meaningful match. Add required/preferred skills or a minimum experience requirement."
+    elif missing_required:
         explanation = (
             f"{score}/100 preliminary match for {job.role_title}. "
             f"Listed evidence matches {len(matched_required)}/{len(required)} required skills. "
