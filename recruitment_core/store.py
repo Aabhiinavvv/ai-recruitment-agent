@@ -18,7 +18,7 @@ def _now() -> str:
 
 class RecruitmentStore:
     def __init__(self, db_path: Optional[str] = None):
-        self.db_path = db_path or __import__("os")..getenv("HIREOS_DB_PATH", "data/hireos.sqlite3")
+        self.db_path = db_path or __import__("os").getenv("HIREOS_DB_PATH", "data/hireos.sqlite3")
         if self.db_path != ":memory:":
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
