@@ -1,103 +1,143 @@
-# ai-recruitment-agent
-AI-powered Recruitment Agent built with Streamlit and LangChain. Analyze resumes, evaluate skills, generate interview questions, and improve resumes using LLMs. Includes semantic skill scoring, RAG-based Q&amp;A, and resume enhancement for smarter hiring decisions.
+# HireOS — Agentic Talent Intelligence
 
-Recruitment actions are orchestrated by a LangGraph supervisor that routes work to
-resume-analysis, candidate-Q&A, interview, and resume-coaching agents. The workflow
-uses a local stdio MCP server for request and score validation. Resume screening is
-advisory: the graph pauses for a recruiter to approve or reject each assessment
-before recording a final selection. Checkpoints are held in memory for the lifetime
-of the Streamlit session.
+HireOS is a research-stage recruitment operations workspace built with Streamlit, Python, LangChain, LangGraph, Gemini, and a local MCP guardrail process. The goal is to move beyond a conventional ATS by combining explainable candidate intelligence, coordinated workflow agents, persistent talent memory, and human-reviewed hiring operations.
 
-The assessment instructions restrict scoring to job-related evidence and treat
-resume/job-description content as untrusted input. The local MCP process does not
-receive Gemini API keys. Do not treat AI scores or camera/motion signals as a
-substitute for a fair, human-led hiring process.
+> **Research prototype, not a production hiring system.** Sample records are illustrative. AI output is advisory. Recruiters must own decisions. External job boards, email/WhatsApp delivery, and background-check providers are not connected unless an authorised integration is separately implemented and configured.
+
+## Product workspace
+
+- **Overview:** recruiter command centre, pipeline snapshot, agent status and guardrails.
+- **Talent Pipeline:** manage candidate records, import an authorised CSV, run the multi-stage LangGraph hiring workflow, compare skills transparently, prepare interview questions, and record a recruiter-owned next step with a rationale.
+- **New Requisition:** define a role, requirements, preferred skills and experience; Gemini can suggest job-related skills from a job description if a key is configured. A recruiter should verify the suggestions.
+- **AI Screening:** analyse a PDF/TXT resume against a role using the existing Gemini-backed assessment. Without Gemini, the app clearly labels its local exact-text matching baseline.
+- **Interview Studio:** create structured interview question plans and download them.
+- **Candidate Copilot:** ask resume-grounded questions, evaluate a supplied answer against a job-related rubric, and generate resume coaching.
+- **Talent Memory:** consent-gated structured candidate history with lookup and deletion in the local prototype.
+- **Verification Hub:** track verification coordination statuses. This page does **not** contact a vendor, employer, university, or police department.
+- **Fairness & Audit:** offline group-level selection-rate diagnostics and persistent workflow event history.
+- **Settings:** model and prototype safety/deployment notes.
+
+## Architecture
+
+~~~text
+Streamlit Recruiter Workspace
+          |
+          +--> Job Analysis Agent (criteria extraction / validation)
+          |
+          +--> Existing RecruitmentWorkflow (LangGraph supervisor)
+          |          |
+          |          +--> Resume analysis / candidate Q&A
+          |          +--> Interview question and answer evaluation
+          |          +--> Resume coaching
+          |          +--> MCP guardrail tools (stdio subprocess)
+          |          +--> Human approval interrupt for AI resume assessment
+          |
+          +--> Hiring Workflow Graph (LangGraph)
+          |          |
+          |          +--> Job criteria validation
+          |          +--> Explainable candidate matching
+          |          +--> Interview-plan preparation
+          |          +--> Verification checklist preparation
+          |          +--> Recruiter review packet
+          |
+          +--> SQLite stores
+                     +--> Requisitions and pipeline records / workflow audit events
+                     +--> Consent-gated candidate-history memory
+~~~
+
+### Research principles
+
+1. **Explicit criteria before scoring.** The matching engine uses required/preferred skill coverage and optionally specified experience criteria.
+2. **Evidence gaps are not proof of inability.** Missing resume terms are surfaced for verification.
+3. **Human decision authority.** Matching and model scores do not automatically hire or reject a candidate.
+4. **Prompt-injection awareness.** Resume and JD text is untrusted input. The MCP guardrail validates task, input size, and output score ranges.
+5. **Privacy by design.** Candidate memory requires explicit consent in this prototype and supports deletion. Real deployments need a documented lawful basis and full privacy/security controls.
+6. **Verification orchestration, not bypass.** Verification tasks require authorised providers/official processes and the relevant notices/consent. The prototype only stores statuses.
+7. **No unauthorised scraping.** Job-board sourcing/applications need official APIs, approved integrations, or partnerships.
+
+## Tech stack
+
+- Python 3.11+
+- Streamlit UI
+- Google Gemini through LangChain (langchain-google-genai)
+- LangGraph for supervised workflows and human review interruptions
+- MCP Python SDK for local guardrail tools
+- PyPDF for PDF text extraction
+- LangChain text splitters + FAISS + Gemini embeddings for existing resume RAG
+- SQLite for local prototype persistence
+- unittest for automated tests
 
 ## Run locally
 
-```bash
+### 1. Create environment and install packages
+
+~~~bash
+python -m venv .venv
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+# macOS/Linux: source .venv/bin/activate
+
 pip install -r requirements.txt
+~~~
+
+### 2. Configure Gemini (optional for local baseline)
+
+Copy .env.example to .env and add your own Gemini API key:
+
+~~~dotenv
+GEMINI_API_KEY=replace_with_your_key
+# Alternative accepted by the app:
+# GOOGLE_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+HIREOS_DB_PATH=data/hireos.sqlite3
+~~~
+
+Do not commit .env, real candidate resumes, candidate personal data, or SQLite data files.
+
+### 3. Start HireOS
+
+~~~bash
 streamlit run app.py
-```
+~~~
 
-Create a local `.env` file with one of these keys:
+Open the local URL printed by Streamlit, usually http://localhost:8501.
 
-```bash
-GEMINI_API_KEY=your_api_key
-# or
-GOOGLE_API_KEY=your_api_key
-```
+### 4. Run tests
 
-## Deploy on AWS App Runner
+~~~bash
+python -m unittest discover -s tests -v
+~~~
 
-This app is already containerized and listens on port `8501`, so the simplest AWS deployment is:
+The tests do not require a real Gemini key.
 
-1. Push the Docker image to Amazon ECR.
-2. Create an AWS App Runner service from that ECR image.
-3. Set `GEMINI_API_KEY` or `GOOGLE_API_KEY` as an App Runner environment variable.
+## Data and privacy notes
 
-### 1. Build and push to ECR
+- Pipeline and requisition data are stored in data/hireos.sqlite3 by default.
+- Consent-gated candidate-history memory is stored in data/candidate_memory.sqlite3.
+- Set HIREOS_DB_PATH to change the pipeline store path.
+- Local SQLite is not a secure multi-tenant production data platform. Add authentication, organisation/tenant isolation, encryption, least-privilege access, backups, retention/deletion automation, and audit access controls before real candidate data is used.
+- Do not store sensitive/protected attributes in scoring inputs. If lawful fairness audits are needed, keep audit attributes separate from individual ranking inputs and obtain specialist privacy/legal review.
+- Do not use webcam movement, facial expression, inferred emotion, or similar signals as evidence of honesty, ability, or suitability.
 
-Set these values for your AWS account:
+## Research evaluation plan
 
-```bash
-AWS_REGION=ap-south-1
-AWS_ACCOUNT_ID=123456789012
-ECR_REPOSITORY=recruitment-system
-IMAGE_TAG=latest
-```
+The code is an implementation baseline, not evidence that the hypotheses have been proven. Evaluate:
 
-Create the ECR repository:
+- **Candidate ranking:** keyword baseline vs embedding retrieval vs LLM-only vs hybrid rubric; report Precision@K, Recall@K, MRR and NDCG@K against recruiter-reviewed relevance labels.
+- **Evidence quality:** proportion of score reasons traceable to resume evidence; rate of unsupported claims.
+- **Fairness:** selection rates and subgroup sample sizes on lawful, suitable, sufficiently sampled audit data; investigate causes rather than treating a single threshold as certification.
+- **Workflow efficiency:** recruiter task time, manual actions, completion rate, override rate, latency and model cost.
+- **Agent orchestration:** single-model baseline vs supervised workflow; measure task success, latency, cost, recoverability and audit completeness.
 
-```bash
-aws ecr create-repository \
-  --repository-name $ECR_REPOSITORY \
-  --region $AWS_REGION
-```
+Use de-identified or synthetic datasets until data rights, candidate notices, consent/lawful basis, security, and retention policies have been established.
 
-Log Docker in to ECR:
+## Current limitations / next phases
 
-```bash
-aws ecr get-login-password --region $AWS_REGION | \
-docker login --username AWS --password-stdin \
-  $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
-```
+1. Add recruiter feedback and stronger evidence provenance to the match report.
+2. Benchmark semantic embeddings and reranking against the deterministic matcher.
+3. Add authentication, multi-tenant storage, encrypted secrets, access logs and retention policies.
+4. Implement scheduling, outreach and verification provider adapters only through authorised APIs and with explicit approval gates.
+5. Add deployment monitoring and an end-to-end integration/security test suite.
 
-Build, tag, and push:
-
-```bash
-docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
-
-docker tag $ECR_REPOSITORY:$IMAGE_TAG \
-  $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG
-
-docker push \
-  $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG
-```
-
-### 2. Create the App Runner service
-
-In AWS Console:
-
-1. Open **App Runner**.
-2. Choose **Create service**.
-3. Source: **Container registry**.
-4. Provider: **Amazon ECR**.
-5. Select the image you pushed: `recruitment-system:latest`.
-6. Deployment trigger: choose **Manual** for a first deployment.
-7. Port: `8501`.
-8. Environment variables: add `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
-9. Health check path: `/_stcore/health`.
-10. Create and wait for the service URL.
-
-### 3. Updating the app
-
-After changing code:
-
-```bash
-docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
-docker tag $ECR_REPOSITORY:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG
-docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG
-```
-
-Then redeploy the App Runner service from the AWS Console.
+See docs/RESEARCH_MVP.md for the research hypothesis, experiments and phased plan.

@@ -1,329 +1,750 @@
-import streamlit as st
+"""A polished recruiter workspace layered over the existing recruitment agent.
+
+This dashboard uses session-scoped demo data unless recruiters upload resumes and
+run the existing Gemini-backed assessment flow. It does not claim that external
+job boards, BGV vendors, email, or WhatsApp are connected without configured APIs.
+"""
+from __future__ import annotations
+
 import asyncio
 import os
+from datetime import date, datetime, timedelta
+
+import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
+
+st.set_page_config(
+    page_title="HireOS | Agentic Talent Intelligence",
+    page_icon="🎯",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+from agents import RecruitmentAgent
+from workflow import RecruitmentWorkflow
+from recruitment_core.matching import CandidateProfile, JobCriteria, score_candidate
+from recruitment_core.memory import CandidateMemory
+from recruitment_core.fairness import selection_rate_audit
+from recruitment_core.store import RecruitmentStore
+from recruitment_core.orchestrator import run_hiring_workflow
+
+# ---------------------------------------------------------------------------
+# Theme
+# ---------------------------------------------------------------------------
+st.markdown(
+    """
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
+      :root { --ink:#182230; --muted:#667085; --line:#e7eaf0; --paper:#f6f8fc; --violet:#6857d9; --mint:#d9f7e9; }
+      html, body, [class*="css"] { font-family:'DM Sans',sans-serif; }
+      .stApp { background:var(--paper); color:var(--ink); }
+      [data-testid="stHeader"] { background:rgba(246,248,252,.85); }
+      [data-testid="stSidebar"] { background:#111827; border-right:1px solid #202b3b; }
+      [data-testid="stSidebar"] * { color:#e5e7eb; }
+      [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p { color:#aeb8c8; }
+      .block-container { padding-top:1.6rem; padding-bottom:3rem; max-width:1540px; }
+      h1,h2,h3 { font-family:'Manrope',sans-serif; letter-spacing:-.035em; color:#172033; }
+      .eyebrow { color:#6d5bd0; font-weight:800; font-size:.72rem; letter-spacing:.15em; text-transform:uppercase; }
+      .hero { border:1px solid #e6e9f2; background:linear-gradient(120deg,#fff 0%,#f5f2ff 68%,#eefbf5 100%); border-radius:22px; padding:26px 30px; margin:0 0 18px; box-shadow:0 8px 30px rgba(25,36,63,.04); }
+      .hero h1 { margin:.2rem 0 .45rem; font-size:2.15rem; }
+      .hero p { color:#667085; margin:0; max-width:750px; }
+      .hero-tags { display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; }
+      .hero-tag { border:1px solid #e1defa; background:#fff; padding:6px 10px; border-radius:99px; color:#5142b5; font-size:.78rem; font-weight:700; }
+      .metric { background:#fff; border:1px solid var(--line); border-radius:16px; padding:16px 18px; min-height:112px; box-shadow:0 4px 16px rgba(25,36,63,.025); }
+      .metric-label { font-size:.78rem; color:var(--muted); font-weight:600; }
+      .metric-value { font:800 1.8rem 'Manrope',sans-serif; color:#1d2638; padding:.25rem 0; }
+      .metric-foot { font-size:.74rem; color:#7c8798; }
+      .panel { background:#fff; border:1px solid var(--line); border-radius:18px; padding:18px 20px; margin-bottom:14px; }
+      .section-note { color:#7a8494; font-size:.84rem; margin-top:-.5rem; margin-bottom:1rem; }
+      .agent-row { padding:12px 0; border-bottom:1px solid #eef0f5; display:flex; align-items:center; gap:12px; }
+      .agent-row:last-child { border-bottom:0; }
+      .agent-icon { display:flex; align-items:center; justify-content:center; border-radius:12px; width:40px; height:40px; background:#f0edff; color:#5e4ac9; font-weight:800; }
+      .agent-title { font-weight:750; color:#202b3d; }
+      .agent-sub { color:#818b9c; font-size:.77rem; margin-top:2px; }
+      .status-pill { background:#e6f8ef; color:#17774d; font-size:.72rem; border-radius:99px; padding:4px 8px; font-weight:800; }
+      .stButton>button { border-radius:10px; font-weight:700; min-height:2.65rem; border:1px solid #ddd9fa; }
+      .stButton>button[kind="primary"] { background:#6857d9; border-color:#6857d9; color:#fff; }
+      [data-testid="stTabs"] button { font-weight:700; }
+      .small-muted { color:#7c8798; font-size:.78rem; }
+      div[data-testid="stDataFrame"] { border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+      hr { border-color:#e8ebf2; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ---------------------------------------------------------------------------
+# State and helper functions
+# ---------------------------------------------------------------------------
+def init_state():
+    store = RecruitmentStore()
+    sample_jobs = [
+        {"id":"JOB-2401","title":"AI/ML Engineer","team":"Applied AI","location":"Bengaluru / Hybrid","type":"Full-time","status":"Active","applicants":48,"created":"Sample"},
+        {"id":"JOB-2402","title":"Data Analyst Intern","team":"Business Intelligence","location":"Remote · India","type":"Internship","status":"Active","applicants":76,"created":"Sample"},
+        {"id":"JOB-2403","title":"Backend Engineer","team":"Platform","location":"Noida / Hybrid","type":"Full-time","status":"Draft","applicants":0,"created":"Sample"},
+    ]
+    sample_candidates = [
+        {"Candidate":"Aarav Sharma","Role":"AI/ML Engineer","Stage":"Screening","Skills":"Python, ML, NLP","Score":86,"Source":"Campus","Updated":"Sample","ID":"demo-candidate-001"},
+        {"Candidate":"Priya Verma","Role":"Data Analyst Intern","Stage":"Interview","Skills":"SQL, Python, Power BI","Score":82,"Source":"Referral","Updated":"Sample","ID":"demo-candidate-002"},
+        {"Candidate":"Kabir Singh","Role":"Backend Engineer","Stage":"Review","Skills":"Python, APIs, PostgreSQL","Score":79,"Source":"Career page","Updated":"Sample","ID":"demo-candidate-003"},
+    ]
+    saved_jobs = store.load_jobs()
+    saved_candidates = store.load_candidates()
+    defaults = {
+        "resume_agent": None,
+        "analysis_result": None,
+        "resume_analyzed": False,
+        "uploaded_resume_name": None,
+        "jobs": saved_jobs if saved_jobs else sample_jobs,
+        "candidate_rows": saved_candidates if saved_candidates else sample_candidates,
+        "activity": store.load_events() or ["Recruiter workspace initialised", "AI assessment workflow available", "Human review policy enabled"],
+        "verification_rows": store.load_verifications(),
+        "saved_results": [],
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
+def log_activity(message: str, event_type: str = "workflow", subject_ref: str = ""):
+    if "activity" not in st.session_state:
+        st.session_state.activity = []
+    st.session_state.activity.append(message)
+    try:
+        RecruitmentStore().log_event(message, event_type=event_type, subject_ref=subject_ref)
+    except Exception as exc:
+        st.warning(f"Could not persist audit event: {exc}")
 
+
+init_state()
+
+ROLE_REQUIREMENTS = {
+    "AI/ML Engineer": ["Python","Machine Learning","Deep Learning","Data Analysis","NLP","Model Deployment","Feature Engineering","SQL"],
+    "Frontend Engineer": ["HTML","CSS","JavaScript","React","TypeScript","Responsive Design","Testing","Git"],
+    "Backend Engineer": ["Python","Java","API Development","SQL","Authentication","Testing","Docker","Cloud"],
+    "Full Stack Engineer": ["JavaScript","React","Backend Development","SQL","API Development","Git","Testing"],
+    "Product Manager": ["Product Strategy","Market Research","Communication","Data Analysis","Prioritization","Roadmapping"],
+    "Data Scientist": ["Python","Machine Learning","Statistics","Data Wrangling","SQL","Data Visualization","Model Evaluation"],
+    "Data Analyst Intern": ["SQL","Python","Excel","Data Analysis","Data Visualization","Statistics"],
+    "Software Engineer": ["Programming","Data Structures","Algorithms","Testing","Git","API Development"],
+}
+DEFAULT_SKILLS = ["Python","SQL","Machine Learning","Data Analysis","Communication","Git","APIs","Cloud"]
 
 def ensure_event_loop():
-    """Provide an event loop for libraries imported by Streamlit's script thread."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
-
-ensure_event_loop()
-
-# set_page_config MUST be the very first Streamlit call — only called once here, NOT in ui.py
-st.set_page_config(page_title="InterviewAI", page_icon=":sparkles:", layout="wide")
-
-from agents import RecruitmentAgent  # matches class name in agents.py
-import atexit
-import ui
-from workflow import RecruitmentWorkflow
-
-from dotenv import load_dotenv
-load_dotenv()
-
-ROLE_REQUIREMENTS = {
-    "AI/ML Engineer": [
-        "Python", "Machine Learning", "Deep Learning", "Data Analysis", "Model Deployment",
-        "Natural Language Processing", "Computer Vision", "Reinforcement Learning", "AI Ethics",
-        "Cloud Computing", "MLOPS", "Scikit Learn", "AutoML", "Feature Engineering",
-        "Data Engineering", "Hugging Face",
-    ],
-    "Frontend Engineer": [
-        "HTML", "CSS", "JavaScript", "React", "Vue.js", "Angular", "Responsive Design",
-        "Cross-Browser Compatibility", "Web Performance Optimization", "Version Control (Git)",
-        "UI/UX Design Principles", "Testing and Debugging", "TypeScript", "SASS", "Bootstrap",
-        "Tailwind CSS", "Redux","GraphQL", "Performance Optimization",
-    ],
-    "Backend Engineer": [
-        "Python", "Java", "Node.js", "Ruby", "Go", "Database Management (SQL/NoSQL)",
-        "API Development (RESTful, GraphQL)", "Microservices Architecture",
-        "Cloud Computing (AWS, Azure, GCP)", "Containerization (Docker, Kubernetes)",
-        "Version Control (Git)", "Testing and Debugging", "Spring Boot", "Django", "Flask",
-        "Express.js", "Serverless Architecture", "Message Queues (RabbitMQ, Kafka)",
-        "Authentication and Authorization",
-    ],
-    "DevOps Engineer": [
-        "Linux/Unix Systems", "Cloud Platforms (AWS, Azure, GCP)",
-        "Containerization (Docker, Kubernetes)", "Infrastructure as Code (Terraform, Ansible)",
-        "CI/CD Pipelines (Jenkins, GitLab CI)", "Monitoring and Logging (Prometheus, ELK Stack)",
-        "Scripting Languages (Python, Bash)", "Version Control (Git)", "Security Best Practices",
-        "Networking Concepts", "Configuration Management", "Serverless Architecture",
-        "CloudFormation",  "Nagios","Puppet", "Grafana", "Istio", "Service Mesh",
-    ],
-    "Full Stack Engineer": [
-        "Frontend Development (HTML, CSS, JavaScript, React, Vue.js)",
-        "Backend Development (Python, Java, Node.js, Ruby, Go)",
-        "Database Management (SQL/NoSQL)", "API Development (RESTful, GraphQL)",
-        "Cloud Computing (AWS, Azure, GCP)", "Containerization (Docker, Kubernetes)",
-        "Version Control (Git)", "Testing and Debugging", "UI/UX Design Principles",
-        "Security Best Practices", "TypeScript", "SASS", "Bootstrap", "Tailwind CSS",
-        "GraphQL", "Redux", "Performance Optimization", "Spring Boot", "Django", "Flask",
-        "Express.js", "Serverless Architecture", "Message Queues (RabbitMQ, Kafka)",
-        "Authentication and Authorization",
-    ],
-    "Product Manager": [
-        "Product Strategy", "Market Research", "User Experience (UX) Design",
-        "Agile Methodologies", "Project Management", "Data Analysis", "Stakeholder Management",
-        "Communication Skills", "Leadership", "Problem-Solving Skills", "Roadmapping",
-        "Prioritization", "Metrics and Analytics", "Customer Development",
-        "Go-to-Market Strategy", "Cross-Functional Collaboration",
-    ],
-    "Data Scientist": [
-        "Python", "R", "Machine Learning", "Deep Learning", "Data Visualization",
-        "Statistical Analysis", "Data Wrangling", "Big Data Technologies (Hadoop, Spark)",
-        "Cloud Computing (AWS, Azure, GCP)", "Version Control (Git)", "Testing and Debugging",
-        "Scikit Learn", "AutoML", "Feature Engineering", "Data Engineering", "Hugging Face",
-        "Natural Language Processing", "Computer Vision", "Reinforcement Learning", "AI Ethics",
-    ],
-}
-
-# ── Session state defaults ──────────────────────────────────────────────────
-if "resume_agent" not in st.session_state:
-    st.session_state.resume_agent = None
-if "resume_analyzed" not in st.session_state:
-    st.session_state.resume_analyzed = False
-if "analysis_result" not in st.session_state:
-    st.session_state.analysis_result = None
-
-
-# ── Agent setup ─────────────────────────────────────────────────────────────
-def setup_agent(config):
-    """Initialise (or update) the RecruitmentAgent in session state."""
-    api_key = (
-        config.get("gemini_api_key")
-        or os.getenv("GEMINI_API_KEY")
-        or os.getenv("GOOGLE_API_KEY")
-    )
+def setup_agent(api_key: str, model: str, cutoff: int):
     if not api_key:
-        st.error("Please enter your Gemini API key in the sidebar or set GEMINI_API_KEY in .env.")
         return None
-
     if st.session_state.resume_agent is None:
         st.session_state.resume_agent = RecruitmentWorkflow(
-            RecruitmentAgent(
-                api_key=api_key,
-                cutoff_score=config.get("cutoff_score", 75),
-                model=config.get("gemini_model"),
-            )
+            RecruitmentAgent(api_key=api_key, cutoff_score=cutoff, model=model)
         )
     else:
-        st.session_state.resume_agent.configure(
-            api_key=api_key,
-            cutoff_score=config.get("cutoff_score", 75),
-            model=config.get("gemini_model"),
-        )
-
+        st.session_state.resume_agent.configure(api_key=api_key, cutoff_score=cutoff, model=model)
     return st.session_state.resume_agent
 
+def metric_card(label, value, foot):
+    st.markdown(
+        f'<div class="metric"><div class="metric-label">{label}</div><div class="metric-value">{value}</div><div class="metric-foot">{foot}</div></div>',
+        unsafe_allow_html=True,
+    )
 
-# ── Core action helpers ──────────────────────────────────────────────────────
-def analyze_resume(agent, resume_file, role, custom_jd):
-    if not resume_file:
-        st.error("Please upload a resume file to analyze.")
-        return None
-    if not role:
-        st.error("Please select a job role to analyze against.")
-        return None
+def parse_skills(value):
+    return [item.strip() for item in value.split(",") if item.strip()]
 
-    try:
-        with st.spinner("Analyzing resume…"):
-            if custom_jd:
-                result = agent.analyze_resume(resume_file, role=role, custom_jd=custom_jd)
+# ---------------------------------------------------------------------------
+# Navigation and header
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.markdown("## ◈ HireOS")
+    st.caption("AGENTIC TALENT INTELLIGENCE")
+    st.divider()
+    page = st.radio(
+        "WORKSPACE",
+        ["Overview","Talent Pipeline","New Requisition","AI Screening","Interview Studio","Candidate Copilot","Talent Memory","Verification Hub","Fairness & Audit","Settings"],
+        label_visibility="visible",
+    )
+    st.divider()
+    st.markdown("**WORKFLOW STATUS**")
+    st.markdown('<span class="status-pill">● Human approval enabled</span>', unsafe_allow_html=True)
+    st.caption("Agents prepare evidence and perform approved operations. Recruiters retain decision authority.")
+    st.divider()
+    st.markdown("**LLM CONFIGURATION**")
+    key_in = st.text_input("Gemini API key", type="password", placeholder="Use GEMINI_API_KEY from .env")
+    model = st.selectbox("Gemini model", ["gemini-2.5-flash","gemini-2.5-pro"], index=0)
+    cutoff = st.slider("Review threshold (advisory)", 0, 100, 75)
+    env_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_key = key_in.strip() or env_key or ""
+    if api_key:
+        st.caption("LLM configured for this session")
+    else:
+        st.caption("LLM not configured · local matching and demo workspace still available")
+
+st.markdown(
+    """
+    <div class="hero">
+      <div class="eyebrow">Recruitment command center · research MVP</div>
+      <h1>Build teams, not spreadsheets.</h1>
+      <p>A human-governed AI workforce for talent acquisition — candidate intelligence, assessment workflows, persistent talent memory and verification coordination in one recruiter workspace.</p>
+      <div class="hero-tags"><span class="hero-tag">Multi-agent ready</span><span class="hero-tag">Evidence-led matching</span><span class="hero-tag">Human-in-the-loop</span><span class="hero-tag">India-first workflows</span></div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Top-level dashboard summaries; clearly label sample/demo counts.
+jobs = st.session_state.jobs
+candidate_rows = st.session_state.candidate_rows
+total_applicants = sum(int(job.get("applicants", 0)) for job in jobs)
+active_jobs = sum(1 for job in jobs if job["status"] == "Active")
+awaiting_review = 1 if st.session_state.analysis_result and st.session_state.analysis_result.get("decision_status") == "Pending recruiter review" else 0
+
+if page == "Overview":
+    st.subheader("Recruitment overview")
+    st.markdown('<div class="section-note">Sample workspace data is illustrative until you import real applications. No job-board integration is assumed.</div>', unsafe_allow_html=True)
+    c1,c2,c3,c4 = st.columns(4)
+    with c1: metric_card("ACTIVE REQUISITIONS", active_jobs, "+ roles currently open")
+    with c2: metric_card("PIPELINE PROFILES", len(candidate_rows), "sample candidate records")
+    with c3: metric_card("APPLICATIONS TRACKED", total_applicants, "illustrative totals")
+    with c4: metric_card("AWAITING REVIEW", awaiting_review, "recruiter approval required")
+    left,right = st.columns([1.25,1])
+    with left:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown("### Hiring pipeline")
+        stage_counts = {}
+        for row in candidate_rows:
+            stage_counts[row["Stage"]] = stage_counts.get(row["Stage"],0)+1
+        if stage_counts:
+            st.bar_chart({"Candidates":stage_counts})
+        else:
+            st.info("No candidate records yet.")
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown("### Recent activity")
+        for entry in st.session_state.activity[-6:][::-1]:
+            st.write("• " + entry)
+        st.markdown('</div>', unsafe_allow_html=True)
+    with right:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown("### Agent workforce")
+        agents = [
+            ("JA","Job analysis agent","Extracts role criteria and hiring rubrics","Ready"),
+            ("RS","Resume intelligence","Parses evidence and maps skills","Ready"),
+            ("CM","Candidate matching","Explains role alignment","Ready"),
+            ("IA","Interview agent","Creates structured role-based questions","API dependent"),
+            ("TM","Talent memory","Stores consented recruiting history","Local prototype"),
+            ("VA","Verification coordinator","Tracks authorised verification tasks","Manual/provider dependent"),
+        ]
+        for icon_, title, desc, status in agents:
+            st.markdown(f'<div class="agent-row"><div class="agent-icon">{icon_}</div><div style="flex:1"><div class="agent-title">{title}</div><div class="agent-sub">{desc}</div></div><span class="small-muted">{status}</span></div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown("### System guardrails")
+        st.write("✓ Human owns final hiring decisions")
+        st.write("✓ Job-related criteria only")
+        st.write("✓ Consent-gated memory prototype")
+        st.write("✓ Provider-backed verification only")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+elif page == "Talent Pipeline":
+    st.subheader("Talent pipeline")
+    st.markdown('<div class="section-note">Track candidate stage and source, run a transparent matching workflow, and record recruiter-owned next steps. Demo rows are illustrative.</div>', unsafe_allow_html=True)
+    if st.session_state.candidate_rows:
+        st.dataframe(st.session_state.candidate_rows, use_container_width=True, hide_index=True)
+    with st.expander("Import authorised candidate records from CSV"):
+        st.caption("Use only records you are authorised to process. Supported columns: Candidate (or Name), Role, Skills, Stage, Source, Score.")
+        csv_upload = st.file_uploader("Candidate CSV", type=["csv"], key="candidate_csv_upload")
+        if csv_upload and st.button("Validate and import CSV", key="import_candidate_csv"):
+            if csv_upload.size > 2 * 1024 * 1024:
+                st.error("CSV exceeds the 2 MB prototype limit.")
             else:
-                result = agent.analyze_resume(
-                    resume_file,
-                    role=role,
-                    role_requirements=ROLE_REQUIREMENTS.get(role, []),
-                )
-        st.session_state.resume_analyzed = True
-        st.session_state.analysis_result = result
-        return result
-    except Exception as e:
-        st.error(f"Error analyzing resume: {e}")
-        return None
-
-
-def ask_question(agent, question):
-    # FIX: this function was referenced in a lambda but never defined
-    try:
-        return agent.ask_question(question)
-    except Exception as e:
-        st.error(f"Error answering question: {e}")
-        return ""
-
-
-def generate_interview_questions(agent, question_types, difficulty, num_questions):
-    # FIX: signature now matches agents.py (types, difficulty, num_questions)
-    try:
-        with st.spinner("Generating interview questions…"):
-            return agent.generate_interview_questions(question_types, difficulty, num_questions)
-    except Exception as e:
-        st.error(f"Error generating questions: {e}")
-        return []
-
-
-def generate_detailed_weaknesses(agent):
-    try:
-        with st.spinner("Generating detailed weakness analysis..."):
-            weaknesses = agent.generate_detailed_weaknesses()
-        st.session_state.analysis_result = agent.analysis_results
-        return weaknesses
-    except Exception as e:
-        st.error(f"Error generating detailed weakness analysis: {e}")
-        return []
-
-
-def improve_resume(agent, improvement_areas, target_role):
-    try:
-        with st.spinner("Generating resume improvement suggestions…"):
-            return agent.improve_resume(improvement_areas, target_role)
-    except Exception as e:
-        st.error(f"Error improving resume: {e}")
-        return {}
-
-
-def get_improved_resume(agent, target_role, highlighted_skills):
-    try:
-        with st.spinner("Generating improved resume…"):
-            return agent.get_improved_resume(target_role, highlighted_skills)
-    except Exception as e:
-        st.error(f"Error generating improved resume: {e}")
-        return None
-
-
-def resolve_human_review(agent, action):
-    try:
-        return agent.approve_or_reject(action)
-    except Exception as e:
-        st.error(f"Error recording recruiter decision: {e}")
-        return None
-
-
-# ── Cleanup ──────────────────────────────────────────────────────────────────
-def cleanup():
-    if st.session_state.get("resume_agent"):
-        st.session_state.resume_agent.cleanup()
-
-
-atexit.register(cleanup)
-
-
-# ── Main app ─────────────────────────────────────────────────────────────────
-def main():
-    # NOTE: ui.setup_page() must NOT call st.set_page_config — it's already called above.
-    ui.display_header()
-    config = ui.setup_sidebar()
-    agent = setup_agent(config)
-    # Render an interactive dashboard hero (radar + bars) to give the page a modern, website-like feel
-    try:
-        ui.display_interactive_dashboard(st.session_state.get('analysis_result'))
-    except Exception:
-        # non-fatal: keep app running if the component fails
-        pass
-    tabs = ui.create_tabs()
-
-    # ── Tab 0: Resume Analysis ───────────────────────────────────────────────
-    with tabs[0]:
-        role, custom_jd = ui.role_selection_section(ROLE_REQUIREMENTS)
-        uploaded_resume = ui.resume_upload_section()
-
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col2:
-            if st.button("Analyze Resume", use_container_width=True):
-                if agent and uploaded_resume:
-                    result = analyze_resume(agent, uploaded_resume, role, custom_jd)
-
-        # Persist result across reruns
-        if st.session_state.analysis_result:
-            ui.display_analysis_result(st.session_state.analysis_result, type="primary")
-            if agent and agent.awaiting_review:
-                st.info(
-                    "Review the job-related evidence above. The AI score is advisory; "
-                    "a recruiter must make the final selection decision."
-                )
-                approve_col, reject_col = st.columns(2)
-                with approve_col:
-                    if st.button("Approve candidate", use_container_width=True):
-                        result = resolve_human_review(agent, "approve")
-                        if result is not None:
-                            st.session_state.analysis_result = result
-                            st.rerun()
-                with reject_col:
-                    if st.button("Reject candidate", use_container_width=True):
-                        result = resolve_human_review(agent, "reject")
-                        if result is not None:
-                            st.session_state.analysis_result = result
-                            st.rerun()
-            if (
-                agent
-                and st.session_state.analysis_result.get("missing_skills")
-                and not st.session_state.analysis_result.get("detailed_weaknesses")
-            ):
-                if st.button("Generate Detailed Weakness Analysis"):
-                    generate_detailed_weaknesses(agent)
+                try:
+                    import pandas as pd
+                    imported = pd.read_csv(csv_upload).fillna("").to_dict(orient="records")
+                    added = 0
+                    skipped = 0
+                    for source_row in imported:
+                        display_name = str(source_row.get("Candidate") or source_row.get("Name") or "").strip()
+                        if not display_name:
+                            skipped += 1
+                            continue
+                        new_row = {
+                            "Candidate": display_name,
+                            "Role": str(source_row.get("Role") or "Unassigned").strip(),
+                            "Stage": str(source_row.get("Stage") or "Applied").strip(),
+                            "Skills": str(source_row.get("Skills") or "").strip(),
+                            "Score": str(source_row.get("Score") or "Pending").strip(),
+                            "Source": str(source_row.get("Source") or "Import").strip(),
+                            "Updated": date.today().isoformat(),
+                            "ID": f"candidate-{datetime.now().strftime('%Y%m%d%H%M%S%f')}-{added}",
+                        }
+                        st.session_state.candidate_rows.append(new_row)
+                        RecruitmentStore().save_candidate(new_row)
+                        added += 1
+                    if added:
+                        log_activity(f"Imported {added} candidate records from CSV", "candidate_import")
+                    st.success(f"Imported {added} records. Skipped {skipped} rows without a candidate name.")
                     st.rerun()
+                except Exception as exc:
+                    st.error(f"Could not import CSV: {exc}")
 
-    # ── Tab 1: Q&A ───────────────────────────────────────────────────────────
-    with tabs[1]:
-        if st.session_state.resume_analyzed and st.session_state.analysis_result:
-            ui.resume_qa_section(
-                has_resume=True,
-                ask_question_func=lambda q: ask_question(st.session_state.resume_agent, q),
-            )
+    with st.expander("Add candidate record"):
+        with st.form("candidate_record"):
+            name = st.text_input("Candidate display name")
+            role = st.selectbox("Role", list(ROLE_REQUIREMENTS))
+            skills = st.text_input("Skills (comma-separated)")
+            stage = st.selectbox("Stage", ["Applied","Screening","Review","Assessment","Interview","Offer","Hired","Closed"])
+            source = st.selectbox("Source", ["Career page","Referral","Campus","Import","Authorised integration"])
+            if st.form_submit_button("Add to pipeline"):
+                if name.strip():
+                    candidate_record = {
+                        "Candidate":name.strip(),"Role":role,"Stage":stage,"Skills":skills,
+                        "Score":"Pending","Source":source,"Updated":date.today().isoformat(),
+                        "ID":f"candidate-{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+                    }
+                    st.session_state.candidate_rows.append(candidate_record)
+                    RecruitmentStore().save_candidate(candidate_record)
+                    log_activity(f"Added {name.strip()} to {role} pipeline", "candidate_created", candidate_record["ID"])
+                    st.success("Candidate record added.")
+                    st.rerun()
+                else:
+                    st.error("Enter a candidate display name.")
+
+    st.markdown("### Agentic hiring workflow")
+    job_labels = [f"{job.get('id','JOB')} · {job.get('title','Untitled role')}" for job in st.session_state.jobs]
+    if job_labels and st.session_state.candidate_rows:
+        selected_label = st.selectbox("Requisition to evaluate", job_labels, key="pipeline_job_match")
+        selected_job = st.session_state.jobs[job_labels.index(selected_label)]
+        fallback_skills = ROLE_REQUIREMENTS.get(selected_job.get("title", ""), [])
+        job_for_workflow = dict(selected_job)
+        if not job_for_workflow.get("required_skills") and not job_for_workflow.get("preferred_skills"):
+            job_for_workflow["required_skills"] = fallback_skills
+        if st.button("Run multi-stage recruitment workflow", type="primary", use_container_width=True):
+            with st.spinner("Job analysis → candidate matching → interview planning → verification checklist..."):
+                report = run_hiring_workflow(job_for_workflow, st.session_state.candidate_rows)
+                st.session_state["hiring_workflow_report"] = report
+                log_activity(
+                    f"Ran recruitment workflow for {selected_job.get('title','role')}",
+                    "hiring_workflow",
+                    selected_job.get("id", ""),
+                )
+        report = st.session_state.get("hiring_workflow_report")
+        if report:
+            if report.get("summary", {}).get("errors"):
+                st.warning("Job criteria need attention: " + "; ".join(report["summary"]["errors"]))
+            summary = report.get("summary", {})
+            a,b,c,d = st.columns(4)
+            with a: metric_card("CANDIDATES ANALYSED", summary.get("candidate_count",0), "Profiles in current pipeline")
+            with b: metric_card("PRIORITY FOR REVIEW", summary.get("review_candidates",0), "Advisory only · not a rejection rule")
+            with c: metric_card("REQUIRED SKILLS", len(summary.get("required_skills",[])), "Criteria used by matcher")
+            with d: metric_card("WORKFLOW STATUS", "Human review", "Approval required")
+            if report.get("matches"):
+                st.markdown("### Explainable candidate comparison")
+                st.dataframe([
+                    {
+                        "Candidate": row["candidate"],
+                        "Preliminary score": row["score"],
+                        "Matched required skills": ", ".join(row["matched_required_skills"]),
+                        "Skills to verify": ", ".join(row["missing_required_skills"]),
+                        "Suggested next step": row["next_step"],
+                        "Decision": row["decision"],
+                    } for row in report["matches"]
+                ], use_container_width=True, hide_index=True)
+                chosen_candidate = st.selectbox(
+                    "Candidate for recruiter review",
+                    [row["candidate_id"] for row in report["matches"]],
+                    format_func=lambda value: next(row["candidate"] for row in report["matches"] if row["candidate_id"] == value),
+                    key="human_review_candidate",
+                )
+                review_action = st.selectbox(
+                    "Human reviewer decision",
+                    ["Move to interview", "Hold for more evidence", "Close application"],
+                    key="human_review_action",
+                )
+                review_note = st.text_input("Decision note (job-related, required for audit)", key="human_review_note")
+                if st.button("Record human decision", type="primary"):
+                    if not review_note.strip():
+                        st.error("Add a brief job-related rationale before recording the decision.")
+                    else:
+                        candidate_match = next(row for row in report["matches"] if row["candidate_id"] == chosen_candidate)
+                        updated = False
+                        for candidate_row in st.session_state.candidate_rows:
+                            stable_id = str(candidate_row.get("ID") or candidate_row.get("Candidate"))
+                            if stable_id == chosen_candidate or str(candidate_row.get("Candidate")) == candidate_match["candidate"]:
+                                candidate_row["Stage"] = {
+                                    "Move to interview":"Interview",
+                                    "Hold for more evidence":"Review",
+                                    "Close application":"Closed",
+                                }[review_action]
+                                candidate_row["Score"] = candidate_match["score"]
+                                candidate_row["Updated"] = date.today().isoformat()
+                                RecruitmentStore().save_candidate(candidate_row)
+                                updated = True
+                                break
+                        if updated:
+                            log_activity(
+                                f"Human review: {candidate_match['candidate']} → {review_action}. Rationale: {review_note.strip()}",
+                                "human_decision",
+                                chosen_candidate,
+                            )
+                            st.success("Human decision recorded in the pipeline and audit log.")
+                            st.rerun()
+                        else:
+                            st.error("Could not map this result to a stored pipeline record.")
+            with st.expander("Interview plan prepared by the workflow"):
+                st.dataframe(report.get("interview_plan", []), use_container_width=True, hide_index=True)
+            with st.expander("Verification steps (coordination checklist only)"):
+                st.dataframe(report.get("verification_plan", []), use_container_width=True, hide_index=True)
+            st.caption("The workflow prepares recommendations and checklists. It does not contact job boards, reject people automatically, or call background-check providers.")
+    if st.button("Export pipeline CSV"):
+        import pandas as pd
+        st.download_button("Download CSV", pd.DataFrame(st.session_state.candidate_rows).to_csv(index=False), "talent_pipeline.csv", "text/csv")
+
+elif page == "New Requisition":
+    st.subheader("New requisition studio")
+    st.markdown('<div class="section-note">Define role criteria before matching. AI-generated skills are suggestions; the hiring manager should confirm them.</div>', unsafe_allow_html=True)
+    with st.form("new_job"):
+        job_title = st.text_input("Job title", placeholder="e.g. Data Analyst Intern")
+        department = st.text_input("Department / hiring team")
+        location = st.text_input("Location", "India · Hybrid")
+        role_type = st.selectbox("Employment type", ["Full-time","Internship","Contract","Part-time","Temporary"])
+        jd = st.text_area("Job description", height=160, placeholder="Responsibilities, required skills, preferred skills, experience and evaluation criteria…")
+        required = st.text_input("Required skills (comma-separated)", help="You can enter skills manually. If left blank and Gemini is configured, the agent suggests skills from the job description.")
+        preferred = st.text_input("Preferred skills (comma-separated)")
+        min_exp = st.number_input("Minimum relevant experience (years)", 0.0, 50.0, 0.0, 0.5)
+        if st.form_submit_button("Create requisition"):
+            required_skills = parse_skills(required)
+            if not required_skills and jd.strip() and api_key:
+                try:
+                    job_agent = setup_agent(api_key, model, cutoff)
+                    with st.spinner("Job Analysis Agent is extracting role-relevant skill criteria..."):
+                        required_skills = job_agent.extract_skills_from_jd(jd)
+                except Exception as exc:
+                    st.error(f"Skill extraction failed: {exc}")
+            if not job_title.strip():
+                st.error("Enter a job title.")
+            elif not required_skills:
+                st.error("Enter required skills, or add a job description and configure Gemini for suggested skills.")
+            else:
+                job = {
+                    "id":f"JOB-{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+                    "title":job_title.strip(),"team":department.strip() or "Unassigned",
+                    "location":location.strip(),"type":role_type,"status":"Draft",
+                    "applicants":0,"created":date.today().isoformat(),
+                    "description":jd,"required_skills":required_skills,
+                    "preferred_skills":parse_skills(preferred),"min_exp":float(min_exp),
+                }
+                st.session_state.jobs.insert(0,job)
+                RecruitmentStore().save_job(job)
+                log_activity(f"Created draft requisition: {job['title']}", "job_created", job["id"])
+                st.success(f"Created {job['id']}. Review the criteria before activating the requisition.")
+                st.rerun()
+    st.markdown("### Requisitions")
+    st.dataframe(st.session_state.jobs, use_container_width=True, hide_index=True)
+    if st.session_state.jobs:
+        st.markdown("### Requisition status controls")
+        labels = [f"{job.get('id')} · {job.get('title')}" for job in st.session_state.jobs]
+        chosen = st.selectbox("Select requisition", labels, key="status_job_choice")
+        target_job = st.session_state.jobs[labels.index(chosen)]
+        new_status = st.selectbox("Status", ["Draft", "Active", "Paused", "Closed"], index=["Draft","Active","Paused","Closed"].index(target_job.get("status","Draft")) if target_job.get("status","Draft") in ["Draft","Active","Paused","Closed"] else 0, key="status_job_target")
+        if st.button("Update requisition status"):
+            target_job["status"] = new_status
+            RecruitmentStore().save_job(target_job)
+            log_activity(f"Changed requisition {target_job.get('id')} status to {new_status}", "job_status", target_job.get("id",""))
+            st.success("Requisition status updated.")
+            st.rerun()
+
+elif page == "AI Screening":
+    st.subheader("AI screening & evidence review")
+    st.markdown('<div class="section-note">Upload a resume and evaluate it against explicit role requirements. AI output remains advisory and requires recruiter review.</div>', unsafe_allow_html=True)
+    role = st.selectbox("Target role", list(ROLE_REQUIREMENTS), key="screen_role")
+    required_text = st.text_input("Required skills", ", ".join(ROLE_REQUIREMENTS[role]), key="screen_required")
+    preferred_text = st.text_input("Preferred skills", "Git, Testing", key="screen_preferred")
+    min_years = st.number_input("Minimum experience (years)", 0.0, 50.0, 0.0, .5, key="screen_min_exp")
+    uploaded = st.file_uploader("Upload candidate resume (PDF or TXT)", type=["pdf","txt"], key="recruiter_resume")
+    candidate_ref = st.text_input("Candidate reference", "candidate-session-001")
+    if st.button("Run AI assessment", type="primary"):
+        if not uploaded:
+            st.error("Upload a PDF or TXT resume first.")
         else:
-            st.warning("Please analyze a resume first to enable the Q&A section.")
+            skills = parse_skills(required_text)
+            candidate_skills = []
+            if api_key:
+                agent = setup_agent(api_key, model, cutoff)
+                try:
+                    with st.spinner("Analysing resume and extracting job-related evidence…"):
+                        result = agent.analyze_resume(uploaded, role=role, role_requirements=skills)
+                    st.session_state.analysis_result = result
+                    st.session_state.resume_analyzed = True
+                    st.session_state.uploaded_resume_name = uploaded.name
+                    log_activity(f"Assessed resume against {role}", "resume_assessed", candidate_ref)
+                    st.success("Assessment generated. Review evidence below; do not treat the score as a probability of success.")
+                except Exception as exc:
+                    st.error(f"Assessment failed: {exc}")
+            else:
+                try:
+                    uploaded.seek(0)
+                    from pypdf import PdfReader
+                    if uploaded.name.lower().endswith(".pdf"):
+                        import io
+                        text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(uploaded.getvalue())).pages)
+                    else:
+                        text = uploaded.getvalue().decode("utf-8", errors="ignore")
+                    candidate_skills = [skill for skill in skills + parse_skills(preferred_text) if skill.lower() in text.lower()]
+                    candidate = CandidateProfile(candidate_ref, candidate_skills, 0.0)
+                    criteria = JobCriteria(role, skills, parse_skills(preferred_text), float(min_years))
+                    matched = score_candidate(candidate, criteria)
+                    st.session_state["local_match"] = {
+                        "score":matched.score,"matched":matched.matched_required_skills,
+                        "missing":matched.missing_required_skills,"explanation":matched.explanation,
+                        "role":role,"candidate_id":candidate_ref,"skills":candidate_skills,
+                    }
+                    st.info("Gemini is not configured, so this is a local exact-text baseline, not an LLM assessment.")
+                except Exception as exc:
+                    st.error(f"Could not read resume: {exc}")
+    if st.session_state.get("local_match"):
+        local = st.session_state.local_match
+        st.markdown("### Local matching baseline")
+        st.metric("Preliminary match", f"{local['score']:.1f}/100")
+        st.write(local["explanation"])
+        st.write("Matched skills:", ", ".join(local["matched"]) or "None")
+        st.write("Skills to verify:", ", ".join(local["missing"]) or "None")
+    result = st.session_state.analysis_result
+    if result:
+        cols = st.columns(4)
+        with cols[0]: metric_card("ADVISORY SCORE", f"{result.get('overall_score','—')}", "LLM-assisted assessment")
+        with cols[1]: metric_card("SKILLS IDENTIFIED", len(result.get("skill_scores",{})), "Resume evidence")
+        with cols[2]: metric_card("STATUS", result.get("decision_status","Review required"), "Human review")
+        with cols[3]: metric_card("SOURCE FILE", st.session_state.uploaded_resume_name or "Current resume", "Session only")
+        st.markdown("### Skill evidence")
+        skill_scores = result.get("skill_scores", {})
+        if skill_scores:
+            st.dataframe([{"Skill":k,"Model score / 10":v,"Human verification":"Required"} for k,v in skill_scores.items()], use_container_width=True, hide_index=True)
+        for key in ("strengths","missing_skills","weaknesses"):
+            if result.get(key):
+                st.markdown(f"**{key.replace('_',' ').title()}**")
+                for item in result[key]:
+                    st.write("• " + str(item))
+        if st.session_state.resume_agent and st.session_state.resume_agent.awaiting_review:
+            st.warning("This assessment is waiting for an explicit recruiter decision.")
+            left,right = st.columns(2)
+            with left:
+                if st.button("Approve recommendation", type="primary"):
+                    try:
+                        st.session_state.analysis_result = st.session_state.resume_agent.approve_or_reject("approve")
+                        log_activity(f"Recruiter approved recommendation for {role}", "human_decision", candidate_ref)
+                        st.rerun()
+                    except Exception as exc: st.error(str(exc))
+            with right:
+                if st.button("Reject recommendation"):
+                    try:
+                        st.session_state.analysis_result = st.session_state.resume_agent.approve_or_reject("reject")
+                        log_activity(f"Recruiter rejected recommendation for {role}", "human_decision", candidate_ref)
+                        st.rerun()
+                    except Exception as exc: st.error(str(exc))
+        elif result.get("human_decision"):
+            st.success(f"Recruiter decision recorded: {result.get('human_decision')}")
 
-    # ── Tab 2: Interview Questions ───────────────────────────────────────────
-    with tabs[2]:
-        if st.session_state.resume_analyzed and st.session_state.resume_agent:
-            ui.interview_question_section(
-                has_resume=True,
-                generate_question_func=lambda types, diff, num: generate_interview_questions(
-                    st.session_state.resume_agent, types, diff, num
-                ),
-            )
+elif page == "Interview Studio":
+    st.subheader("Interview studio")
+    st.markdown('<div class="section-note">Build consistent questions and evaluate answers against job-related rubrics. Camera/motion signals are not evidence of dishonesty and must not drive candidate decisions.</div>', unsafe_allow_html=True)
+    role = st.selectbox("Interview role", list(ROLE_REQUIREMENTS), key="interview_role")
+    difficulty = st.selectbox("Difficulty", ["Beginner","Intermediate","Advanced"])
+    categories = st.multiselect("Question categories", ["Technical","Behavioral","Problem-solving","Role-specific","Project deep dive"], default=["Technical","Project deep dive"])
+    count = st.slider("Number of questions", 3, 12, 6)
+    if st.button("Generate interview plan", type="primary"):
+        if api_key:
+            try:
+                agent = setup_agent(api_key, model, cutoff)
+                questions = agent.generate_interview_questions(categories or ["Role-specific"], difficulty, count)
+                st.session_state["interview_questions"] = questions
+                st.success(f"Generated {len(questions)} questions.")
+            except Exception as exc: st.error(str(exc))
         else:
-            st.warning(
-                "Please analyze a resume first to enable the interview question generation section."
-            )
-
-    # ── Tab 3: Resume Improvement ────────────────────────────────────────────
-    with tabs[3]:
-        if st.session_state.resume_analyzed and st.session_state.analysis_result:
-            ui.resume_improvement_section(
-                has_resume=True,
-                improve_resume_func=lambda areas, r: improve_resume(
-                    st.session_state.resume_agent, areas, r
-                ),
-            )
+            fallback = [
+                ("Technical","Explain a project where you used a core skill required for this role."),
+                ("Problem-solving","Describe how you would debug an unexpected production issue."),
+                ("Project deep dive","What was your personal contribution, trade-off, and measurable outcome?"),
+                ("Behavioral","Describe a time you received difficult feedback and what changed."),
+            ]
+            st.session_state["interview_questions"] = fallback[:count]
+            st.info("Using transparent fallback questions because Gemini is not configured.")
+    for idx,item in enumerate(st.session_state.get("interview_questions",[]),1):
+        if isinstance(item,(list,tuple)) and len(item)>=2:
+            st.markdown(f"**{idx}. [{item[0]}]** {item[1]}")
         else:
-            st.warning(
-                "Please analyze a resume first to enable the resume improvement section."
-            )
-
-    # ── Tab 4: Improved Resume ───────────────────────────────────────────────
-    with tabs[4]:
-        if st.session_state.resume_analyzed and st.session_state.resume_agent:
-            ui.improved_resume_section(
-                has_resume=True,
-                get_improved_resume_func=lambda r, skills: get_improved_resume(
-                    st.session_state.resume_agent, r, skills
-                ),
-            )
-        else:
-            st.warning(
-                "Please upload and analyze a resume first in the 'Resume Analysis' tab."
-            )
-
-    # ── Tab 5: AI Interview ─────────────────────────────────────────────────
-    with tabs[5]:
-        ui.ai_interview_section(st.session_state.resume_agent)
+            st.markdown(f"**{idx}.** {item}")
+    if st.session_state.get("interview_questions"):
+        st.download_button("Download interview plan", "\n".join(f"{i+1}. {q[1] if isinstance(q,(tuple,list)) else q}" for i,q in enumerate(st.session_state.interview_questions)), "interview_plan.txt")
 
 
-if __name__ == "__main__":
-    main()
+elif page == "Candidate Copilot":
+    st.subheader("Candidate copilot")
+    st.markdown('<div class="section-note">Resume-grounded Q&A, structured interview answer review and resume coaching. Outputs are advisory and should be checked for factual accuracy.</div>', unsafe_allow_html=True)
+    if not st.session_state.resume_analyzed or not st.session_state.analysis_result:
+        st.info("Start in AI Screening and upload/analyse a resume to enable this workspace.")
+    else:
+        agent = st.session_state.resume_agent
+        st.caption("Active resume: " + str(st.session_state.uploaded_resume_name or "current session resume"))
+        qa_tab, interview_tab, coach_tab = st.tabs(["Resume Q&A", "Answer review", "Resume coach"])
+        with qa_tab:
+            question = st.text_area("Ask a question grounded in the resume", placeholder="Which projects demonstrate the candidate's Python experience?")
+            if st.button("Ask about resume", type="primary", key="copilot_ask"):
+                if not question.strip():
+                    st.error("Enter a question.")
+                elif not api_key or not agent:
+                    st.error("Configure Gemini to use resume-grounded Q&A.")
+                else:
+                    try:
+                        with st.spinner("Retrieving relevant resume context and preparing an answer..."):
+                            answer = agent.ask_question(question.strip())
+                        st.markdown("### Answer")
+                        st.write(answer)
+                    except Exception as exc:
+                        st.error("Q&A failed: " + str(exc))
+        with interview_tab:
+            interview_question = st.text_area("Interview question", "Describe a project where you used a skill required for this role.")
+            candidate_answer = st.text_area("Candidate answer", height=160, placeholder="Paste the answer for structured feedback...")
+            if st.button("Evaluate answer against a job-related rubric", type="primary", key="copilot_evaluate"):
+                if not candidate_answer.strip():
+                    st.error("Enter an answer to evaluate.")
+                elif not api_key or not agent:
+                    st.error("Configure Gemini to use the LLM evaluator.")
+                else:
+                    try:
+                        with st.spinner("Evaluating evidence in the answer..."):
+                            feedback = agent.evaluate_interview_answer(interview_question, candidate_answer)
+                        if isinstance(feedback, dict):
+                            a,b = st.columns(2)
+                            with a: st.metric("Rubric score", f"{feedback.get('score','—')}/10")
+                            with b: st.markdown("**Strengths**"); st.write(feedback.get("strengths", []))
+                            st.markdown("**Feedback**"); st.write(feedback.get("feedback", ""))
+                            st.markdown("**Suggested improvement**"); st.write(feedback.get("improvement", ""))
+                        else:
+                            st.write(feedback)
+                        st.caption("Scores support structured review; they are not a standalone hiring decision.")
+                    except Exception as exc:
+                        st.error("Answer evaluation failed: " + str(exc))
+        with coach_tab:
+            target_role = st.text_input("Target role", "Software Engineer")
+            improvement_areas = st.multiselect("Areas for coaching", ["Impact and metrics","Project clarity","Technical depth","Structure and readability","Role relevance","Skills evidence"], default=["Impact and metrics","Project clarity"])
+            if st.button("Generate resume coaching", type="primary", key="copilot_coach"):
+                if not api_key or not agent:
+                    st.error("Configure Gemini to use resume coaching.")
+                else:
+                    try:
+                        with st.spinner("Generating evidence-conscious coaching suggestions..."):
+                            suggestions = agent.improve_resume(improvement_areas, target_role)
+                        st.json(suggestions)
+                        st.caption("Review every suggestion. Do not add achievements, skills or metrics that are not true.")
+                    except Exception as exc:
+                        st.error("Resume coaching failed: " + str(exc))
+
+elif page == "Talent Memory":
+    st.subheader("Persistent talent memory")
+    st.markdown('<div class="section-note">Consent-gated local prototype. Store the minimum job-related data required; set a clear retention period before production.</div>', unsafe_allow_html=True)
+    mem_id = st.text_input("Pseudonymous candidate ID", "candidate-demo-001")
+    mem_role = st.text_input("Role", "Data Analyst Intern")
+    mem_skills = st.text_input("Skills", "SQL, Python, Excel")
+    mem_outcome = st.selectbox("Workflow outcome", ["Reviewed","Interviewed","Hold for evidence","Candidate withdrew","Role closed"])
+    mem_notes = st.text_area("Job-related notes only", "")
+    consent = st.checkbox("I confirm consent and appropriate lawful basis have been established for this prototype record.")
+    if st.button("Save talent memory", disabled=not consent):
+        try:
+            memory = CandidateMemory()
+            memory.record(mem_id,mem_role,parse_skills(mem_skills),mem_outcome,consent,mem_notes)
+            st.success("Candidate history saved.")
+            log_activity(f"Updated talent memory for {mem_id}", "candidate_memory", mem_id)
+        except Exception as exc: st.error(str(exc))
+    if st.button("Load candidate history"):
+        try: st.session_state["memory_lookup_result"] = CandidateMemory().history(mem_id)
+        except Exception as exc: st.error(str(exc))
+    if "memory_lookup_result" in st.session_state:
+        st.dataframe(st.session_state.memory_lookup_result, use_container_width=True, hide_index=True)
+    if st.button("Delete candidate history"):
+        try:
+            deleted = CandidateMemory().delete_candidate(mem_id)
+            st.session_state["memory_lookup_result"] = []
+            st.success(f"Deleted {deleted} record(s).")
+        except Exception as exc: st.error(str(exc))
+
+elif page == "Verification Hub":
+    st.subheader("Verification coordination")
+    st.markdown('<div class="section-note">Orchestrates requests and status tracking only. Actual checks require candidate notice/consent where applicable and authorised verification providers or official processes.</div>', unsafe_allow_html=True)
+    if "verification_rows" not in st.session_state:
+        st.session_state.verification_rows = []
+    with st.form("verification_request"):
+        candidate = st.text_input("Candidate reference")
+        kinds = st.multiselect("Verification types", ["Education","Employment","Identity","Address","Reference","Background"], default=["Education"])
+        consent_v = st.checkbox("Required notice/consent and legal basis have been checked.")
+        if st.form_submit_button("Create verification request"):
+            if not candidate.strip() or not kinds:
+                st.error("Enter a candidate reference and select at least one check.")
+            elif not consent_v:
+                st.error("Confirm that the relevant notice/consent and legal basis have been checked.")
+            else:
+                for kind in kinds:
+                    record = RecruitmentStore().save_verification({
+                        "Candidate":candidate.strip(),"Check":kind,"Status":"Queued for authorised provider",
+                        "Requested":datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    })
+                    st.session_state.verification_rows.append(record)
+                log_activity(f"Created {len(kinds)} verification coordination records for {candidate.strip()}", "verification_created", candidate.strip())
+                st.success("Request records created locally. No provider has been contacted.")
+    if st.session_state.verification_rows:
+        st.dataframe(st.session_state.verification_rows, use_container_width=True, hide_index=True)
+        for index,row in enumerate(st.session_state.verification_rows):
+            status = st.selectbox(f"Update {row['Candidate']} · {row['Check']}", ["Queued for authorised provider","In progress","Needs candidate input","Completed","Unable to verify"], key=f"verify_{index}")
+            st.session_state.verification_rows[index]["Status"] = status
+            RecruitmentStore().save_verification(st.session_state.verification_rows[index])
+        if st.button("Save status updates"):
+            log_activity("Updated verification coordination statuses", "verification_status")
+            st.success("Local verification statuses updated.")
+
+elif page == "Fairness & Audit":
+    st.subheader("Fairness and decision audit")
+    st.markdown('<div class="section-note">Use only lawfully collected, purpose-limited audit data. Do not use audit-group attributes to calculate an individual match score.</div>', unsafe_allow_html=True)
+    threshold = st.slider("Advisory review threshold", 0, 100, 75, key="fair_threshold")
+    audit_text = st.text_area("Paste audit records as JSON (demo only)", value='[{"audit_group":"group_a","score":82},{"audit_group":"group_a","score":64},{"audit_group":"group_b","score":70},{"audit_group":"group_b","score":88}]')
+    if st.button("Run selection-rate audit"):
+        import json
+        try:
+            report = selection_rate_audit(json.loads(audit_text), threshold=threshold)
+            st.session_state["fairness_report"] = report
+        except Exception as exc: st.error(f"Invalid JSON: {exc}")
+    if st.session_state.get("fairness_report"):
+        report = st.session_state.fairness_report
+        st.json(report)
+        st.warning(report["warning"])
+
+elif page == "Settings":
+    st.subheader("Workspace settings")
+    st.markdown("### Model")
+    st.write("Provider: Google Gemini via LangChain")
+    st.write(f"Selected model: {model}")
+    st.write("API key source: sidebar session input or environment")
+    st.markdown("### Safety and permissions")
+    st.write("• Human approval required for candidate selection decisions.")
+    st.write("• No automated job-board applications or unauthorised scraping.")
+    st.write("• Verification statuses are local records until an authorised provider adapter is configured.")
+    st.write("• Candidate memory uses a local SQLite database; not suitable for multi-tenant production use.")
+    st.markdown("### Deployment")
+    st.code("streamlit run app.py", language="bash")
+    st.markdown("### Research roadmap")
+    st.write("1. Recruiter-labeled benchmark and ranking evaluation")
+    st.write("2. LangGraph supervisor + explicit tool allow-list")
+    st.write("3. Hybrid retrieval/reranking + evidence provenance")
+    st.write("4. Interview scheduling and authorised verification-provider adapters")
+    st.write("5. Authentication, tenant isolation, audit logs and deployment hardening")
+
+st.divider()
+st.markdown(
+    '<div class="small-muted">HireOS Research MVP · Sample rows are illustrative · AI assessments are advisory · Human reviewers retain final decision authority.</div>',
+    unsafe_allow_html=True,
+)

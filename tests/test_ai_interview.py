@@ -6,6 +6,7 @@ from agents import RecruitmentAgent
 class InterviewAgentTests(unittest.TestCase):
     def test_answer_evaluation_returns_score_and_feedback(self):
         agent = RecruitmentAgent(api_key="fake")
+        agent._get_llm = lambda: None  # keep this unit test offline and deterministic
         result = agent.evaluate_interview_answer(
             "Tell me about your experience with Python.",
             "I have built several Python automation scripts and APIs for data processing.",

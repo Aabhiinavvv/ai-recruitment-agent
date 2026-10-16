@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, TypedDict
 
+from langchain_core.runnables import RunnableConfig
+
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
@@ -117,7 +119,7 @@ def _request_content(task: str, payload: dict[str, Any], agent: Any) -> str:
     return "\n".join(content)
 
 
-def _guardrail(state: RecruitmentState, config: dict[str, Any]) -> dict[str, Any]:
+def _guardrail(state: RecruitmentState, config: RunnableConfig) -> dict[str, Any]:
     agent, payload = _agent_and_payload(config)
     task = state["task"]
     decision = _call_mcp_tool_sync(
@@ -141,7 +143,7 @@ def _supervisor(state: RecruitmentState) -> dict[str, Any]:
     return {"route": route}
 
 
-def _agent_node(state: RecruitmentState, config: dict[str, Any]) -> dict[str, Any]:
+def _agent_node(state: RecruitmentState, config: RunnableConfig) -> dict[str, Any]:
     agent, payload = _agent_and_payload(config)
     result = getattr(agent, state["task"])(**payload)
     return {"result": result}
@@ -172,7 +174,7 @@ def _validate_analysis(state: RecruitmentState) -> dict[str, Any]:
     return {"result": guarded_result, "decision_status": "pending"}
 
 
-def _human_review(state: RecruitmentState, config: dict[str, Any]) -> dict[str, Any]:
+def _human_review(state: RecruitmentState, config: RunnableConfig) -> dict[str, Any]:
     agent, _ = _agent_and_payload(config)
     action = interrupt(
         {
