@@ -148,7 +148,7 @@ with st.sidebar:
     st.divider()
     page = st.radio(
         "WORKSPACE",
-        ["Overview","Talent Pipeline","New Requisition","AI Screening","Interview Studio","Talent Memory","Verification Hub","Fairness & Audit","Settings"],
+        ["Overview","Talent Pipeline","New Requisition","AI Screening","Interview Studio","Candidate Copilot","Talent Memory","Verification Hub","Fairness & Audit","Settings"],
         label_visibility="visible",
     )
     st.divider()
@@ -413,6 +413,69 @@ elif page == "Interview Studio":
             st.markdown(f"**{idx}.** {item}")
     if st.session_state.get("interview_questions"):
         st.download_button("Download interview plan", "\n".join(f"{i+1}. {q[1] if isinstance(q,(tuple,list)) else q}" for i,q in enumerate(st.session_state.interview_questions)), "interview_plan.txt")
+
+
+elif page == "Candidate Copilot":
+    st.subheader("Candidate copilot")
+    st.markdown('<div class="section-note">Resume-grounded Q&A, structured interview answer review and resume coaching. Outputs are advisory and should be checked for factual accuracy.</div>', unsafe_allow_html=True)
+    if not st.session_state.resume_analyzed or not st.session_state.analysis_result:
+        st.info("Start in AI Screening and upload/analyse a resume to enable this workspace.")
+    else:
+        agent = st.session_state.resume_agent
+        st.caption("Active resume: " + str(st.session_state.uploaded_resume_name or "current session resume"))
+        qa_tab, interview_tab, coach_tab = st.tabs(["Resume Q&A", "Answer review", "Resume coach"])
+        with qa_tab:
+            question = st.text_area("Ask a question grounded in the resume", placeholder="Which projects demonstrate the candidate's Python experience?")
+            if st.button("Ask about resume", type="primary", key="copilot_ask"):
+                if not question.strip():
+                    st.error("Enter a question.")
+                elif not api_key or not agent:
+                    st.error("Configure Gemini to use resume-grounded Q&A.")
+                else:
+                    try:
+                        with st.spinner("Retrieving relevant resume context and preparing an answer..."):
+                            answer = agent.ask_question(question.strip())
+                        st.markdown("### Answer")
+                        st.write(answer)
+                    except Exception as exc:
+                        st.error("Q&A failed: " + str(exc))
+        with interview_tab:
+            interview_question = st.text_area("Interview question", "Describe a project where you used a skill required for this role.")
+            candidate_answer = st.text_area("Candidate answer", height=160, placeholder="Paste the answer for structured feedback...")
+            if st.button("Evaluate answer against a job-related rubric", type="primary", key="copilot_evaluate"):
+                if not candidate_answer.strip():
+                    st.error("Enter an answer to evaluate.")
+                elif not api_key or not agent:
+                    st.error("Configure Gemini to use the LLM evaluator.")
+                else:
+                    try:
+                        with st.spinner("Evaluating evidence in the answer..."):
+                            feedback = agent.evaluate_interview_answer(interview_question, candidate_answer)
+                        if isinstance(feedback, dict):
+                            a,b = st.columns(2)
+                            with a: st.metric("Rubric score", f"{feedback.get('score','—')}/10")
+                            with b: st.markdown("**Strengths**"); st.write(feedback.get("strengths", []))
+                            st.markdown("**Feedback**"); st.write(feedback.get("feedback", ""))
+                            st.markdown("**Suggested improvement**"); st.write(feedback.get("improvement", ""))
+                        else:
+                            st.write(feedback)
+                        st.caption("Scores support structured review; they are not a standalone hiring decision.")
+                    except Exception as exc:
+                        st.error("Answer evaluation failed: " + str(exc))
+        with coach_tab:
+            target_role = st.text_input("Target role", "Software Engineer")
+            improvement_areas = st.multiselect("Areas for coaching", ["Impact and metrics","Project clarity","Technical depth","Structure and readability","Role relevance","Skills evidence"], default=["Impact and metrics","Project clarity"])
+            if st.button("Generate resume coaching", type="primary", key="copilot_coach"):
+                if not api_key or not agent:
+                    st.error("Configure Gemini to use resume coaching.")
+                else:
+                    try:
+                        with st.spinner("Generating evidence-conscious coaching suggestions..."):
+                            suggestions = agent.improve_resume(improvement_areas, target_role)
+                        st.json(suggestions)
+                        st.caption("Review every suggestion. Do not add achievements, skills or metrics that are not true.")
+                    except Exception as exc:
+                        st.error("Resume coaching failed: " + str(exc))
 
 elif page == "Talent Memory":
     st.subheader("Persistent talent memory")
