@@ -257,6 +257,43 @@ elif page == "Talent Pipeline":
     st.markdown('<div class="section-note">Track candidate stage and source, run a transparent matching workflow, and record recruiter-owned next steps. Demo rows are illustrative.</div>', unsafe_allow_html=True)
     if st.session_state.candidate_rows:
         st.dataframe(st.session_state.candidate_rows, use_container_width=True, hide_index=True)
+    with st.expander("Import authorised candidate records from CSV"):
+        st.caption("Use only records you are authorised to process. Supported columns: Candidate (or Name), Role, Skills, Stage, Source, Score.")
+        csv_upload = st.file_uploader("Candidate CSV", type=["csv"], key="candidate_csv_upload")
+        if csv_upload and st.button("Validate and import CSV", key="import_candidate_csv"):
+            if csv_upload.size > 2 * 1024 * 1024:
+                st.error("CSV exceeds the 2 MB prototype limit.")
+            else:
+                try:
+                    import pandas as pd
+                    imported = pd.read_csv(csv_upload).fillna("").to_dict(orient="records")
+                    added = 0
+                    skipped = 0
+                    for source_row in imported:
+                        display_name = str(source_row.get("Candidate") or source_row.get("Name") or "").strip()
+                        if not display_name:
+                            skipped += 1
+                            continue
+                        new_row = {
+                            "Candidate": display_name,
+                            "Role": str(source_row.get("Role") or "Unassigned").strip(),
+                            "Stage": str(source_row.get("Stage") or "Applied").strip(),
+                            "Skills": str(source_row.get("Skills") or "").strip(),
+                            "Score": str(source_row.get("Score") or "Pending").strip(),
+                            "Source": str(source_row.get("Source") or "Import").strip(),
+                            "Updated": date.today().isoformat(),
+                            "ID": f"candidate-{datetime.now().strftime('%Y%m%d%H%M%S%f')}-{added}",
+                        }
+                        st.session_state.candidate_rows.append(new_row)
+                        RecruitmentStore().save_candidate(new_row)
+                        added += 1
+                    if added:
+                        log_activity(f"Imported {added} candidate records from CSV", "candidate_import")
+                    st.success(f"Imported {added} records. Skipped {skipped} rows without a candidate name.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Could not import CSV: {exc}")
+
     with st.expander("Add candidate record"):
         with st.form("candidate_record"):
             name = st.text_input("Candidate display name")
