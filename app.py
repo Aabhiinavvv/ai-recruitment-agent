@@ -27,6 +27,7 @@ from workflow import RecruitmentWorkflow
 from recruitment_core.matching import CandidateProfile, JobCriteria, score_candidate
 from recruitment_core.memory import CandidateMemory
 from recruitment_core.fairness import selection_rate_audit
+from recruitment_core.store import RecruitmentStore
 
 # ---------------------------------------------------------------------------
 # Theme
@@ -77,27 +78,44 @@ st.markdown(
 # State and helper functions
 # ---------------------------------------------------------------------------
 def init_state():
+    store = RecruitmentStore()
+    sample_jobs = [
+        {"id":"JOB-2401","title":"AI/ML Engineer","team":"Applied AI","location":"Bengaluru / Hybrid","type":"Full-time","status":"Active","applicants":48,"created":"Sample"},
+        {"id":"JOB-2402","title":"Data Analyst Intern","team":"Business Intelligence","location":"Remote · India","type":"Internship","status":"Active","applicants":76,"created":"Sample"},
+        {"id":"JOB-2403","title":"Backend Engineer","team":"Platform","location":"Noida / Hybrid","type":"Full-time","status":"Draft","applicants":0,"created":"Sample"},
+    ]
+    sample_candidates = [
+        {"Candidate":"Aarav Sharma","Role":"AI/ML Engineer","Stage":"Screening","Skills":"Python, ML, NLP","Score":86,"Source":"Campus","Updated":"Sample","ID":"demo-candidate-001"},
+        {"Candidate":"Priya Verma","Role":"Data Analyst Intern","Stage":"Interview","Skills":"SQL, Python, Power BI","Score":82,"Source":"Referral","Updated":"Sample","ID":"demo-candidate-002"},
+        {"Candidate":"Kabir Singh","Role":"Backend Engineer","Stage":"Review","Skills":"Python, APIs, PostgreSQL","Score":79,"Source":"Career page","Updated":"Sample","ID":"demo-candidate-003"},
+    ]
+    saved_jobs = store.load_jobs()
+    saved_candidates = store.load_candidates()
     defaults = {
         "resume_agent": None,
         "analysis_result": None,
         "resume_analyzed": False,
         "uploaded_resume_name": None,
-        "jobs": [
-            {"id":"JOB-2401","title":"AI/ML Engineer","team":"Applied AI","location":"Bengaluru / Hybrid","type":"Full-time","status":"Active","applicants":48,"created":"Today"},
-            {"id":"JOB-2402","title":"Data Analyst Intern","team":"Business Intelligence","location":"Remote · India","type":"Internship","status":"Active","applicants":76,"created":"Yesterday"},
-            {"id":"JOB-2403","title":"Backend Engineer","team":"Platform","location":"Noida / Hybrid","type":"Full-time","status":"Draft","applicants":0,"created":"Oct 14"},
-        ],
-        "candidate_rows": [
-            {"Candidate":"Aarav Sharma","Role":"AI/ML Engineer","Stage":"Screening","Skills":"Python, ML, NLP","Score":86,"Source":"Campus","Updated":"Today"},
-            {"Candidate":"Priya Verma","Role":"Data Analyst Intern","Stage":"Interview","Skills":"SQL, Python, Power BI","Score":82,"Source":"Referral","Updated":"Today"},
-            {"Candidate":"Kabir Singh","Role":"Backend Engineer","Stage":"Review","Skills":"Python, APIs, PostgreSQL","Score":79,"Source":"Career page","Updated":"Yesterday"},
-        ],
-        "activity": ["Recruiter workspace initialised", "AI assessment workflow available", "Human review policy enabled"],
+        "jobs": saved_jobs if saved_jobs else sample_jobs,
+        "candidate_rows": saved_candidates if saved_candidates else sample_candidates,
+        "activity": store.load_events() or ["Recruiter workspace initialised", "AI assessment workflow available", "Human review policy enabled"],
+        "verification_rows": store.load_verifications(),
         "saved_results": [],
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+
+def log_activity(message: str, event_type: str = "workflow", subject_ref: str = ""):
+    if "activity" not in st.session_state:
+        st.session_state.activity = []
+    st.session_state.activity.append(message)
+    try:
+        RecruitmentStore().log_event(message, event_type=event_type, subject_ref=subject_ref)
+    except Exception as exc:
+        st.warning(f"Could not persist audit event: {exc}")
+
 
 init_state()
 
@@ -247,11 +265,14 @@ elif page == "Talent Pipeline":
             source = st.selectbox("Source", ["Career page","Referral","Campus","Import","Authorised integration"])
             if st.form_submit_button("Add to pipeline"):
                 if name.strip():
-                    st.session_state.candidate_rows.append({
+                    candidate_record = {
                         "Candidate":name.strip(),"Role":role,"Stage":stage,"Skills":skills,
                         "Score":"Pending","Source":source,"Updated":date.today().isoformat(),
-                    })
-                    st.session_state.activity.append(f"Added {name.strip()} to {role} pipeline")
+                        "ID":f"candidate-{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+                    }
+                    st.session_state.candidate_rows.append(candidate_record)
+                    RecruitmentStore().save_candidate(candidate_record)
+                    log_activity(f"Added {name.strip()} to {role} pipeline", "candidate_created", candidate_record["ID"])
                     st.success("Candidate record added.")
                     st.rerun()
                 else:
@@ -285,7 +306,8 @@ elif page == "New Requisition":
                     "preferred_skills":parse_skills(preferred),"min_exp":float(min_exp),
                 }
                 st.session_state.jobs.insert(0,job)
-                st.session_state.activity.append(f"Created draft requisition: {job['title']}")
+                RecruitmentStore().save_job(job)
+                log_activity(f"Created draft requisition: {job['title']}", "job_created", job["id"])
                 st.success(f"Created {job['id']}. Review and activate it using your hiring workflow.")
                 st.rerun()
     st.markdown("### Requisitions")
@@ -314,7 +336,7 @@ elif page == "AI Screening":
                     st.session_state.analysis_result = result
                     st.session_state.resume_analyzed = True
                     st.session_state.uploaded_resume_name = uploaded.name
-                    st.session_state.activity.append(f"Assessed resume against {role}")
+                    log_activity(f"Assessed resume against {role}", "resume_assessed", candidate_ref)
                     st.success("Assessment generated. Review evidence below; do not treat the score as a probability of success.")
                 except Exception as exc:
                     st.error(f"Assessment failed: {exc}")
@@ -369,14 +391,14 @@ elif page == "AI Screening":
                 if st.button("Approve recommendation", type="primary"):
                     try:
                         st.session_state.analysis_result = st.session_state.resume_agent.approve_or_reject("approve")
-                        st.session_state.activity.append(f"Recruiter approved recommendation for {role}")
+                        log_activity(f"Recruiter approved recommendation for {role}", "human_decision", candidate_ref)
                         st.rerun()
                     except Exception as exc: st.error(str(exc))
             with right:
                 if st.button("Reject recommendation"):
                     try:
                         st.session_state.analysis_result = st.session_state.resume_agent.approve_or_reject("reject")
-                        st.session_state.activity.append(f"Recruiter rejected recommendation for {role}")
+                        log_activity(f"Recruiter rejected recommendation for {role}", "human_decision", candidate_ref)
                         st.rerun()
                     except Exception as exc: st.error(str(exc))
         elif result.get("human_decision"):
@@ -491,7 +513,7 @@ elif page == "Talent Memory":
             memory = CandidateMemory()
             memory.record(mem_id,mem_role,parse_skills(mem_skills),mem_outcome,consent,mem_notes)
             st.success("Candidate history saved.")
-            st.session_state.activity.append(f"Updated talent memory for {mem_id}")
+            log_activity(f"Updated talent memory for {mem_id}", "candidate_memory", mem_id)
         except Exception as exc: st.error(str(exc))
     if st.button("Load candidate history"):
         try: st.session_state["memory_lookup_result"] = CandidateMemory().history(mem_id)
@@ -521,17 +543,22 @@ elif page == "Verification Hub":
                 st.error("Confirm that the relevant notice/consent and legal basis have been checked.")
             else:
                 for kind in kinds:
-                    st.session_state.verification_rows.append({
+                    record = RecruitmentStore().save_verification({
                         "Candidate":candidate.strip(),"Check":kind,"Status":"Queued for authorised provider",
                         "Requested":datetime.now().strftime("%Y-%m-%d %H:%M"),
                     })
+                    st.session_state.verification_rows.append(record)
+                log_activity(f"Created {len(kinds)} verification coordination records for {candidate.strip()}", "verification_created", candidate.strip())
                 st.success("Request records created locally. No provider has been contacted.")
     if st.session_state.verification_rows:
         st.dataframe(st.session_state.verification_rows, use_container_width=True, hide_index=True)
         for index,row in enumerate(st.session_state.verification_rows):
             status = st.selectbox(f"Update {row['Candidate']} · {row['Check']}", ["Queued for authorised provider","In progress","Needs candidate input","Completed","Unable to verify"], key=f"verify_{index}")
             st.session_state.verification_rows[index]["Status"] = status
-        if st.button("Save status updates"): st.success("Local verification statuses updated.")
+            RecruitmentStore().save_verification(st.session_state.verification_rows[index])
+        if st.button("Save status updates"):
+            log_activity("Updated verification coordination statuses", "verification_status")
+            st.success("Local verification statuses updated.")
 
 elif page == "Fairness & Audit":
     st.subheader("Fairness and decision audit")
