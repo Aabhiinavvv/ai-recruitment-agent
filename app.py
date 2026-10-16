@@ -371,35 +371,57 @@ elif page == "Talent Pipeline":
 
 elif page == "New Requisition":
     st.subheader("New requisition studio")
-    st.markdown('<div class="section-note">Define role criteria before any matching is run. Generated criteria should be reviewed by the hiring manager.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-note">Define role criteria before matching. AI-generated skills are suggestions; the hiring manager should confirm them.</div>', unsafe_allow_html=True)
     with st.form("new_job"):
         job_title = st.text_input("Job title", placeholder="e.g. Data Analyst Intern")
         department = st.text_input("Department / hiring team")
         location = st.text_input("Location", "India · Hybrid")
         role_type = st.selectbox("Employment type", ["Full-time","Internship","Contract","Part-time","Temporary"])
         jd = st.text_area("Job description", height=160, placeholder="Responsibilities, required skills, preferred skills, experience and evaluation criteria…")
-        required = st.text_input("Required skills (comma-separated)")
+        required = st.text_input("Required skills (comma-separated)", help="You can enter skills manually. If left blank and Gemini is configured, the agent suggests skills from the job description.")
         preferred = st.text_input("Preferred skills (comma-separated)")
         min_exp = st.number_input("Minimum relevant experience (years)", 0.0, 50.0, 0.0, 0.5)
         if st.form_submit_button("Create requisition"):
-            if not job_title.strip() or not required.strip():
-                st.error("Enter a job title and at least one required skill.")
+            required_skills = parse_skills(required)
+            if not required_skills and jd.strip() and api_key:
+                try:
+                    job_agent = setup_agent(api_key, model, cutoff)
+                    with st.spinner("Job Analysis Agent is extracting role-relevant skill criteria..."):
+                        required_skills = job_agent.extract_skills_from_jd(jd)
+                except Exception as exc:
+                    st.error(f"Skill extraction failed: {exc}")
+            if not job_title.strip():
+                st.error("Enter a job title.")
+            elif not required_skills:
+                st.error("Enter required skills, or add a job description and configure Gemini for suggested skills.")
             else:
                 job = {
-                    "id":f"JOB-{datetime.now().strftime('%H%M%S')}",
+                    "id":f"JOB-{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
                     "title":job_title.strip(),"team":department.strip() or "Unassigned",
                     "location":location.strip(),"type":role_type,"status":"Draft",
                     "applicants":0,"created":date.today().isoformat(),
-                    "description":jd,"required_skills":parse_skills(required),
+                    "description":jd,"required_skills":required_skills,
                     "preferred_skills":parse_skills(preferred),"min_exp":float(min_exp),
                 }
                 st.session_state.jobs.insert(0,job)
                 RecruitmentStore().save_job(job)
                 log_activity(f"Created draft requisition: {job['title']}", "job_created", job["id"])
-                st.success(f"Created {job['id']}. Review and activate it using your hiring workflow.")
+                st.success(f"Created {job['id']}. Review the criteria before activating the requisition.")
                 st.rerun()
     st.markdown("### Requisitions")
     st.dataframe(st.session_state.jobs, use_container_width=True, hide_index=True)
+    if st.session_state.jobs:
+        st.markdown("### Requisition status controls")
+        labels = [f"{job.get('id')} · {job.get('title')}" for job in st.session_state.jobs]
+        chosen = st.selectbox("Select requisition", labels, key="status_job_choice")
+        target_job = st.session_state.jobs[labels.index(chosen)]
+        new_status = st.selectbox("Status", ["Draft", "Active", "Paused", "Closed"], index=["Draft","Active","Paused","Closed"].index(target_job.get("status","Draft")) if target_job.get("status","Draft") in ["Draft","Active","Paused","Closed"] else 0, key="status_job_target")
+        if st.button("Update requisition status"):
+            target_job["status"] = new_status
+            RecruitmentStore().save_job(target_job)
+            log_activity(f"Changed requisition {target_job.get('id')} status to {new_status}", "job_status", target_job.get("id",""))
+            st.success("Requisition status updated.")
+            st.rerun()
 
 elif page == "AI Screening":
     st.subheader("AI screening & evidence review")
