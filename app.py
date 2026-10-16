@@ -28,6 +28,7 @@ from recruitment_core.matching import CandidateProfile, JobCriteria, score_candi
 from recruitment_core.memory import CandidateMemory
 from recruitment_core.fairness import selection_rate_audit
 from recruitment_core.store import RecruitmentStore
+from recruitment_core.orchestrator import run_hiring_workflow
 
 # ---------------------------------------------------------------------------
 # Theme
@@ -253,7 +254,7 @@ if page == "Overview":
 
 elif page == "Talent Pipeline":
     st.subheader("Talent pipeline")
-    st.markdown('<div class="section-note">Track candidate stage, source and recruiter-visible evidence. Demo rows are labelled sample data.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-note">Track candidate stage and source, run a transparent matching workflow, and record recruiter-owned next steps. Demo rows are illustrative.</div>', unsafe_allow_html=True)
     if st.session_state.candidate_rows:
         st.dataframe(st.session_state.candidate_rows, use_container_width=True, hide_index=True)
     with st.expander("Add candidate record"):
@@ -277,6 +278,93 @@ elif page == "Talent Pipeline":
                     st.rerun()
                 else:
                     st.error("Enter a candidate display name.")
+
+    st.markdown("### Agentic hiring workflow")
+    job_labels = [f"{job.get('id','JOB')} · {job.get('title','Untitled role')}" for job in st.session_state.jobs]
+    if job_labels and st.session_state.candidate_rows:
+        selected_label = st.selectbox("Requisition to evaluate", job_labels, key="pipeline_job_match")
+        selected_job = st.session_state.jobs[job_labels.index(selected_label)]
+        fallback_skills = ROLE_REQUIREMENTS.get(selected_job.get("title", ""), [])
+        job_for_workflow = dict(selected_job)
+        if not job_for_workflow.get("required_skills") and not job_for_workflow.get("preferred_skills"):
+            job_for_workflow["required_skills"] = fallback_skills
+        if st.button("Run multi-stage recruitment workflow", type="primary", use_container_width=True):
+            with st.spinner("Job analysis → candidate matching → interview planning → verification checklist..."):
+                report = run_hiring_workflow(job_for_workflow, st.session_state.candidate_rows)
+                st.session_state["hiring_workflow_report"] = report
+                log_activity(
+                    f"Ran recruitment workflow for {selected_job.get('title','role')}",
+                    "hiring_workflow",
+                    selected_job.get("id", ""),
+                )
+        report = st.session_state.get("hiring_workflow_report")
+        if report:
+            if report.get("summary", {}).get("errors"):
+                st.warning("Job criteria need attention: " + "; ".join(report["summary"]["errors"]))
+            summary = report.get("summary", {})
+            a,b,c,d = st.columns(4)
+            with a: metric_card("CANDIDATES ANALYSED", summary.get("candidate_count",0), "Profiles in current pipeline")
+            with b: metric_card("PRIORITY FOR REVIEW", summary.get("review_candidates",0), "Advisory only · not a rejection rule")
+            with c: metric_card("REQUIRED SKILLS", len(summary.get("required_skills",[])), "Criteria used by matcher")
+            with d: metric_card("WORKFLOW STATUS", "Human review", "Approval required")
+            if report.get("matches"):
+                st.markdown("### Explainable candidate comparison")
+                st.dataframe([
+                    {
+                        "Candidate": row["candidate"],
+                        "Preliminary score": row["score"],
+                        "Matched required skills": ", ".join(row["matched_required_skills"]),
+                        "Skills to verify": ", ".join(row["missing_required_skills"]),
+                        "Suggested next step": row["next_step"],
+                        "Decision": row["decision"],
+                    } for row in report["matches"]
+                ], use_container_width=True, hide_index=True)
+                chosen_candidate = st.selectbox(
+                    "Candidate for recruiter review",
+                    [row["candidate_id"] for row in report["matches"]],
+                    format_func=lambda value: next(row["candidate"] for row in report["matches"] if row["candidate_id"] == value),
+                    key="human_review_candidate",
+                )
+                review_action = st.selectbox(
+                    "Human reviewer decision",
+                    ["Move to interview", "Hold for more evidence", "Close application"],
+                    key="human_review_action",
+                )
+                review_note = st.text_input("Decision note (job-related, required for audit)", key="human_review_note")
+                if st.button("Record human decision", type="primary"):
+                    if not review_note.strip():
+                        st.error("Add a brief job-related rationale before recording the decision.")
+                    else:
+                        candidate_match = next(row for row in report["matches"] if row["candidate_id"] == chosen_candidate)
+                        updated = False
+                        for candidate_row in st.session_state.candidate_rows:
+                            stable_id = str(candidate_row.get("ID") or candidate_row.get("Candidate"))
+                            if stable_id == chosen_candidate or str(candidate_row.get("Candidate")) == candidate_match["candidate"]:
+                                candidate_row["Stage"] = {
+                                    "Move to interview":"Interview",
+                                    "Hold for more evidence":"Review",
+                                    "Close application":"Closed",
+                                }[review_action]
+                                candidate_row["Score"] = candidate_match["score"]
+                                candidate_row["Updated"] = date.today().isoformat()
+                                RecruitmentStore().save_candidate(candidate_row)
+                                updated = True
+                                break
+                        if updated:
+                            log_activity(
+                                f"Human review: {candidate_match['candidate']} → {review_action}. Rationale: {review_note.strip()}",
+                                "human_decision",
+                                chosen_candidate,
+                            )
+                            st.success("Human decision recorded in the pipeline and audit log.")
+                            st.rerun()
+                        else:
+                            st.error("Could not map this result to a stored pipeline record.")
+            with st.expander("Interview plan prepared by the workflow"):
+                st.dataframe(report.get("interview_plan", []), use_container_width=True, hide_index=True)
+            with st.expander("Verification steps (coordination checklist only)"):
+                st.dataframe(report.get("verification_plan", []), use_container_width=True, hide_index=True)
+            st.caption("The workflow prepares recommendations and checklists. It does not contact job boards, reject people automatically, or call background-check providers.")
     if st.button("Export pipeline CSV"):
         import pandas as pd
         st.download_button("Download CSV", pd.DataFrame(st.session_state.candidate_rows).to_csv(index=False), "talent_pipeline.csv", "text/csv")
