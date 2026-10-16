@@ -1,6 +1,18 @@
 # ai-recruitment-agent
 AI-powered Recruitment Agent built with Streamlit and LangChain. Analyze resumes, evaluate skills, generate interview questions, and improve resumes using LLMs. Includes semantic skill scoring, RAG-based Q&amp;A, and resume enhancement for smarter hiring decisions.
 
+Recruitment actions are orchestrated by a LangGraph supervisor that routes work to
+resume-analysis, candidate-Q&A, interview, and resume-coaching agents. The workflow
+uses a local stdio MCP server for request and score validation. Resume screening is
+advisory: the graph pauses for a recruiter to approve or reject each assessment
+before recording a final selection. Checkpoints are held in memory for the lifetime
+of the Streamlit session.
+
+The assessment instructions restrict scoring to job-related evidence and treat
+resume/job-description content as untrusted input. The local MCP process does not
+receive Gemini API keys. Do not treat AI scores or camera/motion signals as a
+substitute for a fair, human-led hiring process.
+
 ## Run locally
 
 ```bash

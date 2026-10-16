@@ -21,6 +21,7 @@ st.set_page_config(page_title="InterviewAI", page_icon=":sparkles:", layout="wid
 from agents import RecruitmentAgent  # matches class name in agents.py
 import atexit
 import ui
+from workflow import RecruitmentWorkflow
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -103,15 +104,19 @@ def setup_agent(config):
         return None
 
     if st.session_state.resume_agent is None:
-        st.session_state.resume_agent = RecruitmentAgent(
+        st.session_state.resume_agent = RecruitmentWorkflow(
+            RecruitmentAgent(
+                api_key=api_key,
+                cutoff_score=config.get("cutoff_score", 75),
+                model=config.get("gemini_model"),
+            )
+        )
+    else:
+        st.session_state.resume_agent.configure(
             api_key=api_key,
             cutoff_score=config.get("cutoff_score", 75),
             model=config.get("gemini_model"),
         )
-    else:
-        st.session_state.resume_agent.api_key = api_key
-        st.session_state.resume_agent.cutoff_score = config.get("cutoff_score", 75)
-        st.session_state.resume_agent.model = config.get("gemini_model")
 
     return st.session_state.resume_agent
 
@@ -191,6 +196,14 @@ def get_improved_resume(agent, target_role, highlighted_skills):
         return None
 
 
+def resolve_human_review(agent, action):
+    try:
+        return agent.approve_or_reject(action)
+    except Exception as e:
+        st.error(f"Error recording recruiter decision: {e}")
+        return None
+
+
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 def cleanup():
     if st.session_state.get("resume_agent"):
@@ -228,6 +241,24 @@ def main():
         # Persist result across reruns
         if st.session_state.analysis_result:
             ui.display_analysis_result(st.session_state.analysis_result, type="primary")
+            if agent and agent.awaiting_review:
+                st.info(
+                    "Review the job-related evidence above. The AI score is advisory; "
+                    "a recruiter must make the final selection decision."
+                )
+                approve_col, reject_col = st.columns(2)
+                with approve_col:
+                    if st.button("Approve candidate", use_container_width=True):
+                        result = resolve_human_review(agent, "approve")
+                        if result is not None:
+                            st.session_state.analysis_result = result
+                            st.rerun()
+                with reject_col:
+                    if st.button("Reject candidate", use_container_width=True):
+                        result = resolve_human_review(agent, "reject")
+                        if result is not None:
+                            st.session_state.analysis_result = result
+                            st.rerun()
             if (
                 agent
                 and st.session_state.analysis_result.get("missing_skills")

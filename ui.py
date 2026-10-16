@@ -249,17 +249,28 @@ def display_analysis_result(result, type="primary"):
         return
 
     score = result.get("overall_score", 0)
-    selected = result.get("selected", False)
+    selected = result.get("selected")
 
     st.markdown("---")
     col1, col2 = st.columns(2)
     with col1:
         st.metric("Overall Score", f"{score}%")
     with col2:
-        if selected:
+        if result.get("decision_status") == "Pending recruiter review":
+            st.warning("⏳ Pending recruiter review")
+        elif selected is True:
             st.success("✅ Selected")
+        elif selected is False:
+            st.error("❌ Not selected by recruiter")
         else:
-            st.error("❌ Not Selected")
+            st.info("No final selection decision")
+
+    if result.get("recommendation") is not None:
+        st.caption(
+            "AI recommendation is advisory only; the recruiter makes the final decision."
+        )
+    for warning in result.get("safety_warnings", []):
+        st.warning(warning)
 
     analysis_note = result.get("analysis_note")
     if analysis_note:
