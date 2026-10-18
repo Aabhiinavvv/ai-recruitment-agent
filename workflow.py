@@ -259,6 +259,10 @@ class RecruitmentWorkflow:
         self._graph = _build_graph()
         self._pending_review_thread: str | None = None
 
+
+
+        
+
     def configure(self, api_key: str, cutoff_score: int, model: str | None) -> None:
         self._agent.api_key = api_key
         self._agent.cutoff_score = cutoff_score
