@@ -35,8 +35,9 @@ This is a target permission model, not a claim that the current Streamlit protot
 
 - The company-facing Hiring Workflow creates a hiring brief and editable job-description draft, and requires recruiter approval before screening.
 - It supports screening an authorised PDF/TXT resume, interview-round workflows, recruiter decisions, offer drafts, consent-gated verification/onboarding tracking, opt-in organisational memory and audit events.
-- The new Sourcing & Integrations tab reads the active workflow job and produces editable job-posting copy, a downloadable JSON pack, and a sample applicant CSV template.
-- LinkedIn and Indeed are clearly marked **Not connected**. The CSV template describes a proposed import format; it is not an active applicant-upload endpoint.
+- The new Sourcing & Integrations tab reads the active workflow job and produces editable job-posting copy, a downloadable JSON pack, and an applicant CSV template.
+- The page can ingest a recruiter-authorised CSV export into a session-only applicant metadata queue with basic required-field/authorization checks and duplicate detection. It does not download resumes, screen imported applicants automatically, or persist the queue beyond the Streamlit session.
+- LinkedIn and Indeed are clearly marked **Not connected**. The local CSV intake is not a provider integration and is not yet linked to the resume-screening workflow.
 - No unauthorised profile scraping or automated browser interaction is implemented.
 - The current app remains a research prototype. It does not yet have production-grade multi-company authentication, tenant isolation, a central durable application database or live board adapters.
 
@@ -111,7 +112,7 @@ Use stable internal IDs and idempotent external application IDs. Do not use a pe
 ### Phase 2 — Reliable application intake and pipeline
 
 - Create dedicated requisition, candidate and application data models.
-- Build an authorised CSV ingestion endpoint with validation, preview, required fields, duplicate detection and mapping to a requisition.
+- Replace session-only CSV intake with a durable, authenticated ingestion endpoint with validation, preview, required fields, duplicate detection and mapping to a requisition/application.
 - Preserve source attribution, provider IDs, applied-at timestamps, candidate notices and application status history.
 - Make stage changes and reviewer notes auditable.
 
