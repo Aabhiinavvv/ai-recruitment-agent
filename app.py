@@ -415,6 +415,11 @@ elif page == "New Requisition":
         department = st.text_input("Department / hiring team")
         location = st.text_input("Location", "India · Hybrid")
         role_type = st.selectbox("Employment type", ["Full-time","Internship","Contract","Part-time","Temporary"])
+        work_mode = st.selectbox("Work arrangement", ["On-site", "Hybrid", "Remote", "Flexible"])
+        salary_range = st.text_input("Salary / compensation range (optional)", placeholder="e.g. ₹8–12 LPA")
+        openings = st.number_input("Number of openings", min_value=1, max_value=1000, value=1, step=1)
+        application_deadline = st.date_input("Application deadline", value=date.today() + timedelta(days=30), min_value=date.today())
+        public_job_url = st.text_input("Public vacancy / application URL (optional)", placeholder="https://company.example/careers/role")
         jd = st.text_area("Job description", height=160, placeholder="Responsibilities, required skills, preferred skills, experience and evaluation criteria…")
         required = st.text_input("Required skills (comma-separated)", help="You can enter skills manually. If left blank and Gemini is configured, the agent suggests skills from the job description.")
         preferred = st.text_input("Preferred skills (comma-separated)")
@@ -436,7 +441,10 @@ elif page == "New Requisition":
                 job = {
                     "id":f"JOB-{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
                     "title":job_title.strip(),"team":department.strip() or "Unassigned",
-                    "location":location.strip(),"type":role_type,"status":"Draft",
+                    "location":location.strip(),"type":role_type,"work_mode":work_mode,
+                    "salary_range":salary_range.strip(),"openings":int(openings),
+                    "application_deadline":application_deadline.isoformat(),
+                    "public_job_url":public_job_url.strip(),"status":"Draft",
                     "applicants":0,"created":date.today().isoformat(),
                     "description":jd,"required_skills":required_skills,
                     "preferred_skills":parse_skills(preferred),"min_exp":float(min_exp),
@@ -507,6 +515,11 @@ elif page == "Sourcing & Integrations":
             f"Team: {selected_job.get('team', 'Not specified')}",
             f"Location: {selected_job.get('location', 'Not specified')}",
             f"Employment type: {selected_job.get('type', 'Not specified')}",
+            f"Work arrangement: {selected_job.get('work_mode', 'Not specified')}",
+            f"Salary / compensation: {selected_job.get('salary_range') or 'Not specified'}",
+            f"Number of openings: {selected_job.get('openings', 1)}",
+            f"Application deadline: {selected_job.get('application_deadline', 'Not specified')}",
+            f"Public vacancy/application URL: {selected_job.get('public_job_url') or 'Not specified'}",
             "",
             "About the role",
             str(selected_job.get("description", "Add a job description in the requisition before publishing.")),
@@ -523,6 +536,11 @@ elif page == "Sourcing & Integrations":
             "team": selected_job.get("team"),
             "location": selected_job.get("location"),
             "employment_type": selected_job.get("type"),
+            "work_mode": selected_job.get("work_mode"),
+            "salary_range": selected_job.get("salary_range", ""),
+            "openings": selected_job.get("openings", 1),
+            "application_deadline": selected_job.get("application_deadline"),
+            "public_job_url": selected_job.get("public_job_url", ""),
             "status": selected_job.get("status"),
             "description": selected_job.get("description", ""),
             "required_skills": selected_job.get("required_skills", []),
