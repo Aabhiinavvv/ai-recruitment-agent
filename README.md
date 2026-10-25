@@ -1,5 +1,5 @@
-# ai-recruitment-agent
-AI-powered Recruitment Agent built with Streamlit and LangChain. Analyze resumes, evaluate skills, generate interview questions, and improve resumes using LLMs. Includes semantic skill scoring, RAG-based Q&amp;A, resume enhancement, advisory bias and resume-integrity checks, and browser-based live voice interviews.
+# HireOS — Company Recruiting Operations
+HireOS is a company-side, recruiter-supervised hiring workspace built with Streamlit and LangChain. Employers can draft and approve a vacancy, screen authorised candidate resumes against role requirements, coordinate interviews and downstream hiring checklists, and prepare job-posting material for approved sourcing channels. Direct LinkedIn and Indeed integrations are not connected in this prototype.
 
 Recruitment actions are orchestrated by a LangGraph supervisor that routes work to
 resume-screening, job-matching, interview, HR-decision, communication,
