@@ -1,46 +1,57 @@
-# Research MVP implementation notes
+# Company-First HireOS Research MVP
 
 ## Research proposition
 
-A supervised multi-agent recruitment workflow with explicit role criteria, transparent candidate matching, structured interview planning, consent-gated persistent talent memory, verification coordination, fairness diagnostics and human decision gates may improve traceability and workflow consistency compared with unstructured manual review. This is a hypothesis to evaluate, not a claimed result.
+A supervised recruitment workflow with explicit employer-owned role criteria, transparent candidate evidence, structured interview preparation, audit history and human decision gates may improve recruiting workflow traceability and consistency compared with ad hoc manual coordination. This is a hypothesis to evaluate, not a proven result.
 
-## Implemented workflow
+## Current company workflow
 
-1. Job Analysis Agent validates requisition criteria and can suggest skills from the job description through the existing Gemini agent.
-2. Candidate Matching Agent uses a transparent deterministic rubric over explicit required/preferred skills and any stated minimum experience.
-3. Interview Planning Agent generates consistent competency-focused questions from the required skill set.
-4. Verification Coordination Agent prepares a checklist and tracks statuses locally; it does not contact providers or government systems.
-5. Review Packet Agent returns results for human review.
-6. Existing LangGraph supervisor routes resume analysis, candidate Q&A, interview tools and resume coaching, with local MCP validation and human approval for resume recommendations.
+1. The employer/recruiter creates a requisition and reviews required/preferred criteria.
+2. The recruiter prepares a channel-ready posting pack. The current app does not publish directly to LinkedIn or Indeed.
+3. Candidate records enter through recruiter entry or an authorised CSV import; source attribution is preserved as a field.
+4. The Hiring Workflow graph validates the job criteria, compares candidate-listed skills, creates an interview plan and verification checklist, and prepares a recruiter review packet.
+5. The existing LangGraph supervisor supports resume analysis, resume-grounded questions, interview assistance and resume coaching via recruiter-facing tools.
+6. Recruiters/hiring managers own decisions. The system records local audit activity and does not automatically hire or reject anyone.
 
-## Core research controls
+## Current implementation boundaries
 
-- Treat resume and job description content as untrusted input, not instructions.
-- Keep protected traits out of per-candidate scoring inputs.
-- Missing terms are surfaced as evidence gaps, not proof that a candidate lacks a skill.
-- Persist candidate history only after explicit confirmation of consent/lawful basis in this prototype.
-- Keep final decisions with a human recruiter.
-- Do not infer honesty, competence or integrity from webcam motion or emotion.
-- Do not scrape job boards or bypass verification processes. Only authorised integrations should be used.
+- Job-analysis, matching, interview-plan, verification-coordination and review-packet nodes in the hiring graph are narrow Python workflow functions; they are not five independent LLM services.
+- Candidate matching is a deterministic, explainable rubric over explicit required/preferred skills and optional stated experience.
+- The Sourcing & Integrations view creates posting copy and a requisition summary for human review. LinkedIn and Indeed are visibly marked not connected.
+- Candidate CSV imports are supported when the employer has authority to process the data. No profile scraping or browser automation is implemented.
+- Verification Hub records local statuses only; it does not contact a provider or official system.
+- The local app does not yet implement organisation authentication, tenant isolation, role-based access or production-grade secure candidate storage.
+- Sample rows are illustrative; local data storage is for research/demo use only.
+
+## Core research and safety controls
+
+- Treat resumes, imported profiles and job descriptions as untrusted data, not instructions for the system to execute.
+- Keep protected/sensitive attributes out of individual matching inputs.
+- Missing resume terms are surfaced as evidence gaps, not proof that a candidate lacks a skill.
+- Require human review for consequential decisions.
+- Use candidate memory only with the appropriate consent/lawful basis and provide a deletion path.
+- Do not infer ability, honesty, emotion or personality from webcam motion, facial expression or similar signals.
+- Use LinkedIn/Indeed only through documented, authorized integration pathways. Do not scrape platform pages or bypass access controls.
+- Before any real pilot, obtain appropriate privacy/legal review and implement notices, access control, retention/deletion, encryption, audit controls and incident handling.
 
 ## Evaluation design
 
-Create a de-identified or synthetic benchmark and obtain recruiter relevance labels before comparing methods:
+Create a synthetic or properly de-identified dataset and obtain recruiter relevance labels before comparing methods.
 
-- Candidate ranking: keyword baseline, embedding retrieval, LLM-only evaluation, and hybrid deterministic rubric + semantic retrieval.
-- Metrics: Precision@K, Recall@K, MRR, NDCG@K, evidence support rate, unsupported-claim rate, and inter-rater agreement.
-- Workflow metrics: task completion, recruiter time, manual actions, overrides, latency, token/cost estimate, and error recovery.
-- Fairness audit: subgroup sample sizes and selection rates on lawfully collected audit data; investigate differences rather than treating one ratio as universal proof.
-- Ablation: single-LLM workflow vs supervised graph vs graph with persistent history; compare quality, cost and recoverability.
-
-## Current limitations
-
-This branch adds a practical research prototype, not a complete production-grade autonomous recruiter. Candidate sourcing via job-board integrations, real email/WhatsApp delivery, interview scheduling, third-party background verification, enterprise identity/access management and encrypted multi-tenant infrastructure are not connected yet. SQLite is local persistence only. Matching is currently lexical/criterion-based and must be benchmarked before any real hiring use.
+- **Candidate retrieval/ranking:** lexical skill matching vs embedding retrieval vs LLM-only vs hybrid rubric + retrieval.
+- **Evidence quality:** evidence provenance, evidence-supported reason rate, unsupported-claim rate, and reviewer correction rate.
+- **Ranking:** Precision@K, Recall@K, MRR, NDCG@K; track inter-rater agreement.
+- **Workflow:** time per application, manual steps, completion rates, overrides, latency, cost, failure recovery and audit completeness.
+- **Sourcing integration:** connector test results for job create/update/close, application webhooks, duplicate events, retries, invalid credentials, rate limits and disconnected/revoked access.
+- **Fairness diagnostics:** subgroup sample sizes and selection rates on purpose-limited, lawfully collected audit data; investigate patterns rather than interpreting a single metric as certification.
 
 ## Roadmap
 
-- Phase 1: recruiter-facing UI, requisitions, candidate pipeline, explainable match workflow, interview plans, SQLite history, fairness diagnostics, audit events.
-- Phase 2: recruiter feedback/evidence provenance and synthetic benchmark with reproducible metrics.
-- Phase 3: hybrid embeddings/reranking and calibrated explanation evaluation.
-- Phase 4: authorised calendar, communication and verification adapters with explicit approval gates.
-- Phase 5: authentication, tenant isolation, secure secret handling, monitoring, retention/deletion workflows and security review.
+1. **Company-first MVP:** employer requisitions, sourcing page, posting pack, authorised CSV imports, pipeline, explainable matching, interview prep and human review.
+2. **Workflow reliability:** separate candidate and application entities, de-duplication, stage transitions, reviewer notes, evidence references and recruiter override capture.
+3. **Multi-company security:** authentication, tenant isolation, RBAC, PostgreSQL migrations, protected resume storage, data retention/deletion.
+4. **Authorised connectors:** LinkedIn/Indeed partner assessment, OAuth, provider adapters, webhook validation, retries and reconciliation.
+5. **Production AI/RAG:** resume chunk provenance, retrieval evaluation and hybrid reranking with recruiter-labelled benchmarks.
+6. **Operations:** approved calendar/outreach providers, monitoring, support processes and deployment hardening.
+
+See [COMPANY_FIRST_PRODUCT_PLAN.md](COMPANY_FIRST_PRODUCT_PLAN.md) for the target user roles, architecture, acceptance criteria and detailed milestones.
