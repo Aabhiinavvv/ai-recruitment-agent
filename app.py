@@ -16,7 +16,7 @@ def ensure_event_loop():
 ensure_event_loop()
 
 # set_page_config MUST be the very first Streamlit call — only called once here, NOT in ui.py
-st.set_page_config(page_title="InterviewAI", page_icon=":sparkles:", layout="wide")
+st.set_page_config(page_title="HireOS | Company Hiring Workspace", page_icon=":sparkles:", layout="wide")
 
 from agents import RecruitmentAgent  # matches class name in agents.py
 import atexit
@@ -234,8 +234,8 @@ def main():
         pass
     tabs = ui.create_tabs()
 
-    # ── Tab 0: Resume Analysis ───────────────────────────────────────────────
-    with tabs[0]:
+    # ── Tab 2: Resume Screening ─────────────────────────────────────────────
+    with tabs[2]:
         role, custom_jd = ui.role_selection_section(ROLE_REQUIREMENTS)
         uploaded_resume = ui.resume_upload_section()
 
@@ -275,8 +275,8 @@ def main():
                     generate_detailed_weaknesses(agent)
                     st.rerun()
 
-    # ── Tab 1: Q&A ───────────────────────────────────────────────────────────
-    with tabs[1]:
+    # ── Tab 5: Candidate Q&A ────────────────────────────────────────────────
+    with tabs[5]:
         if st.session_state.resume_analyzed and st.session_state.analysis_result:
             ui.resume_qa_section(
                 has_resume=True,
@@ -285,8 +285,8 @@ def main():
         else:
             st.warning("Please analyze a resume first to enable the Q&A section.")
 
-    # ── Tab 2: Interview Questions ───────────────────────────────────────────
-    with tabs[2]:
+    # ── Tab 3: Interview Studio ──────────────────────────────────────────────
+    with tabs[3]:
         if st.session_state.resume_analyzed and st.session_state.resume_agent:
             ui.interview_question_section(
                 has_resume=True,
@@ -299,8 +299,8 @@ def main():
                 "Please analyze a resume first to enable the interview question generation section."
             )
 
-    # ── Tab 3: Resume Improvement ────────────────────────────────────────────
-    with tabs[3]:
+    # ── Tab 8: Resume Improvement utility ───────────────────────────────────
+    with tabs[8]:
         if st.session_state.resume_analyzed and st.session_state.analysis_result:
             ui.resume_improvement_section(
                 has_resume=True,
@@ -313,8 +313,8 @@ def main():
                 "Please analyze a resume first to enable the resume improvement section."
             )
 
-    # ── Tab 4: Improved Resume ───────────────────────────────────────────────
-    with tabs[4]:
+    # ── Tab 9: Improved Resume utility ──────────────────────────────────────
+    with tabs[9]:
         if st.session_state.resume_analyzed and st.session_state.resume_agent:
             ui.improved_resume_section(
                 has_resume=True,
@@ -327,21 +327,25 @@ def main():
                 "Please upload and analyze a resume first in the 'Resume Analysis' tab."
             )
 
-    # ── Tab 5: AI Interview ─────────────────────────────────────────────────
-    with tabs[5]:
+    # ── Tab 4: Interview Review ─────────────────────────────────────────────
+    with tabs[4]:
         ui.ai_interview_section(st.session_state.resume_agent)
 
-    # ── Tab 6: Recruiter-supervised hiring workflow ─────────────────────────
-    with tabs[6]:
+    # ── Tab 0: Recruiter-supervised hiring workflow ──────────────────────────
+    with tabs[0]:
         ui.hiring_workflow_section(st.session_state.resume_agent)
 
-    # ── Tab 7: Employee HR policy support ──────────────────────────────────
-    with tabs[7]:
+    # ── Tab 6: Employee HR policy support ────────────────────────────────────
+    with tabs[6]:
         ui.employee_hr_support_section(st.session_state.resume_agent)
 
-    # ── Tab 8: Four-layer platform architecture ────────────────────────────
-    with tabs[8]:
+    # ── Tab 7: Four-layer platform architecture ──────────────────────────────
+    with tabs[7]:
         ui.platform_architecture_section()
+
+    # ── Tab 1: Company sourcing and authorised integrations ────────────────
+    with tabs[1]:
+        ui.sourcing_integrations_section(st.session_state.get("hiring_workflow_state"))
 
 
 if __name__ == "__main__":
