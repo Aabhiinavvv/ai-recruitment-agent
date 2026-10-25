@@ -94,13 +94,18 @@ if "analysis_result" not in st.session_state:
 # ── Agent setup ─────────────────────────────────────────────────────────────
 def setup_agent(config):
     """Initialise (or update) the RecruitmentAgent in session state."""
-    api_key = (
-        config.get("gemini_api_key")
-        or os.getenv("GEMINI_API_KEY")
-        or os.getenv("GOOGLE_API_KEY")
-    )
+    provider = config.get("llm_provider", "Groq")
+    api_key = config.get("llm_api_key")
     if not api_key:
-        st.error("Please enter your Gemini API key in the sidebar or set GEMINI_API_KEY in .env.")
+        if provider == "Groq":
+            api_key = os.getenv("GROQ_API_KEY")
+        else:
+            api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        st.error(
+            f"Enter your {provider} API key in the sidebar or configure the matching "
+            "environment variable in .env."
+        )
         return None
 
     if st.session_state.resume_agent is None:
@@ -108,14 +113,16 @@ def setup_agent(config):
             RecruitmentAgent(
                 api_key=api_key,
                 cutoff_score=config.get("cutoff_score", 75),
-                model=config.get("gemini_model"),
+                model=config.get("llm_model"),
+                provider=provider,
             )
         )
     else:
         st.session_state.resume_agent.configure(
             api_key=api_key,
             cutoff_score=config.get("cutoff_score", 75),
-            model=config.get("gemini_model"),
+            model=config.get("llm_model"),
+            provider=provider,
         )
 
     return st.session_state.resume_agent
@@ -323,6 +330,18 @@ def main():
     # ── Tab 5: AI Interview ─────────────────────────────────────────────────
     with tabs[5]:
         ui.ai_interview_section(st.session_state.resume_agent)
+
+    # ── Tab 6: Recruiter-supervised hiring workflow ─────────────────────────
+    with tabs[6]:
+        ui.hiring_workflow_section(st.session_state.resume_agent)
+
+    # ── Tab 7: Employee HR policy support ──────────────────────────────────
+    with tabs[7]:
+        ui.employee_hr_support_section(st.session_state.resume_agent)
+
+    # ── Tab 8: Four-layer platform architecture ────────────────────────────
+    with tabs[8]:
+        ui.platform_architecture_section()
 
 
 if __name__ == "__main__":

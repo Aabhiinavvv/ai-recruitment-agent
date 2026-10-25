@@ -26,8 +26,23 @@ class RecruitmentState(TypedDict, total=False):
 
 
 TASK_ROUTES = {
-    "analyze_resume": "resume_agent",
-    "generate_detailed_weaknesses": "resume_agent",
+    "generate_job_description": "job_description_agent",
+    "analyze_resume": "resume_screening_agent",
+    "screen_candidate_resume": "resume_screening_agent",
+    "generate_coding_challenge": "coding_interview_agent",
+    "evaluate_coding_submission": "coding_interview_agent",
+    "generate_round_interview_questions": "interview_agent",
+    "evaluate_interview_round": "interview_agent",
+    "build_hr_decision_brief": "hr_decision_support_agent",
+    "generate_offer_letter_draft": "offer_agent",
+    "create_verification_plan": "verification_agent",
+    "update_verification_check": "verification_agent",
+    "create_document_validation_plan": "document_validation_agent",
+    "update_document_validation_check": "document_validation_agent",
+    "create_onboarding_plan": "onboarding_agent",
+    "update_onboarding_task": "onboarding_agent",
+    "answer_employee_hr_question": "employee_support_agent",
+    "generate_detailed_weaknesses": "resume_screening_agent",
     "ask_question": "candidate_qa_agent",
     "generate_interview_question": "interview_agent",
     "generate_interview_questions": "interview_agent",
@@ -36,6 +51,7 @@ TASK_ROUTES = {
     "detect_motion": "interview_agent",
     "detect_repeated_motion": "interview_agent",
     "flag_suspicious_behavior": "interview_agent",
+    "send_alert": "communication_agent",
     "improve_resume": "resume_coach_agent",
     "get_improved_resume": "resume_coach_agent",
 }
@@ -92,7 +108,7 @@ def _agent_and_payload(config: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
 
 
 def _request_content(task: str, payload: dict[str, Any], agent: Any) -> str:
-    if task == "analyze_resume":
+    if task in {"analyze_resume", "screen_candidate_resume"}:
         resume_file = payload.get("file")
         if resume_file is None:
             return ""
@@ -105,7 +121,49 @@ def _request_content(task: str, payload: dict[str, Any], agent: Any) -> str:
         else:
             job_description = str(agent.extract_text(custom_jd) or "")
         return f"{resume_text}\n{job_description}"
-    fields = ("question", "answer", "custom_jd", "highlight_skills", "role", "areas")
+    fields = (
+        "question",
+        "answer",
+        "job_title",
+        "headcount",
+        "salary_budget",
+        "location",
+        "timeline",
+        "requirements",
+        "required_skills",
+        "round_name",
+        "difficulty",
+        "previous_feedback",
+        "candidate_evidence",
+        "prior_work_context",
+        "candidate",
+        "candidate_name",
+        "company_name",
+        "annual_salary_lpa",
+        "joining_date",
+        "documents",
+        "budget_confirmed",
+        "checks",
+        "offer_accepted",
+        "candidate_consent",
+        "document_types",
+        "aadhaar_compliant_integration_confirmed",
+        "document_type",
+        "task",
+        "check",
+        "status",
+        "notes",
+        "policy_documents",
+        "challenge",
+        "submission",
+        "questions_and_answers",
+        "custom_jd",
+        "highlight_skills",
+        "role",
+        "areas",
+        "reason",
+        "details",
+    )
     values = [payload.get(field) for field in fields if payload.get(field) is not None]
     content = []
     for value in values:
@@ -148,6 +206,27 @@ def _agent_node(state: RecruitmentState, config: RunnableConfig) -> dict[str, An
     return {"result": result}
 
 
+def _job_matching_agent(state: RecruitmentState, config: RunnableConfig) -> dict[str, Any]:
+    _, payload = _agent_and_payload(config)
+    result = state.get("result")
+    if not isinstance(result, dict):
+        raise TypeError("Resume screening must return a structured result for job matching.")
+
+    skill_scores = result.get("skill_scores")
+    if not isinstance(skill_scores, dict):
+        raise TypeError("Resume screening must return structured skill scores for job matching.")
+
+    result = dict(result)
+    result["job_match"] = {
+        "role": str(payload.get("role") or ""),
+        "overall_score": result.get("overall_score"),
+        "matched_skills": [skill for skill, score in skill_scores.items() if float(score) >= 7],
+        "partial_matches": [skill for skill, score in skill_scores.items() if 5 < float(score) < 7],
+        "missing_skills": [skill for skill, score in skill_scores.items() if float(score) <= 5],
+    }
+    return {"result": result}
+
+
 def _validate_analysis(state: RecruitmentState) -> dict[str, Any]:
     result = state.get("result")
     if not isinstance(result, dict):
@@ -171,6 +250,23 @@ def _validate_analysis(state: RecruitmentState) -> dict[str, Any]:
     if warnings:
         guarded_result["safety_warnings"] = list(warnings)
     return {"result": guarded_result, "decision_status": "pending"}
+
+
+def _validate_candidate_screening(state: RecruitmentState) -> dict[str, Any]:
+    result = state.get("result")
+    if not isinstance(result, dict):
+        raise TypeError("Candidate screening must return a structured result.")
+    decision = _call_mcp_tool_sync(
+        "check_analysis_output",
+        {
+            "overall_score": result.get("overall_score"),
+            "skill_scores": result.get("skill_scores"),
+        },
+    )
+    if not decision.get("allowed"):
+        details = "; ".join(decision.get("errors", [])) or "Candidate assessment rejected."
+        raise ValueError(details)
+    return {"result": dict(result)}
 
 
 def _human_review(state: RecruitmentState, config: RunnableConfig) -> dict[str, Any]:
@@ -206,7 +302,11 @@ def _human_review(state: RecruitmentState, config: RunnableConfig) -> dict[str, 
 
 
 def _route_after_agent(state: RecruitmentState) -> str:
-    return "validate_analysis" if state["task"] == "analyze_resume" else "finish"
+    if state["task"] == "analyze_resume":
+        return "job_matching_agent"
+    if state["task"] == "screen_candidate_resume":
+        return "validate_candidate_screening"
+    return "finish"
 
 
 def _build_graph():
@@ -214,14 +314,25 @@ def _build_graph():
     graph.add_node("guardrail", _guardrail)
     graph.add_node("supervisor", _supervisor)
     for node in {
-        "resume_agent",
+        "resume_screening_agent",
+        "coding_interview_agent",
+        "hr_decision_support_agent",
+        "offer_agent",
+        "verification_agent",
+        "document_validation_agent",
+        "onboarding_agent",
+        "employee_support_agent",
+        "job_description_agent",
         "candidate_qa_agent",
         "interview_agent",
         "resume_coach_agent",
+        "communication_agent",
     }:
         graph.add_node(node, _agent_node)
+    graph.add_node("job_matching_agent", _job_matching_agent)
+    graph.add_node("validate_candidate_screening", _validate_candidate_screening)
     graph.add_node("validate_analysis", _validate_analysis)
-    graph.add_node("human_review", _human_review)
+    graph.add_node("hr_decision_agent", _human_review)
     graph.add_node("finish", lambda state: {})
 
     graph.add_edge(START, "guardrail")
@@ -230,25 +341,49 @@ def _build_graph():
         "supervisor",
         lambda state: state["route"],
         {
-            "resume_agent": "resume_agent",
+            "resume_screening_agent": "resume_screening_agent",
+            "coding_interview_agent": "coding_interview_agent",
+            "hr_decision_support_agent": "hr_decision_support_agent",
+            "offer_agent": "offer_agent",
+            "verification_agent": "verification_agent",
+            "document_validation_agent": "document_validation_agent",
+            "onboarding_agent": "onboarding_agent",
+            "employee_support_agent": "employee_support_agent",
+            "job_description_agent": "job_description_agent",
             "candidate_qa_agent": "candidate_qa_agent",
             "interview_agent": "interview_agent",
             "resume_coach_agent": "resume_coach_agent",
+            "communication_agent": "communication_agent",
         },
     )
     for node in {
-        "resume_agent",
+        "resume_screening_agent",
+        "coding_interview_agent",
+        "hr_decision_support_agent",
+        "offer_agent",
+        "verification_agent",
+        "document_validation_agent",
+        "onboarding_agent",
+        "employee_support_agent",
+        "job_description_agent",
         "candidate_qa_agent",
         "interview_agent",
         "resume_coach_agent",
+        "communication_agent",
     }:
         graph.add_conditional_edges(
             node,
             _route_after_agent,
-            {"validate_analysis": "validate_analysis", "finish": "finish"},
+            {
+                "job_matching_agent": "job_matching_agent",
+                "validate_candidate_screening": "validate_candidate_screening",
+                "finish": "finish",
+            },
         )
-    graph.add_edge("validate_analysis", "human_review")
-    graph.add_edge("human_review", "finish")
+    graph.add_edge("job_matching_agent", "validate_analysis")
+    graph.add_edge("validate_candidate_screening", "finish")
+    graph.add_edge("validate_analysis", "hr_decision_agent")
+    graph.add_edge("hr_decision_agent", "finish")
     graph.add_edge("finish", END)
     return graph.compile(checkpointer=MemorySaver())
 
@@ -263,10 +398,17 @@ class RecruitmentWorkflow:
 
         
 
-    def configure(self, api_key: str, cutoff_score: int, model: str | None) -> None:
+    def configure(
+        self,
+        api_key: str,
+        cutoff_score: int,
+        model: str | None,
+        provider: str = "Gemini",
+    ) -> None:
         self._agent.api_key = api_key
         self._agent.cutoff_score = cutoff_score
         self._agent.model = model
+        self._agent.provider = provider
 
     @property
     def awaiting_review(self) -> bool:
@@ -298,13 +440,13 @@ class RecruitmentWorkflow:
         self._agent.analysis_results = result["result"]
         return result["result"]
 
-    def _invoke(self, task: str, *args: Any, **kwargs: Any) -> Any:
-        method = getattr(self._agent, task)
+    def _invoke(self, action_name: str, *args: Any, **kwargs: Any) -> Any:
+        method = getattr(self._agent, action_name)
         bound = inspect.signature(method).bind(*args, **kwargs)
         bound.apply_defaults()
         thread_id = str(uuid.uuid4())
         result = self._graph.invoke(
-            {"task": task},
+            {"task": action_name},
             config={
                 "configurable": {
                     "thread_id": thread_id,
@@ -313,12 +455,12 @@ class RecruitmentWorkflow:
                 }
             },
         )
-        if task == "analyze_resume":
+        if action_name == "analyze_resume":
             if result.get("__interrupt__"):
                 self._pending_review_thread = thread_id
             else:
                 self._agent.analysis_results = result.get("result", {})
-        if task == "generate_detailed_weaknesses":
+        if action_name == "generate_detailed_weaknesses":
             self._agent.analysis_results = getattr(self._agent, "analysis_results", {})
         return result.get("result")
 

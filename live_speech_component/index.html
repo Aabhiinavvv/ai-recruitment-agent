@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font: 14px sans-serif; margin: 0; color: #1f2937; }
+    button { border: 0; border-radius: 8px; padding: 9px 12px; margin: 4px 6px 4px 0; background: #6743ee; color: white; cursor: pointer; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    #status { color: #4b5563; padding: 4px 0; }
+  </style>
+</head>
+<body>
+  <button id="read" type="button">Read question aloud</button>
+  <button id="start" type="button">Start speaking</button>
+  <button id="stop" type="button" disabled>Stop</button>
+  <div id="status" role="status">Use the microphone to answer, or type your response below.</div>
+  <script>
+    let question = "";
+    let transcript = "";
+    let recognition = null;
+    const status = document.getElementById("status");
+    const start = document.getElementById("start");
+    const stop = document.getElementById("stop");
+    const speechApi = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    function send(value) {
+      value.updatedAt = Date.now();
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:setComponentValue",
+        value,
+        dataType: "json"
+      }, "*");
+    }
+
+    document.getElementById("read").addEventListener("click", () => {
+      if (!question || !window.speechSynthesis) {
+        status.textContent = "Speech playback is not available in this browser.";
+        return;
+      }
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance(question));
+    });
+
+    if (!speechApi) {
+      start.disabled = true;
+      status.textContent = "Live speech recognition is not supported here. Type your answer below.";
+    }
+
+    start.addEventListener("click", () => {
+      if (!speechApi) return;
+      transcript = "";
+      recognition = new speechApi();
+      recognition.lang = "en-US";
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.onstart = () => {
+        status.textContent = "Listening…";
+        start.disabled = true;
+        stop.disabled = false;
+      };
+      recognition.onresult = (event) => {
+        let current = "";
+        for (let i = 0; i < event.results.length; i++) {
+          current += event.results[i][0].transcript;
+        }
+        transcript = current.trim();
+        status.textContent = transcript ? `Listening: ${transcript}` : "Listening…";
+        send({ transcript, status: "listening" });
+      };
+      recognition.onerror = (event) => {
+        status.textContent = `Speech recognition error: ${event.error}. You can type your answer instead.`;
+        send({ transcript, status: "error", error: event.error });
+      };
+      recognition.onend = () => {
+        start.disabled = false;
+        stop.disabled = true;
+        status.textContent = transcript ? "Speech captured. Review or edit it below." : "Stopped listening.";
+        send({ transcript, status: "stopped" });
+      };
+      recognition.start();
+    });
+
+    stop.addEventListener("click", () => {
+      if (recognition) recognition.stop();
+    });
+
+    window.addEventListener("message", (event) => {
+      const data = event.data;
+      if (!data || data.type !== "streamlit:render") return;
+      const args = data.args || {};
+      if (args.question !== question) {
+        question = args.question || "";
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+      }
+    });
+
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:componentReady",
+      apiVersion: 1
+    }, "*");
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:setFrameHeight",
+      height: 64
+    }, "*");
+  </script>
+</body>
+</html>

@@ -7,7 +7,22 @@ from mcp.server.fastmcp import FastMCP
 MAX_CONTENT_CHARS = 50_000
 MAX_ROLE_CHARS = 200
 VALID_TASKS = {
+    "generate_job_description",
     "analyze_resume",
+    "screen_candidate_resume",
+    "generate_coding_challenge",
+    "evaluate_coding_submission",
+    "generate_round_interview_questions",
+    "evaluate_interview_round",
+    "build_hr_decision_brief",
+    "generate_offer_letter_draft",
+    "create_verification_plan",
+    "update_verification_check",
+    "create_document_validation_plan",
+    "update_document_validation_check",
+    "create_onboarding_plan",
+    "update_onboarding_task",
+    "answer_employee_hr_question",
     "ask_question",
     "generate_interview_questions",
     "generate_detailed_weaknesses",
@@ -19,6 +34,7 @@ VALID_TASKS = {
     "detect_motion",
     "detect_repeated_motion",
     "flag_suspicious_behavior",
+    "send_alert",
 }
 INJECTION_PATTERN = re.compile(
     r"\b(ignore|disregard|override)\b.{0,60}\b(instructions|system prompt|rules)\b",
@@ -43,6 +59,8 @@ def validate_recruitment_request(
     if len(role) > MAX_ROLE_CHARS:
         errors.append(f"Role exceeds the {MAX_ROLE_CHARS}-character safety limit.")
     if task == "analyze_resume" and not content.strip():
+        errors.append("The uploaded resume contains no readable text.")
+    if task == "screen_candidate_resume" and not content.strip():
         errors.append("The uploaded resume contains no readable text.")
     if content and INJECTION_PATTERN.search(content):
         warnings.append(
