@@ -1,5 +1,5 @@
-# ai-recruitment-agent
-AI-powered Recruitment Agent built with Streamlit and LangChain. Analyze resumes, evaluate skills, generate interview questions, and improve resumes using LLMs. Includes semantic skill scoring, RAG-based Q&amp;A, resume enhancement, advisory bias and resume-integrity checks, and browser-based live voice interviews.
+# HireOS — Company Recruiting Operations
+HireOS is a company-side, recruiter-supervised hiring workspace built with Streamlit and LangChain. Employers can draft and approve a vacancy, screen authorised candidate resumes against role requirements, coordinate interviews and downstream hiring checklists, and prepare job-posting material for approved sourcing channels. Direct LinkedIn and Indeed integrations are not connected in this prototype.
 
 Recruitment actions are orchestrated by a LangGraph supervisor that routes work to
 resume-screening, job-matching, interview, HR-decision, communication,
@@ -340,3 +340,25 @@ docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$I
 ```
 
 Then redeploy the App Runner service from the AWS Console.
+
+## Company-first direction: HireOS
+
+The employer-facing path is now the primary workspace. Hiring Workflow is the first tab, followed by Sourcing & Integrations, resume screening, interview tools, HR help, and architecture. The sourcing workspace lets recruiters review channel status, edit posting copy from the current hiring brief, and download a posting pack.
+
+### LinkedIn and Indeed integration status
+
+- **LinkedIn:** Not connected. Talent Solutions integrations are access-controlled. LinkedIn's Job Posting API overview currently directs new partnership applicants toward Apply Connect; confirm the appropriate route and eligibility with LinkedIn before promising direct posting or applicant sync.
+- **Indeed:** Not connected. Indeed documents Job Sync and Indeed Apply workflows for job posting and application delivery, with formal partner, agreement, credential and technical-integration requirements.
+
+The new page prepares editable text and JSON files and accepts recruiter-authorised CSV exports into a session-only applicant metadata queue with basic required-field/authorisation checks and duplicate detection. It does not publish vacancies, scrape profiles, fetch applicant data directly from job boards, download resumes, or screen imported applications automatically. The CSV intake is not durable and is not yet connected to the resume-screening workflow.
+
+Official integration references:
+- https://learn.microsoft.com/en-us/linkedin/talent
+- https://business.linkedin.com/hire/ats-partners/partner-application
+- https://docs.indeed.com/api-guides/
+- https://docs.indeed.com/job-sync-api/
+- https://docs.indeed.com/indeed-apply/ats
+
+### What is still required before a company pilot
+
+The current Streamlit app remains a research prototype. It does not yet implement multi-company authentication and tenant isolation, a durable central application database, automatic applicant CSV intake, or authorised LinkedIn/Indeed adapters. These are separate milestones. Use docs/COMPANY_FIRST_PRODUCT_PLAN.md to prioritize access control, candidate/application data modelling, source adapters, webhook verification, duplicate-event handling, retention/deletion, and recruiter-labelled evaluation.
