@@ -71,15 +71,15 @@ def display_header():
       [data-testid="stTabs"] [aria-selected="true"] { color:#5b43d6; border-color:#5b43d6; background:#f3f0ff; }
     </style>
     <div class="portal-title">
-      <div><h1>InterviewAI</h1><p>Recruit smarter. Interview with confidence.</p></div>
+      <div><h1>HireOS</h1><p>One workspace for every hiring stage.</p></div>
       <div class="portal-status">● Live interview workspace</div>
     </div>
     """, unsafe_allow_html=True)
 
 def setup_sidebar():
     with st.sidebar:
-        st.markdown("## ◉ InterviewAI")
-        st.caption("AI recruitment portal")
+        st.markdown("## ◉ HireOS")
+        st.caption("Company hiring workspace")
         st.markdown("---")
         st.markdown("**MAIN MENU**")
         st.markdown("⌘ &nbsp; Dashboard")
@@ -122,16 +122,18 @@ def setup_sidebar():
     }
 
 def create_tabs():
+    # Put the employer's core workflow first; individual resume utilities remain available below.
     return st.tabs([
-        "📄 Resume Analysis",
-        "💬 Q&A",
-        "🎯 Interview Questions",
-        "✍️ Resume Improvement",
-        "⬆️ Improved Resume",
-        "🎤 AI Interview",
         "🧭 Hiring Workflow",
+        "📣 Sourcing & Integrations",
+        "📄 Resume Screening",
+        "🎯 Interview Studio",
+        "🎤 Interview Review",
+        "💬 Candidate Q&A",
         "👥 Employee HR Help",
         "🏗️ Architecture",
+        "✍️ Resume Improvement",
+        "⬆️ Improved Resume",
     ])
 
 
@@ -2494,3 +2496,160 @@ def ai_interview_section(agent):
                 st.markdown(f"**Q:** {entry['question']}")
                 st.markdown(f"**A:** {entry['answer']}")
                 st.markdown(f"**Feedback:** {entry['result']['feedback']}")
+
+
+def sourcing_integrations_section(workflow_state=None):
+    """Company-facing job distribution and authorised application-ingestion workspace.
+
+    This prepares posting packs and integration guidance only. It deliberately does not
+    scrape LinkedIn/Indeed or claim to call their APIs without approved provider access.
+    """
+    import json
+
+    st.subheader("Sourcing & job-board integrations")
+    st.caption(
+        "Prepare job-posting material and define the application-ingestion contract for your "
+        "company. Live posting, profile search and applicant sync are not connected in this prototype."
+    )
+
+    linkedin_col, indeed_col = st.columns(2)
+    with linkedin_col:
+        with st.container(border=True):
+            st.markdown("### LinkedIn Talent Solutions")
+            st.warning("Not connected · approved integration access required")
+            st.write(
+                "LinkedIn's hiring integrations include Apply Connect, Apply With LinkedIn, "
+                "Recruiter System Connect and posting capabilities. Access is restricted; "
+                "its Job Posting API overview currently points new applicants toward Apply Connect."
+            )
+            st.markdown("[Talent Solutions APIs](https://learn.microsoft.com/en-us/linkedin/talent)")
+            st.markdown("[Partner request form](https://business.linkedin.com/hire/ats-partners/partner-application)")
+    with indeed_col:
+        with st.container(border=True):
+            st.markdown("### Indeed")
+            st.warning("Not connected · ATS partner requirements apply")
+            st.write(
+                "Indeed documents Job Sync for job lifecycle management and Indeed Apply for "
+                "application delivery. A live ATS integration needs the relevant partner process, "
+                "agreements, credentials and technical review."
+            )
+            st.markdown("[Indeed API guides](https://docs.indeed.com/api-guides/)")
+            st.markdown("[Job Sync API](https://docs.indeed.com/job-sync-api/)")
+            st.markdown("[Indeed Apply for ATS partners](https://docs.indeed.com/indeed-apply/ats)")
+
+    st.markdown("### Current channel status")
+    status_rows = [
+        {"Channel": "LinkedIn Jobs", "Current workflow": "Prepare copy; recruiter posts manually", "HireOS connection": "Not connected"},
+        {"Channel": "Indeed", "Current workflow": "Prepare copy; recruiter posts manually", "HireOS connection": "Not connected"},
+        {"Channel": "Company careers page", "Current workflow": "Use company-owned page and application URL", "HireOS connection": "Not connected"},
+        {"Channel": "Referral / recruiting agency", "Current workflow": "Record source during recruiter intake", "HireOS connection": "Manual"},
+    ]
+    st.dataframe(status_rows, use_container_width=True, hide_index=True)
+
+    st.markdown("### Prepare a job-posting pack")
+    workflow_state = workflow_state if isinstance(workflow_state, dict) else {}
+    job = workflow_state.get("job") if isinstance(workflow_state.get("job"), dict) else None
+    if not job:
+        st.info(
+            "Create a hiring brief and generate a JD in the Hiring Workflow tab first. "
+            "The pack will use that role's current company, location, requirements and JD."
+        )
+    else:
+        approval_status = str(job.get("status") or "Draft")
+        job_title = str(job.get("job_title") or "Untitled role")
+        if "Approved by recruiter" not in approval_status:
+            st.warning("This job description is still a draft. Approve it in Hiring Workflow before publication.")
+        else:
+            st.success("Job description approved by recruiter. It is still not published by HireOS.")
+        st.caption(f"Requisition: {job_title} · Status: {approval_status}")
+        target_channels = st.multiselect(
+            "Target channels",
+            ["LinkedIn", "Indeed", "Company careers page", "Other authorised job board"],
+            default=["LinkedIn", "Indeed"],
+            key="company_sourcing_target_channels",
+        )
+        description = str(job.get("jd") or "")
+        posting_default = "\n".join([
+            job_title,
+            f"Company: {job.get('company_name') or 'To be confirmed'}",
+            f"Location: {job.get('location') or 'To be confirmed'}",
+            f"Number of hires: {job.get('headcount') or 1}",
+            f"Salary budget: {job.get('salary_budget') or 'To be confirmed'}",
+            f"Hiring timeline: {job.get('timeline') or 'To be confirmed'}",
+            "",
+            "Job description",
+            description,
+            "",
+            "Essential job-related skills",
+            str(job.get("requirements") or "To be confirmed"),
+            "",
+            "Recruiter checklist: confirm compensation, employment type, work arrangement, application URL, "
+            "application deadline, lawful eligibility criteria and required notices before publishing."
+        ])
+        edited_posting = st.text_area(
+            "Review and edit channel-ready posting copy",
+            value=posting_default,
+            height=360,
+            key="company_sourcing_posting_copy",
+        )
+        posting_pack = {
+            "company_name": job.get("company_name", ""),
+            "job_title": job_title,
+            "location": job.get("location", ""),
+            "headcount": job.get("headcount", 1),
+            "salary_budget": job.get("salary_budget", ""),
+            "timeline": job.get("timeline", ""),
+            "essential_skills": job.get("requirements", ""),
+            "job_description": description,
+            "target_channels": target_channels,
+            "approval_status": approval_status,
+            "publication_status": "Not published by HireOS",
+            "integration_status": {
+                "LinkedIn": "Not connected",
+                "Indeed": "Not connected",
+            },
+            "posting_copy": edited_posting,
+        }
+        file_slug = re.sub(r"[^A-Za-z0-9_-]+", "-", job_title).strip("-").lower() or "requisition"
+        download_col1, download_col2 = st.columns(2)
+        with download_col1:
+            st.download_button(
+                "Download posting copy (.txt)",
+                edited_posting,
+                file_name=f"{file_slug}-posting.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+        with download_col2:
+            st.download_button(
+                "Download requisition pack (.json)",
+                json.dumps(posting_pack, ensure_ascii=False, indent=2),
+                file_name=f"{file_slug}-posting-pack.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+
+    st.markdown("### Applicant-ingestion data contract")
+    st.write(
+        "A company can use this template to align an authorised manual export while the provider "
+        "adapter is being built. Downloading the template does not import applications into the "
+        "screening workflow; automated ingestion and sync remain future integration work."
+    )
+    application_template = (
+        "external_application_id,candidate_name,candidate_email,requisition_id,source,applied_at,"
+        "resume_filename,processing_authorized\n"
+        "example-application-001,Example Candidate,example@example.com,ROLE-001,Indeed,2026-01-15,"
+        "resume.pdf,confirmed\n"
+    )
+    st.download_button(
+        "Download applicant CSV template",
+        application_template,
+        file_name="hireos-authorised-applicant-import-template.csv",
+        mime="text/csv",
+    )
+    st.info(
+        "Do not scrape logged-in profiles or bypass platform access controls. Before a live connector, "
+        "obtain the provider's required approvals and credentials, implement secure OAuth/webhook "
+        "handling, map external IDs, de-duplicate retries, and document candidate notice, access, "
+        "retention and deletion procedures."
+    )
