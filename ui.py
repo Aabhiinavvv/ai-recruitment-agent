@@ -2547,7 +2547,16 @@ def sourcing_integrations_section(workflow_state=None):
     st.dataframe(status_rows, use_container_width=True, hide_index=True)
 
     st.markdown("### Prepare a job-posting pack")
-    workflow_state = workflow_state if isinstance(workflow_state, dict) else {}
+    if not isinstance(workflow_state, dict):
+        if "hiring_workflow_state" not in st.session_state:
+            st.session_state.hiring_workflow_state = {
+                "job": None,
+                "candidates": [],
+                "events": [],
+                "outreach_queue": [],
+                "incoming_applications": [],
+            }
+        workflow_state = st.session_state.hiring_workflow_state
     job = workflow_state.get("job") if isinstance(workflow_state.get("job"), dict) else None
     if not job:
         st.info(
