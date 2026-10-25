@@ -7,6 +7,7 @@ job boards, BGV vendors, email, or WhatsApp are connected without configured API
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from datetime import date, datetime, timedelta
 
@@ -167,7 +168,7 @@ with st.sidebar:
     st.divider()
     page = st.radio(
         "WORKSPACE",
-        ["Overview","New Requisition","Sourcing & Integrations","Talent Pipeline","AI Screening","Interview Studio","Candidate Copilot","Talent Memory","Verification Hub","Fairness & Audit","Settings"],
+        ["Overview","New Requisition","Sourcing & Integrations","Talent Pipeline","AI Screening","Interview Studio","Recruiter Copilot","Talent Memory","Verification Hub","Fairness & Audit","Settings"],
         label_visibility="visible",
     )
     st.divider()
@@ -662,7 +663,7 @@ elif page == "Interview Studio":
         st.download_button("Download interview plan", "\n".join(f"{i+1}. {q[1] if isinstance(q,(tuple,list)) else q}" for i,q in enumerate(st.session_state.interview_questions)), "interview_plan.txt")
 
 
-elif page == "Candidate Copilot":
+elif page == "Recruiter Copilot":
     st.subheader("Candidate copilot")
     st.markdown('<div class="section-note">Resume-grounded Q&A, structured interview answer review and resume coaching. Outputs are advisory and should be checked for factual accuracy.</div>', unsafe_allow_html=True)
     if not st.session_state.resume_analyzed or not st.session_state.analysis_result:
