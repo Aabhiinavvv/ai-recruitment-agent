@@ -2665,9 +2665,10 @@ def sourcing_integrations_section(workflow_state=None):
     )
     with st.expander("CSV applicant intake", expanded=False):
         st.write(
-            "Required columns: external_application_id, candidate_name, candidate_email, requisition_id, "
-            "source, applied_at, resume_filename, processing_authorized. Set processing_authorized to "
-            "confirmed/true/yes only after verifying the company's authority and required candidate notice."
+            "Required columns: external_application_id, candidate_name, requisition_id, source, "
+            "processing_authorized. Optional columns: candidate_email, applied_at, resume_filename. "
+            "Set processing_authorized to confirmed/true/yes only after verifying the company's "
+            "authority and required candidate notice."
         )
         applicant_upload = st.file_uploader(
             "Upload authorised applicant CSV",
