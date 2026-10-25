@@ -86,9 +86,9 @@ def init_state():
         {"id":"JOB-2403","title":"Backend Engineer","team":"Platform","location":"Noida / Hybrid","type":"Full-time","status":"Draft","applicants":0,"created":"Sample"},
     ]
     sample_candidates = [
-        {"Candidate":"Aarav Sharma","Role":"AI/ML Engineer","Stage":"Screening","Skills":"Python, ML, NLP","Score":86,"Source":"Campus","Updated":"Sample","ID":"demo-candidate-001"},
-        {"Candidate":"Priya Verma","Role":"Data Analyst Intern","Stage":"Interview","Skills":"SQL, Python, Power BI","Score":82,"Source":"Referral","Updated":"Sample","ID":"demo-candidate-002"},
-        {"Candidate":"Kabir Singh","Role":"Backend Engineer","Stage":"Review","Skills":"Python, APIs, PostgreSQL","Score":79,"Source":"Career page","Updated":"Sample","ID":"demo-candidate-003"},
+        {"Candidate":"Aarav Sharma","Role":"AI/ML Engineer","Stage":"Screening","Skills":"Python, ML, NLP","Score":86,"Source":"LinkedIn (demo)","Updated":"Sample","ID":"demo-candidate-001"},
+        {"Candidate":"Priya Verma","Role":"Data Analyst Intern","Stage":"Interview","Skills":"SQL, Python, Power BI","Score":82,"Source":"Indeed (demo)","Updated":"Sample","ID":"demo-candidate-002"},
+        {"Candidate":"Kabir Singh","Role":"Backend Engineer","Stage":"Review","Skills":"Python, APIs, PostgreSQL","Score":79,"Source":"Company careers page (demo)","Updated":"Sample","ID":"demo-candidate-003"},
     ]
     saved_jobs = store.load_jobs()
     saved_candidates = store.load_candidates()
@@ -167,7 +167,7 @@ with st.sidebar:
     st.divider()
     page = st.radio(
         "WORKSPACE",
-        ["Overview","Talent Pipeline","New Requisition","AI Screening","Interview Studio","Candidate Copilot","Talent Memory","Verification Hub","Fairness & Audit","Settings"],
+        ["Overview","New Requisition","Sourcing & Integrations","Talent Pipeline","AI Screening","Interview Studio","Candidate Copilot","Talent Memory","Verification Hub","Fairness & Audit","Settings"],
         label_visibility="visible",
     )
     st.divider()
@@ -191,7 +191,7 @@ st.markdown(
     <div class="hero">
       <div class="eyebrow">Recruitment command center · research MVP</div>
       <h1>Build teams, not spreadsheets.</h1>
-      <p>A human-governed AI workforce for talent acquisition — candidate intelligence, assessment workflows, persistent talent memory and verification coordination in one recruiter workspace.</p>
+      <p>A company-side recruiting operations workspace to manage requisitions, organise applicants from authorised sourcing channels, review job-related evidence and coordinate hiring with people firmly in control.</p>
       <div class="hero-tags"><span class="hero-tag">Multi-agent ready</span><span class="hero-tag">Evidence-led matching</span><span class="hero-tag">Human-in-the-loop</span><span class="hero-tag">India-first workflows</span></div>
     </div>
     """,
@@ -300,7 +300,7 @@ elif page == "Talent Pipeline":
             role = st.selectbox("Role", list(ROLE_REQUIREMENTS))
             skills = st.text_input("Skills (comma-separated)")
             stage = st.selectbox("Stage", ["Applied","Screening","Review","Assessment","Interview","Offer","Hired","Closed"])
-            source = st.selectbox("Source", ["Career page","Referral","Campus","Import","Authorised integration"])
+            source = st.selectbox("Source", ["LinkedIn (manual/import)","Indeed (manual/import)","Company careers page","Employee referral","Recruiting agency","CSV import","Authorised integration"])
             if st.form_submit_button("Add to pipeline"):
                 if name.strip():
                     candidate_record = {
@@ -459,6 +459,84 @@ elif page == "New Requisition":
             log_activity(f"Changed requisition {target_job.get('id')} status to {new_status}", "job_status", target_job.get("id",""))
             st.success("Requisition status updated.")
             st.rerun()
+
+elif page == "Sourcing & Integrations":
+    st.subheader("Sourcing & job-board integrations")
+    st.markdown('<div class="section-note">Manage the company-side sourcing workflow. This prototype prepares posting material and tracks source attribution; it does not publish to LinkedIn or Indeed or fetch applicants automatically.</div>', unsafe_allow_html=True)
+
+    linkedin_col, indeed_col = st.columns(2)
+    with linkedin_col:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown("### LinkedIn Jobs")
+        st.warning("Not connected · approved partner access required")
+        st.write("The official Job Posting and recruiter-data integrations are access-controlled. Treat this as a planned connector until HireOS has the necessary partner approval and credentials.")
+        st.markdown("[LinkedIn Talent Solutions API overview](https://learn.microsoft.com/en-us/linkedin/talent)")
+        st.markdown("[LinkedIn partner application](https://business.linkedin.com/hire/ats-partners/partner-application)")
+        st.markdown('</div>', unsafe_allow_html=True)
+    with indeed_col:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown("### Indeed")
+        st.warning("Not connected · ATS partner integration required")
+        st.write("The Indeed Job Sync and candidate/application APIs are integration paths for approved ATS partners. HireOS currently supports authorised manual/CSV ingestion only.")
+        st.markdown("[Indeed API guides](https://docs.indeed.com/api-guides/)")
+        st.markdown("[Indeed Job Sync API](https://docs.indeed.com/job-sync-api/)")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("### Company sourcing channels")
+    import pandas as pd
+    channel_rows = [
+        {"Channel": "LinkedIn Jobs", "Current path": "Manual posting / authorised export", "HireOS connector": "Not connected"},
+        {"Channel": "Indeed", "Current path": "Manual posting / authorised export", "HireOS connector": "Not connected"},
+        {"Channel": "Company careers page", "Current path": "Collect applications on company-owned form, then import", "HireOS connector": "Planned"},
+        {"Channel": "Employee referrals / agency", "Current path": "Recruiter entry or authorised CSV", "HireOS connector": "Manual workflow"},
+    ]
+    st.dataframe(pd.DataFrame(channel_rows), use_container_width=True, hide_index=True)
+
+    st.markdown("### Prepare a channel-ready job posting pack")
+    st.caption("This creates reusable copy and a JSON summary for recruiter review. It is not an official LinkedIn/Indeed API payload and does not publish a vacancy.")
+    available_jobs = st.session_state.jobs
+    if not available_jobs:
+        st.info("Create a requisition before preparing a posting pack.")
+    else:
+        job_labels = [f"{job.get('id', 'JOB')} · {job.get('title', 'Untitled role')}" for job in available_jobs]
+        chosen_label = st.selectbox("Choose requisition", job_labels, key="channel_pack_job")
+        selected_job = available_jobs[job_labels.index(chosen_label)]
+        posting_text = "\n".join([
+            str(selected_job.get("title", "Role title")),
+            f"Team: {selected_job.get('team', 'Not specified')}",
+            f"Location: {selected_job.get('location', 'Not specified')}",
+            f"Employment type: {selected_job.get('type', 'Not specified')}",
+            "",
+            "About the role",
+            str(selected_job.get("description", "Add a job description in the requisition before publishing.")),
+            "",
+            "Required skills: " + ", ".join(selected_job.get("required_skills", []) or []),
+            "Preferred skills: " + ", ".join(selected_job.get("preferred_skills", []) or []),
+            f"Minimum relevant experience: {selected_job.get('min_exp', 0)} years",
+            "",
+            "Recruiter review: confirm salary range, equal-opportunity language, location, employment terms, and application instructions before posting.",
+        ])
+        posting_pack = {
+            "requisition_id": selected_job.get("id"),
+            "title": selected_job.get("title"),
+            "team": selected_job.get("team"),
+            "location": selected_job.get("location"),
+            "employment_type": selected_job.get("type"),
+            "status": selected_job.get("status"),
+            "description": selected_job.get("description", ""),
+            "required_skills": selected_job.get("required_skills", []),
+            "preferred_skills": selected_job.get("preferred_skills", []),
+            "minimum_experience_years": selected_job.get("min_exp", 0),
+            "publication_status": "Not published by HireOS",
+        }
+        st.text_area("Posting preview", posting_text, height=300)
+        st.download_button("Download posting copy (.txt)", posting_text, file_name=f"{selected_job.get('id', 'requisition')}_posting.txt", mime="text/plain")
+        st.download_button("Download requisition summary (.json)", json.dumps(posting_pack, indent=2), file_name=f"{selected_job.get('id', 'requisition')}_posting_summary.json", mime="application/json")
+
+    st.markdown("### Import applicants from an authorised source")
+    st.write("Use Talent Pipeline → Import authorised candidate records from CSV for the current prototype. Map the source column to LinkedIn, Indeed, company careers page, referral, agency, or another truthful source label. Never scrape platform profiles or collect applicant data without appropriate authority and notice.")
+    st.code("Candidate,Role,Skills,Stage,Source,Score\nExample Candidate,Data Analyst,\"SQL, Python\",Applied,Indeed (manual/import),Pending", language="csv")
+    st.info("Next integration milestone: implement provider adapters only after partner approval, API credentials, employer authorisation, privacy review and end-to-end tests. Until then, every external channel is explicitly shown as not connected.")
 
 elif page == "AI Screening":
     st.subheader("AI screening & evidence review")
