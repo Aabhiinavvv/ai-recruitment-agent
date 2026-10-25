@@ -350,7 +350,7 @@ The employer-facing path is now the primary workspace. Hiring Workflow is the fi
 - **LinkedIn:** Not connected. Talent Solutions integrations are access-controlled. LinkedIn's Job Posting API overview currently directs new partnership applicants toward Apply Connect; confirm the appropriate route and eligibility with LinkedIn before promising direct posting or applicant sync.
 - **Indeed:** Not connected. Indeed documents Job Sync and Indeed Apply workflows for job posting and application delivery, with formal partner, agreement, credential and technical-integration requirements.
 
-The new page prepares editable text and JSON files; it does not publish vacancies, scrape profiles, search logged-in sites, or automatically ingest applicants. The applicant CSV is an import-contract template only, not a working import pipeline.
+The new page prepares editable text and JSON files and accepts recruiter-authorised CSV exports into a session-only applicant metadata queue with basic required-field/authorisation checks and duplicate detection. It does not publish vacancies, scrape profiles, fetch applicant data directly from job boards, download resumes, or screen imported applications automatically. The CSV intake is not durable and is not yet connected to the resume-screening workflow.
 
 Official integration references:
 - https://learn.microsoft.com/en-us/linkedin/talent
