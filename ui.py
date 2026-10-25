@@ -2586,11 +2586,13 @@ def sourcing_integrations_section(workflow_state=None):
             "Recruiter checklist: confirm compensation, employment type, work arrangement, application URL, "
             "application deadline, lawful eligibility criteria and required notices before publishing."
         ])
+        # A role-specific key prevents edits to a previous role's posting being carried across.
+        posting_widget_key = "company_sourcing_posting_copy_" + str(abs(hash(posting_default)))
         edited_posting = st.text_area(
             "Review and edit channel-ready posting copy",
             value=posting_default,
             height=360,
-            key="company_sourcing_posting_copy",
+            key=posting_widget_key,
         )
         posting_pack = {
             "company_name": job.get("company_name", ""),
@@ -2647,6 +2649,124 @@ def sourcing_integrations_section(workflow_state=None):
         file_name="hireos-authorised-applicant-import-template.csv",
         mime="text/csv",
     )
+    st.markdown("### Import authorised applicant metadata (CSV)")
+    st.caption(
+        "This local MVP accepts a recruiter-authorised CSV export into the current Streamlit session. "
+        "It imports application metadata only, does not fetch resumes, and does not screen applicants automatically."
+    )
+    with st.expander("CSV applicant intake", expanded=False):
+        st.write(
+            "Required columns: external_application_id, candidate_name, candidate_email, requisition_id, "
+            "source, applied_at, resume_filename, processing_authorized. Set processing_authorized to "
+            "confirmed/true/yes only after verifying the company's authority and required candidate notice."
+        )
+        applicant_upload = st.file_uploader(
+            "Upload authorised applicant CSV",
+            type=["csv"],
+            key="hireos_authorised_applicant_csv",
+        )
+        if applicant_upload is not None:
+            if applicant_upload.size > 2 * 1024 * 1024:
+                st.error("CSV exceeds the 2 MB prototype limit.")
+            elif st.button("Validate and import applicants", key="hireos_import_applicants"):
+                import csv
+                from io import StringIO
+
+                try:
+                    decoded = applicant_upload.getvalue().decode("utf-8-sig")
+                    reader = csv.DictReader(StringIO(decoded))
+                    required_headers = {
+                        "external_application_id",
+                        "candidate_name",
+                        "requisition_id",
+                        "source",
+                        "processing_authorized",
+                    }
+                    headers = set(reader.fieldnames or [])
+                    missing_headers = sorted(required_headers - headers)
+                    if missing_headers:
+                        st.error("Missing required columns: " + ", ".join(missing_headers))
+                    else:
+                        incoming = workflow_state.setdefault("incoming_applications", [])
+                        known_ids = {
+                            (
+                                str(item.get("source", "")).strip().casefold(),
+                                str(item.get("external_application_id", "")).strip(),
+                            )
+                            for item in incoming
+                        }
+                        imported_count = 0
+                        duplicate_count = 0
+                        rejected_count = 0
+                        row_issues = []
+                        for row_num, row in enumerate(reader, start=2):
+                            candidate_name_value = str(row.get("candidate_name") or "").strip()
+                            external_id = str(row.get("external_application_id") or "").strip()
+                            source_value = str(row.get("source") or "").strip()
+                            auth_value = str(row.get("processing_authorized") or "").strip().casefold()
+                            if not candidate_name_value or not external_id or not source_value:
+                                rejected_count += 1
+                                row_issues.append(f"Row {row_num}: name, source and external application ID are required.")
+                                continue
+                            if auth_value not in {"confirmed", "true", "yes", "1"}:
+                                rejected_count += 1
+                                row_issues.append(f"Row {row_num}: processing authorization was not confirmed.")
+                                continue
+                            unique_key = (source_value.casefold(), external_id)
+                            if unique_key in known_ids:
+                                duplicate_count += 1
+                                continue
+                            incoming.append({
+                                "external_application_id": external_id,
+                                "candidate_name": candidate_name_value,
+                                "candidate_email": str(row.get("candidate_email") or "").strip(),
+                                "requisition_id": str(row.get("requisition_id") or "").strip(),
+                                "source": source_value,
+                                "applied_at": str(row.get("applied_at") or "").strip(),
+                                "resume_filename": str(row.get("resume_filename") or "").strip(),
+                                "processing_authorized": True,
+                                "intake_status": "Imported metadata — resume not yet screened",
+                            })
+                            known_ids.add(unique_key)
+                            imported_count += 1
+
+                        events = workflow_state.setdefault("events", [])
+                        if imported_count:
+                            events = append_audit_event(
+                                events,
+                                f"Imported {imported_count} authorised applicant metadata row(s) via CSV; "
+                                f"{duplicate_count} duplicate(s), {rejected_count} rejected row(s)",
+                                "Applicant CSV intake",
+                            )
+                            workflow_state["events"] = events
+                        st.success(
+                            f"Imported {imported_count}; skipped {duplicate_count} duplicates; "
+                            f"rejected {rejected_count} rows."
+                        )
+                        if row_issues:
+                            st.warning("Some rows need correction.")
+                            st.write("\n".join(row_issues[:25]))
+                        if workflow_state.get("incoming_applications"):
+                            st.dataframe(
+                                workflow_state["incoming_applications"],
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+                except (UnicodeDecodeError, csv.Error) as exc:
+                    st.error(f"Could not parse the CSV: {exc}")
+
+    if workflow_state.get("incoming_applications"):
+        with st.expander(f"Current-session applicant intake ({len(workflow_state['incoming_applications'])} records)"):
+            st.dataframe(
+                workflow_state["incoming_applications"],
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "Applicant metadata stays in this session only. It is not yet linked to resume screening, "
+                "and will not persist after the session ends."
+            )
+
     st.info(
         "Do not scrape logged-in profiles or bypass platform access controls. Before a live connector, "
         "obtain the provider's required approvals and credentials, implement secure OAuth/webhook "
