@@ -1,7 +1,10 @@
 import unittest
 
 from agent_runtime import (
+    AGENT_WORKFORCE,
     AgentToolRegistry,
+    build_job_distribution_plan,
+    build_job_evaluation_rubric,
     execute_bounded_plan,
     execute_candidate_preparation,
     plan_candidate_preparation,
@@ -29,6 +32,62 @@ class FakeAgent:
 
 
 class AgentRuntimeTests(unittest.TestCase):
+    def test_workforce_defines_the_eight_logical_recruitment_agents(self):
+        self.assertEqual(
+            [agent["name"] for agent in AGENT_WORKFORCE],
+            [
+                "Job Intelligence Agent",
+                "Job Distribution Agent",
+                "Candidate Collection Agent",
+                "Resume Intelligence Agent",
+                "Matching & Ranking Agent",
+                "Communication Agent",
+                "AI Interview Agent",
+                "Recruitment Coordinator Agent",
+            ],
+        )
+        self.assertEqual(len({agent["id"] for agent in AGENT_WORKFORCE}), 8)
+
+    def test_job_rubric_uses_deduplicated_equal_weight_criteria(self):
+        rubric = build_job_evaluation_rubric(
+            "Python, PyTorch\n2+ years experience; python"
+        )
+
+        self.assertEqual(
+            [item["criterion"] for item in rubric["criteria"]],
+            ["Python", "PyTorch", "2+ years experience"],
+        )
+        self.assertAlmostEqual(
+            sum(item["weight_percent"] for item in rubric["criteria"]),
+            100,
+        )
+        self.assertIn("recruiter", rubric["decision_boundary"])
+
+    def test_job_rubric_requires_at_least_one_criterion(self):
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            build_job_evaluation_rubric(" \n, ")
+
+    def test_distribution_plan_requires_approved_job_and_never_publishes(self):
+        job = {
+            "job_title": "ML Engineer",
+            "jd": "Python and PyTorch experience",
+            "status": "Approved by recruiter — publishing integration required",
+        }
+
+        plan = build_job_distribution_plan(job)
+
+        self.assertFalse(plan["external_publication_performed"])
+        self.assertTrue(plan["channels"])
+        self.assertTrue(
+            all(
+                channel["status"] == "authorized integration required"
+                for channel in plan["channels"]
+            )
+        )
+        job["status"] = "Draft — recruiter review required"
+        with self.assertRaisesRegex(ValueError, "approval is required"):
+            build_job_distribution_plan(job)
+
     def test_plan_refuses_to_make_a_recruiter_decision(self):
         plan = plan_candidate_preparation(
             {

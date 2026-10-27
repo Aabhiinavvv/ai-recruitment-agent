@@ -15,10 +15,13 @@ from langgraph.types import Command, interrupt
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from agent_runtime import TASK_AGENT_OWNERS
+
 
 class RecruitmentState(TypedDict, total=False):
     task: str
     route: str
+    logical_agent: str
     result: Any
     safety_warnings: list[str]
     decision_status: str
@@ -197,7 +200,11 @@ def _supervisor(state: RecruitmentState) -> dict[str, Any]:
     route = TASK_ROUTES.get(state["task"])
     if route is None:
         raise ValueError(f"Unsupported recruitment action: {state['task']}")
-    return {"route": route}
+    result = {"route": route}
+    logical_agent = TASK_AGENT_OWNERS.get(state["task"])
+    if logical_agent:
+        result["logical_agent"] = logical_agent
+    return result
 
 
 def _agent_node(state: RecruitmentState, config: RunnableConfig) -> dict[str, Any]:

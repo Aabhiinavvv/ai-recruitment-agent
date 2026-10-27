@@ -14,12 +14,16 @@ import av
 import streamlit.components.v1 as components
 
 from agents import RecruitmentAgent
-from agent_runtime import execute_candidate_preparation
+from agent_runtime import (
+    AGENT_WORKFORCE,
+    build_job_distribution_plan,
+    build_job_evaluation_rubric,
+    execute_candidate_preparation,
+)
 from live_speech import live_speech_recognition
 from hiring_pipeline import (
     DOCUMENT_VALIDATION_TYPES,
     ONBOARDING_STATUSES,
-    ONBOARDING_TASKS,
     VERIFICATION_CHECKS,
     append_audit_event,
     build_candidate_profile_sources,
@@ -71,21 +75,20 @@ def display_header():
       [data-testid="stTabs"] [aria-selected="true"] { color:#5b43d6; border-color:#5b43d6; background:#f3f0ff; }
     </style>
     <div class="portal-title">
-      <div><h1>InterviewAI</h1><p>Recruit smarter. Interview with confidence.</p></div>
-      <div class="portal-status">● Live interview workspace</div>
+      <div><h1>AI Recruitment Workflow</h1><p>From hiring brief to recruiter-reviewed shortlist.</p></div>
+      <div class="portal-status">● Recruiter-supervised hiring</div>
     </div>
     """, unsafe_allow_html=True)
 
 def setup_sidebar():
     with st.sidebar:
-        st.markdown("## ◉ InterviewAI")
-        st.caption("AI recruitment portal")
+        st.markdown("## ◉ Recruitment Workspace")
+        st.caption("Recruitment workflow platform")
         st.markdown("---")
         st.markdown("**MAIN MENU**")
-        st.markdown("⌘ &nbsp; Dashboard")
-        st.markdown("▣ &nbsp; **Interview**")
-        st.markdown("◌ &nbsp; Insights")
-        st.markdown("♙ &nbsp; Talent")
+        st.markdown("▣ &nbsp; Hiring Workflow")
+        st.markdown("◉ &nbsp; AI Online Interview")
+        st.markdown("◇ &nbsp; Agent Architecture")
         st.markdown("---")
         st.markdown("**AI BRAIN**")
         provider_options = ["Groq", "Gemini"]
@@ -112,30 +115,39 @@ def setup_sidebar():
                 ["gemini-2.5-flash", "gemini-2.5-pro"],
                 index=0,
             )
-        st.markdown("---")
-        cutoff_score = st.slider("Selection Cutoff Score", min_value=0, max_value=100, value=75)
     return {
         "llm_provider": provider,
         "llm_api_key": api_key,
         "llm_model": model,
-        "cutoff_score": cutoff_score,
     }
 
 def create_tabs():
     return st.tabs([
-        "📄 Resume Analysis",
-        "💬 Q&A",
-        "🎯 Interview Questions",
-        "✍️ Resume Improvement",
-        "⬆️ Improved Resume",
-        "🎤 AI Interview",
         "🧭 Hiring Workflow",
-        "👥 Employee HR Help",
+        "🎤 AI Online Interview",
         "🏗️ Architecture",
     ])
 
 
 def platform_architecture_section():
+    st.subheader("Eight-agent recruitment workforce")
+    st.caption(
+        "Logical agents share the configured model and tools. Each role has a bounded "
+        "responsibility; external actions remain integration-gated."
+    )
+    status_labels = {
+        "active": "Available in prototype",
+        "draft_only": "Drafts only; authorized delivery integration required",
+        "manual_intake": "Recruiter-managed intake; application portal not connected",
+    }
+    columns = st.columns(2)
+    for index, agent in enumerate(AGENT_WORKFORCE):
+        with columns[index % 2]:
+            with st.container(border=True):
+                st.markdown(f"**{agent['name']}**")
+                st.write(agent["responsibility"])
+                st.caption(status_labels[agent["status"]])
+
     st.subheader("Four-layer hiring platform")
     st.caption(
         "A recruiter-supervised architecture: agents coordinate work, memory supplies "
@@ -653,13 +665,23 @@ def _render_candidate_round(agent, candidate, job, workflow_state):
 def hiring_workflow_section(agent):
     st.subheader("Recruiter-supervised hiring workflow")
     st.caption(
-        "AI prepares drafts and job-related evidence. Recruiter approval is required "
-        "for publication, candidate progression, rejection, and all offers."
+        "The MVP covers the hiring request through recruiter hiring decision. AI prepares "
+        "job-related evidence; HR/recruiters make all consequential decisions."
     )
     st.info(
-        "Job-board publishing, web sourcing, candidate contact, verification, and onboarding "
-        "are not connected. No external actions are performed by this prototype."
+        "Job-board publishing and candidate communications require authorized integrations. "
+        "Applications are uploaded by a recruiter; this prototype does not scrape or source "
+        "candidate profiles. Background verification is deferred to a future phase."
     )
+    with st.expander("Eight logical agents and current capability", expanded=True):
+        status_labels = {
+            "active": "Available in prototype",
+            "draft_only": "Draft only; no external action",
+            "manual_intake": "Recruiter-managed application upload",
+        }
+        for item in AGENT_WORKFORCE:
+            st.markdown(f"**{item['name']}** — {item['responsibility']}")
+            st.caption(status_labels[item["status"]])
 
     if "hiring_workflow_state" not in st.session_state:
         st.session_state.hiring_workflow_state = {
@@ -677,15 +699,15 @@ def hiring_workflow_section(agent):
         first, second = st.columns(2)
         with first:
             company_name = st.text_input("Company / hiring organization (optional)")
-            job_title = st.text_input("Job title", placeholder="Backend Engineer")
+            job_title = st.text_input("Job title", placeholder="Machine Learning Engineer")
             location = st.text_input("Location", placeholder="Bangalore")
             headcount = st.number_input("Number of hires", min_value=1, max_value=500, value=1)
         with second:
             salary_budget = st.text_input("Salary budget", placeholder="Up to ₹18 LPA")
             timeline = st.text_input("Hiring timeline", placeholder="Within 30 days")
             skills_text = st.text_area(
-                "Essential, job-related skills (one per line or comma-separated)",
-                placeholder="Python, APIs, SQL, distributed systems",
+                "Required skills and eligibility criteria (one per line or comma-separated)",
+                placeholder="Python, PyTorch, 2+ years relevant experience",
                 height=100,
             )
         generate_jd = st.form_submit_button("Generate JD draft", type="primary")
@@ -707,6 +729,7 @@ def hiring_workflow_section(agent):
             }
             with st.spinner("Drafting an inclusive, role-focused job description..."):
                 try:
+                    rubric = build_job_evaluation_rubric(brief["requirements"])
                     jd = agent.generate_job_description(**brief)
                 except Exception as exc:
                     st.error(f"Could not generate the job description: {exc}")
@@ -715,6 +738,7 @@ def hiring_workflow_section(agent):
                     workflow_state["job"] = {
                         **brief,
                         "jd": jd,
+                        "evaluation_rubric": rubric,
                         "status": "Draft — recruiter review required",
                     }
                     workflow_state["candidates"] = []
@@ -754,8 +778,27 @@ def hiring_workflow_section(agent):
                     st.rerun()
         if job["status"] == "Approved by recruiter — publishing integration required":
             st.success("JD approved. No job boards have been contacted.")
-            for platform in ("LinkedIn", "Internshala", "Naukri", "Indeed", "Company career page"):
-                st.markdown(f"- **{platform}:** Integration required")
+            try:
+                distribution_plan = build_job_distribution_plan(job)
+            except ValueError as exc:
+                st.error(f"Could not prepare job distribution: {exc}")
+            else:
+                st.caption(
+                    "Job Distribution Agent prepared the approved vacancy checklist. "
+                    "No external publication has occurred."
+                )
+                for channel in distribution_plan["channels"]:
+                    st.markdown(f"- **{channel['name']}:** {channel['status']}")
+        rubric = job.get("evaluation_rubric")
+        if rubric:
+            with st.expander("Job Intelligence Agent: evaluation rubric"):
+                st.caption(rubric["scoring_scale"])
+                for criterion in rubric["criteria"]:
+                    st.markdown(
+                        f"- {criterion['criterion']} — "
+                        f"{criterion['weight_percent']:g}% weight"
+                    )
+                st.caption(rubric["decision_boundary"])
 
         st.markdown("### 3. Screen candidate resumes")
         st.caption(
@@ -1173,7 +1216,15 @@ def hiring_workflow_section(agent):
                                 )
                                 st.rerun()
                     elif candidate.get("decision_status") == "Hired by recruiter":
-                        st.success("Hire approved by recruiter. Prepare an offer draft for HR/legal review.")
+                        st.success("Hiring decision approved by the recruiter.")
+                        st.info(
+                            "The MVP ends at the HR hiring decision. Offer preparation, "
+                            "background verification, document checks, and onboarding are "
+                            "deferred and are not available in this workflow."
+                        )
+                        if not st.session_state.get("enable_deferred_posthire_ui", False):
+                            continue
+                        # Preserve the legacy follow-up screens behind an explicit deferred-phase flag.
                         offer = candidate.get("offer_draft")
                         if offer is None:
                             with st.form(f"offer_form_{candidate['candidate_id']}"):

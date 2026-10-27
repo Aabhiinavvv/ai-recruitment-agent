@@ -5,6 +5,156 @@ import re
 from typing import Any, Callable
 
 
+AGENT_WORKFORCE = (
+    {
+        "id": "job_intelligence",
+        "name": "Job Intelligence Agent",
+        "responsibility": "Turn the hiring brief into an editable job description and equal-weight job criteria.",
+        "status": "active",
+        "actions": ("generate_job_description", "build_job_evaluation_rubric"),
+    },
+    {
+        "id": "job_distribution",
+        "name": "Job Distribution Agent",
+        "responsibility": "Prepare approved vacancy details for authorized job-board integrations.",
+        "status": "draft_only",
+        "actions": ("build_job_distribution_plan",),
+    },
+    {
+        "id": "candidate_collection",
+        "name": "Candidate Collection Agent",
+        "responsibility": "Organize candidate-submitted applications and profile information.",
+        "status": "manual_intake",
+        "actions": ("collect_candidate_application",),
+    },
+    {
+        "id": "resume_intelligence",
+        "name": "Resume Intelligence Agent",
+        "responsibility": "Extract resume evidence and compare it with documented role criteria.",
+        "status": "active",
+        "actions": ("screen_candidate_resume", "analyze_resume"),
+    },
+    {
+        "id": "matching_ranking",
+        "name": "Matching & Ranking Agent",
+        "responsibility": "Order candidates by current-role evidence for recruiter review.",
+        "status": "active",
+        "actions": ("rank_candidates",),
+    },
+    {
+        "id": "communication",
+        "name": "Communication Agent",
+        "responsibility": "Prepare recruiter-approved candidate communication and scheduling drafts.",
+        "status": "draft_only",
+        "actions": ("create_interview_invitation_draft", "create_rejection_message_draft"),
+    },
+    {
+        "id": "ai_interview",
+        "name": "AI Interview Agent",
+        "responsibility": "Generate structured role-specific interview prompts and evidence-based feedback.",
+        "status": "active",
+        "actions": (
+            "generate_coding_challenge",
+            "evaluate_coding_submission",
+            "generate_round_interview_questions",
+            "evaluate_interview_round",
+        ),
+    },
+    {
+        "id": "recruitment_coordinator",
+        "name": "Recruitment Coordinator Agent",
+        "responsibility": "Track recruiter-approved workflow transitions and prepare HR decision briefs.",
+        "status": "active",
+        "actions": (
+            "build_hr_decision_brief",
+            "record_recruiter_decision",
+            "record_round_decision",
+            "record_final_hiring_decision",
+        ),
+    },
+)
+
+TASK_AGENT_OWNERS = {
+    "generate_job_description": "job_intelligence",
+    "screen_candidate_resume": "resume_intelligence",
+    "analyze_resume": "resume_intelligence",
+    "generate_detailed_weaknesses": "resume_intelligence",
+    "generate_coding_challenge": "ai_interview",
+    "evaluate_coding_submission": "ai_interview",
+    "generate_round_interview_questions": "ai_interview",
+    "evaluate_interview_round": "ai_interview",
+    "generate_interview_question": "ai_interview",
+    "generate_interview_questions": "ai_interview",
+    "evaluate_interview_answer": "ai_interview",
+    "build_interview_snapshot": "ai_interview",
+    "build_hr_decision_brief": "recruitment_coordinator",
+    "send_alert": "communication",
+}
+
+JOB_DISTRIBUTION_CHANNELS = (
+    "LinkedIn",
+    "Indeed",
+    "Naukri",
+    "Internshala",
+    "Company application portal",
+)
+
+
+def build_job_evaluation_rubric(requirements: str | list[str]) -> dict[str, Any]:
+    """Create an explicit equal-weight rubric from recruiter-provided role criteria."""
+    raw_criteria = (
+        re.split(r"[\n,;]+", requirements)
+        if isinstance(requirements, str)
+        else requirements
+    )
+    if not isinstance(raw_criteria, list):
+        raise ValueError("Job requirements must be text or a list of criteria.")
+    criteria = []
+    seen = set()
+    for item in raw_criteria:
+        if not isinstance(item, str):
+            raise ValueError("Each job requirement must be text.")
+        criterion = item.strip()
+        normalized = criterion.casefold()
+        if criterion and normalized not in seen:
+            criteria.append(criterion)
+            seen.add(normalized)
+    if not criteria:
+        raise ValueError("Add at least one job-related requirement for the rubric.")
+    weight_percent = 100 / len(criteria)
+    return {
+        "criteria": [
+            {"criterion": criterion, "weight_percent": weight_percent}
+            for criterion in criteria
+        ],
+        "scoring_scale": "0-10 per criterion, supported by resume evidence",
+        "overall_score": "Equal-weight average of criterion scores, normalized to 0-100",
+        "decision_boundary": (
+            "Advisory ranking only; recruiter reviews evidence and makes all progression "
+            "and hiring decisions."
+        ),
+    }
+
+
+def build_job_distribution_plan(job: dict[str, Any]) -> dict[str, Any]:
+    """Prepare a distribution checklist without publishing to external services."""
+    if not isinstance(job, dict):
+        raise ValueError("The job must be an object.")
+    if job.get("status") != "Approved by recruiter — publishing integration required":
+        raise ValueError("Recruiter approval is required before preparing job distribution.")
+    if not str(job.get("jd") or "").strip():
+        raise ValueError("An approved job description is required for distribution.")
+    return {
+        "job_title": str(job.get("job_title") or ""),
+        "publication_status": "approved_draft",
+        "external_publication_performed": False,
+        "channels": [
+            {"name": channel, "status": "authorized integration required"}
+            for channel in JOB_DISTRIBUTION_CHANNELS
+        ],
+    }
+
+
 class AgentToolRegistry:
     """Explicit allowlist of in-process actions; no arbitrary code or shell tools."""
 

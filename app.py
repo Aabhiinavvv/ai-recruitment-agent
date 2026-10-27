@@ -16,7 +16,7 @@ def ensure_event_loop():
 ensure_event_loop()
 
 # set_page_config MUST be the very first Streamlit call — only called once here, NOT in ui.py
-st.set_page_config(page_title="InterviewAI", page_icon=":sparkles:", layout="wide")
+st.set_page_config(page_title="AI Recruitment Workflow", page_icon=":sparkles:", layout="wide")
 
 from agents import RecruitmentAgent  # matches class name in agents.py
 import atexit
@@ -225,122 +225,16 @@ def main():
     # NOTE: ui.setup_page() must NOT call st.set_page_config — it's already called above.
     ui.display_header()
     config = ui.setup_sidebar()
-    agent = setup_agent(config)
-    # Render an interactive dashboard hero (radar + bars) to give the page a modern, website-like feel
-    try:
-        ui.display_interactive_dashboard(st.session_state.get('analysis_result'))
-    except Exception:
-        # non-fatal: keep app running if the component fails
-        pass
+    setup_agent(config)
     tabs = ui.create_tabs()
 
-    # ── Tab 0: Resume Analysis ───────────────────────────────────────────────
     with tabs[0]:
-        role, custom_jd = ui.role_selection_section(ROLE_REQUIREMENTS)
-        uploaded_resume = ui.resume_upload_section()
-
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col2:
-            if st.button("Analyze Resume", use_container_width=True):
-                if agent and uploaded_resume:
-                    result = analyze_resume(agent, uploaded_resume, role, custom_jd)
-
-        # Persist result across reruns
-        if st.session_state.analysis_result:
-            ui.display_analysis_result(st.session_state.analysis_result, type="primary")
-            if agent and agent.awaiting_review:
-                st.info(
-                    "Review the job-related evidence above. The AI score is advisory; "
-                    "a recruiter must make the final selection decision."
-                )
-                approve_col, reject_col = st.columns(2)
-                with approve_col:
-                    if st.button("Approve candidate", use_container_width=True):
-                        result = resolve_human_review(agent, "approve")
-                        if result is not None:
-                            st.session_state.analysis_result = result
-                            st.rerun()
-                with reject_col:
-                    if st.button("Reject candidate", use_container_width=True):
-                        result = resolve_human_review(agent, "reject")
-                        if result is not None:
-                            st.session_state.analysis_result = result
-                            st.rerun()
-            if (
-                agent
-                and st.session_state.analysis_result.get("missing_skills")
-                and not st.session_state.analysis_result.get("detailed_weaknesses")
-            ):
-                if st.button("Generate Detailed Weakness Analysis"):
-                    generate_detailed_weaknesses(agent)
-                    st.rerun()
-
-    # ── Tab 1: Q&A ───────────────────────────────────────────────────────────
-    with tabs[1]:
-        if st.session_state.resume_analyzed and st.session_state.analysis_result:
-            ui.resume_qa_section(
-                has_resume=True,
-                ask_question_func=lambda q: ask_question(st.session_state.resume_agent, q),
-            )
-        else:
-            st.warning("Please analyze a resume first to enable the Q&A section.")
-
-    # ── Tab 2: Interview Questions ───────────────────────────────────────────
-    with tabs[2]:
-        if st.session_state.resume_analyzed and st.session_state.resume_agent:
-            ui.interview_question_section(
-                has_resume=True,
-                generate_question_func=lambda types, diff, num: generate_interview_questions(
-                    st.session_state.resume_agent, types, diff, num
-                ),
-            )
-        else:
-            st.warning(
-                "Please analyze a resume first to enable the interview question generation section."
-            )
-
-    # ── Tab 3: Resume Improvement ────────────────────────────────────────────
-    with tabs[3]:
-        if st.session_state.resume_analyzed and st.session_state.analysis_result:
-            ui.resume_improvement_section(
-                has_resume=True,
-                improve_resume_func=lambda areas, r: improve_resume(
-                    st.session_state.resume_agent, areas, r
-                ),
-            )
-        else:
-            st.warning(
-                "Please analyze a resume first to enable the resume improvement section."
-            )
-
-    # ── Tab 4: Improved Resume ───────────────────────────────────────────────
-    with tabs[4]:
-        if st.session_state.resume_analyzed and st.session_state.resume_agent:
-            ui.improved_resume_section(
-                has_resume=True,
-                get_improved_resume_func=lambda r, skills: get_improved_resume(
-                    st.session_state.resume_agent, r, skills
-                ),
-            )
-        else:
-            st.warning(
-                "Please upload and analyze a resume first in the 'Resume Analysis' tab."
-            )
-
-    # ── Tab 5: AI Interview ─────────────────────────────────────────────────
-    with tabs[5]:
-        ui.ai_interview_section(st.session_state.resume_agent)
-
-    # ── Tab 6: Recruiter-supervised hiring workflow ─────────────────────────
-    with tabs[6]:
         ui.hiring_workflow_section(st.session_state.resume_agent)
 
-    # ── Tab 7: Employee HR policy support ──────────────────────────────────
-    with tabs[7]:
-        ui.employee_hr_support_section(st.session_state.resume_agent)
+    with tabs[1]:
+        ui.ai_interview_section(st.session_state.resume_agent)
 
-    # ── Tab 8: Four-layer platform architecture ────────────────────────────
-    with tabs[8]:
+    with tabs[2]:
         ui.platform_architecture_section()
 
 

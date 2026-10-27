@@ -1,128 +1,79 @@
-# ai-recruitment-agent
-AI-powered Recruitment Agent built with Streamlit and LangChain. Analyze resumes, evaluate skills, generate interview questions, and improve resumes using LLMs. Includes semantic skill scoring, RAG-based Q&amp;A, resume enhancement, advisory bias and resume-integrity checks, and browser-based live voice interviews.
+# AI Recruitment Workflow Platform
 
-Recruitment actions are orchestrated by a LangGraph supervisor that routes work to
-resume-screening, job-matching, interview, HR-decision, communication,
-candidate-Q&A, and resume-coaching agents. Job matching summarizes the
-job-related skill evidence from resume screening, and communication routes
-explicitly requested alerts through the configured delivery channels. The workflow
-uses a local stdio MCP server for request and score validation. Resume screening is
-advisory: the graph pauses for a recruiter to approve or reject each assessment
-before recording a final selection. Checkpoints are held in memory for the lifetime
-of the Streamlit session.
+This Streamlit and LangChain application coordinates a recruiter-supervised
+workflow from a company hiring request to an HR-reviewed hiring decision. Its
+eight logical agents share the configured model and tools:
 
-The assessment instructions restrict scoring to job-related evidence and treat
-resume/job-description content as untrusted input. Possible biased job criteria,
-resume placeholders, and reversed date ranges are surfaced only as prompts for
-recruiter verification; these limited text checks cannot establish discrimination
-or fraud and never reject candidates. Recognizable contact and labeled personal
-details are filtered from the compact resume profile used for model-based scoring.
-The local MCP process does not receive
-Gemini API keys. Do not treat AI scores or camera/motion signals as a substitute
-for a fair, human-led hiring process.
+1. **Job Intelligence** — drafts the job description and an equal-weight rubric
+   from recruiter-provided, job-related criteria.
+2. **Job Distribution** — prepares approved job details for authorized channels;
+   publishing integrations are not connected.
+3. **Candidate Collection** — organizes recruiter-uploaded resumes and
+   candidate-provided profile details; there is no public application portal.
+4. **Resume Intelligence** — extracts cited skills, experience, education, and
+   project evidence from submitted resumes.
+5. **Matching & Ranking** — ranks candidates using current-role evidence only.
+6. **Communication** — prepares candidate communication and interview scheduling
+   drafts; it does not send email or make calls.
+7. **AI Interview** — generates structured role-specific interview prompts and
+   advisory evidence reports.
+8. **Recruitment Coordinator** — tracks recruiter-approved progression and
+   prepares HR decision briefs.
+
+The active scope is hiring request → approved job description → authorized
+application intake → resume analysis and ranking → communication drafts →
+structured interviews → HR review and recruiter decision. Background and
+document verification are deferred to a future phase. Employee HR support,
+resume coaching, offer preparation, verification, document validation, and
+onboarding remain legacy code but are hidden from the MVP navigation; they are
+not part of this product workflow.
+
+## Human review and integration boundaries
+
+AI assessments are recommendations, not automatic selection or rejection.
+Recruiters review evidence and control candidate progression and hiring
+decisions. Criteria and scores must be job-related; resume/job-description
+content is treated as untrusted input. GitHub, LinkedIn, and portfolio links are
+candidate-provided references only and are not scraped or verified.
+
+The Job Distribution Agent prepares a channel checklist but does not publish.
+Applications are uploaded by a recruiter after authorization; the product does
+not scrape job boards or profiles. Communication outputs are drafts only.
+Workflow data is held in Streamlit session state unless the separately
+consented, encrypted organizational memory feature is configured. Do not upload
+candidate data unless you are authorized to process it.
+
+Resume screening parses PDF files with `pypdf` and plain-text files with
+Python's UTF-8 decoder. Its matching is evidence-based and heuristic; scanned
+image-only PDFs may not produce readable text. Rankings are advisory and use
+current-role criteria rather than prior outcomes or protected traits.
 
 ## Recruiter-supervised hiring workflow
 
-The **Hiring Workflow** tab accepts a hiring brief, generates an editable job
-description, and requires recruiter approval before the prototype marks it ready
-for publication. Candidate resumes can then be screened against the brief's
-essential job-related skills and ordered by that evidence. Every candidate
-remains pending recruiter review until a recruiter explicitly advances or marks
-them as not proceeding. For an advanced candidate, recruiters can prepare and
-review a personalized email invitation and proposed interview time windows.
-The app can export the draft, but does not send email, place calls, or create
-calendar events. It does not publish jobs, search external sites, issue offers,
-perform external verification, or provision onboarding accounts. Those stages are displayed as requiring authorized
-integrations; verification also requires candidate consent. Workflow records
-and the activity log currently live in Streamlit session state and are not
-durable across sessions. Resume screening requires affirmative authorization;
-uploaded files may remain in the active Streamlit session, so do not upload
-candidate data unless you are authorized to process it.
+The **Hiring Workflow** tab accepts a hiring brief, drafts an editable job
+description, and requires recruiter approval before preparing a distribution
+checklist. Each supplied criterion receives an equal rubric weight; resume
+scores are evidence-linked and remain subject to recruiter review. Recruiters
+can upload authorized applications, review candidate evidence, prepare
+communication drafts, run coding/technical/HR interview rounds, and record
+human decisions. The prototype does not publish jobs, search external sources,
+send messages, place calls, book calendars, or write to an external ATS.
 
-Resume screening currently parses PDF files with `pypdf` and plain-text files
-with Python's UTF-8 decoder. It builds a compact, redacted profile, extracts
-simple section excerpts and recruiter-supplied requirements, then matches each
-requirement using the configured LLM when available. LLM scores are accepted
-only when they are valid 0–10 integers supported by an exact resume quote;
-otherwise the system falls back to local text matching. Results include cited
-evidence and are ranked only by these current-role requirement scores, for
-recruiter review. Section extraction and local matching are heuristic, not
-comprehensive NLP. The resume-ranking path does not currently use OCR,
-sentence-transformer embeddings, or a vector database; scanned image-only PDFs
-may therefore produce no readable text.
-
-After a recruiter advances a shortlisted candidate, the workflow proceeds through
-AI-generated adaptive coding, technical, and HR rounds. Coding difficulty can
-adapt to the prior submission review; interview questions are generated for the
-role and round rather than selected from a fixed question bank. AI feedback is
-advisory, and the recruiter explicitly passes or ends the process at each round
-before a final recruiter hiring decision. At final review, the HR Decision Agent
-can summarize evidence-based pros, cons, role-related uncertainties, and salary
-guidance bounded by the job budget. Joining readiness is reported only from
-explicit candidate statements; the system does not predict a numeric joining
-probability. Rejection emails and manual call scripts can be drafted only after
-a recruiter records a not-proceeding decision.
-The prototype does not dial, email, or write candidate data to an external ATS.
-
-After a recruiter records a hire, the Offer Agent can prepare an editable,
-downloadable offer-letter draft with the approved salary, proposed joining date,
-and a post-acceptance document checklist. Salary must be confirmed against the
-approved compensation band and is checked against a numeric LPA budget when the
-role budget states one. The offer remains a draft for HR/legal review: approving
-it in the app does not issue, sign, or send an offer. Documents are listed only;
-the app does not collect identity or payroll documents.
-
-After a recruiter confirms that an offer was formally issued and accepted
-outside the app, and confirms candidate consent, the Verification Agent can
-track selected education, employment, reference, identity, government-record,
-and background-vendor checks. This is a status tracker only: it does not email
-or call institutions, employers, references, candidates, or authorities, and
-does not connect to government APIs or verification vendors. Use only lawful,
-necessary, authorized providers; record minimal non-sensitive outcomes and
-route unresolved or adverse results to human review. The prototype does not
-collect identity numbers or document images and does not make hiring decisions
-based on verification status.
-
-The separate Document Validation Agent tracks degree, PAN, Aadhaar, passport,
-driving-licence, and professional-certificate checks after offer acceptance and
-candidate consent. Aadhaar tracking additionally requires recruiter confirmation
-that a lawful, compliant, authorized integration is available. No document upload,
-OCR, or verification API is connected in this prototype; it does not collect
-identity numbers or document images. Before integrating OCR or providers, add
-access controls, encryption, data minimization, retention/deletion rules, and
-applicable legal review. A status is not an automated hiring decision.
-
-After recruiter hire approval, an externally issued and accepted offer, and
-candidate consent, the Onboarding Agent creates a checklist for company email,
-Slack access, laptop/equipment, payroll, training, and employment documents.
-Recruiters can track draft approval, progress, completion, blocked, or not
-applicable states. The prototype does not create accounts, submit purchase
-requests, configure payroll, or collect onboarding documents or credentials.
-Those actions require approved integrations, least-privilege access, secure
-handling, and human authorization.
-
-The Employee Agent answers routine HR-policy questions from recruiter-provided
-PDF or TXT documents and returns source filenames. It must not be used for
-individual payroll, medical, legal, disciplinary, harassment, discrimination,
-or other sensitive case advice; those questions should go to a human HR
-representative. Answers can be incomplete or wrong and should be checked against
-the source policy. The uploaded text and question are sent to the selected AI
-provider, so upload only approved documents after confirming the provider is
-authorized for that data. Documents and answers are not stored durably by this
-feature, and no employee directory, HRIS, payroll, or ticket system is
-connected.
+After the final recruiter hiring decision, this MVP workflow stops. Offer
+preparation and verification/document checks are future phases. No payroll,
+attendance, employee performance-management, or general HRMS workflow is in
+scope.
 
 ### Encrypted organizational memory
 
 The Hiring Workflow can keep an opt-in candidate history across roles in a local
 SQLite database. It stores encrypted, redacted resume profiles; interview
-questions, answers and evaluations; recruiter decisions; offer drafts; approved
-verification/document statuses; onboarding tasks; communication drafts; role
-details; and related activity. Original resume files are not stored. Candidates
-must provide informed consent for retention and use of relevant history by
-authorized recruiters and the configured AI provider. Past scores or hiring
-outcomes are shown as historical context and must not determine a new role's
-assessment.
+questions, answers and evaluations; recruiter decisions; communication drafts;
+role details; and related activity. Original resume files are not stored.
+Candidates must provide informed consent for retention and use of relevant
+history by authorized recruiters and the configured AI provider. Past scores
+or hiring outcomes are shown as historical context and must not determine a
+new role's assessment.
 
 Set `CANDIDATE_MEMORY_KEY` to a Fernet key before enabling memory. Generate one
 locally with:
@@ -187,10 +138,10 @@ does not represent a company-wide workforce graph.
 
 The application presents its logical design as four connected layers:
 
-1. **Agent Workforce** — `workflow.py` routes tasks to specialized agents in
-   `agents.py`. Candidate-round preparation uses `agent_runtime.py` to make a
-   bounded plan, call an allowlisted tool, observe its result, and validate the
-   output; recruiters decide.
+1. **Agent Workforce** — `agent_runtime.py` defines eight logical recruitment
+   agents and task ownership; `workflow.py` routes supported actions into the
+   shared `RecruitmentAgent` methods in `agents.py`. Candidate-round preparation
+   uses a bounded plan, allowlisted tool, observation, and validation; recruiters decide.
 2. **Company Memory** — `organizational_memory.py` provides encrypted,
    candidate-consented cross-role history. `hiring_pipeline.py` assembles the
    current workforce relationship graph. Current-role ranking remains based on
@@ -199,9 +150,9 @@ The application presents its logical design as four connected layers:
    validate assessments, questions, interview summaries, candidate profiles,
    and strategic hiring suggestions. Outputs are advisory and job-related.
 4. **Execution Engine** — recruiter controls in `ui.py` and transitions in
-   `hiring_pipeline.py` record approved decisions and prepare drafts/checklists.
-   External job-board, email, calendar, verification, and HRIS actions are not
-   connected.
+   `hiring_pipeline.py` record approved decisions and prepare drafts. External
+   job-board, email, calendar, and ATS actions are not connected. Verification
+   and general HRMS functionality are outside the MVP scope.
 
 The streamlit **Architecture** tab visualizes the data flow and current
 boundaries. This describes logical responsibilities over the existing modules;
