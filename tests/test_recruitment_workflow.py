@@ -5,7 +5,7 @@ from mcp_server import (
     validate_human_decision,
     validate_recruitment_request,
 )
-from workflow import RecruitmentWorkflow
+from workflow import RecruitmentWorkflow, _supervisor
 
 
 class FakeRecruitmentAgent:
@@ -170,6 +170,18 @@ class FakeRecruitmentAgent:
 
 
 class RecruitmentGuardrailTests(unittest.TestCase):
+    def test_supervisor_routes_owned_tasks_through_logical_agent(self):
+        result = _supervisor({"task": "generate_job_description"})
+
+        self.assertEqual(result["logical_agent"], "job_intelligence")
+        self.assertEqual(result["route"], "job_intelligence")
+
+    def test_supervisor_keeps_legacy_route_for_unassigned_actions(self):
+        result = _supervisor({"task": "generate_offer_letter_draft"})
+
+        self.assertNotIn("logical_agent", result)
+        self.assertEqual(result["route"], "offer_agent")
+
     def test_request_guardrail_flags_instruction_like_resume_text(self):
         result = validate_recruitment_request(
             "analyze_resume",

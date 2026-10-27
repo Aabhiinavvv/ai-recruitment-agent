@@ -15,7 +15,6 @@ import streamlit.components.v1 as components
 
 from agents import RecruitmentAgent
 from agent_runtime import (
-    AGENT_WORKFORCE,
     build_job_distribution_plan,
     build_job_evaluation_rubric,
     execute_candidate_preparation,
@@ -31,7 +30,6 @@ from hiring_pipeline import (
     create_interview_invitation_draft,
     create_rejection_message_draft,
     rank_candidates,
-    summarize_hiring_funnel,
     record_final_hiring_decision,
     record_recruiter_decision,
     record_round_decision,
@@ -70,6 +68,9 @@ def display_header():
       .stButton > button { border:0; border-radius:12px; background:#6743ee; color:white; font-weight:650; min-height:2.65rem; }
       .stButton > button:hover { background:#5637d2; color:white; border:0; }
       .stTextArea textarea, .stTextInput input { border-radius:12px; border-color:#d1d5db; background:#ffffff; color:#111827; }
+      .stApp label, .stApp label p, .stApp [data-testid="stWidgetLabel"] * { color:#1f2937 !important; }
+      .stApp input::placeholder, .stApp textarea::placeholder { color:#6b7280 !important; opacity:1; }
+      .stApp [data-baseweb="select"] * { color:#1f2937; }
       [data-testid="stTabs"] [role="tablist"] { gap:.45rem; }
       [data-testid="stTabs"] [role="tab"] { border-radius:10px; padding:.55rem .8rem; background:white; border:1px solid #e5e7eb; color:#374151; }
       [data-testid="stTabs"] [aria-selected="true"] { color:#5b43d6; border-color:#5b43d6; background:#f3f0ff; }
@@ -130,24 +131,6 @@ def create_tabs():
 
 
 def platform_architecture_section():
-    st.subheader("Eight-agent recruitment workforce")
-    st.caption(
-        "Logical agents share the configured model and tools. Each role has a bounded "
-        "responsibility; external actions remain integration-gated."
-    )
-    status_labels = {
-        "active": "Available in prototype",
-        "draft_only": "Drafts only; authorized delivery integration required",
-        "manual_intake": "Recruiter-managed intake; application portal not connected",
-    }
-    columns = st.columns(2)
-    for index, agent in enumerate(AGENT_WORKFORCE):
-        with columns[index % 2]:
-            with st.container(border=True):
-                st.markdown(f"**{agent['name']}**")
-                st.write(agent["responsibility"])
-                st.caption(status_labels[agent["status"]])
-
     st.subheader("Four-layer hiring platform")
     st.caption(
         "A recruiter-supervised architecture: agents coordinate work, memory supplies "
@@ -673,16 +656,6 @@ def hiring_workflow_section(agent):
         "Applications are uploaded by a recruiter; this prototype does not scrape or source "
         "candidate profiles. Background verification is deferred to a future phase."
     )
-    with st.expander("Eight logical agents and current capability", expanded=True):
-        status_labels = {
-            "active": "Available in prototype",
-            "draft_only": "Draft only; no external action",
-            "manual_intake": "Recruiter-managed application upload",
-        }
-        for item in AGENT_WORKFORCE:
-            st.markdown(f"**{item['name']}** — {item['responsibility']}")
-            st.caption(status_labels[item["status"]])
-
     if "hiring_workflow_state" not in st.session_state:
         st.session_state.hiring_workflow_state = {
             "job": None,
@@ -691,7 +664,6 @@ def hiring_workflow_section(agent):
             "outreach_queue": [],
         }
     workflow_state = st.session_state.hiring_workflow_state
-    workflow_state.setdefault("intelligence_report", None)
     _persist_consented_candidate_memory(workflow_state)
 
     st.markdown("### 1. Hiring brief")
@@ -743,7 +715,6 @@ def hiring_workflow_section(agent):
                     }
                     workflow_state["candidates"] = []
                     workflow_state["outreach_queue"] = []
-                    workflow_state["intelligence_report"] = None
                     workflow_state["events"] = append_audit_event(
                         workflow_state["events"],
                         "AI drafted job description",
@@ -1780,95 +1751,6 @@ def hiring_workflow_section(agent):
         st.graphviz_chart(graph["dot"], use_container_width=True)
     else:
         st.caption("Create a hiring brief or screen a candidate to populate this graph.")
-
-    st.markdown("### 7. Hiring Intelligence")
-    st.caption(
-        "Evidence-based strategic suggestions from this role's recorded funnel. "
-        "Recommendations are advisory; the recruiter decides whether to test or adopt them."
-    )
-    funnel_metrics = summarize_hiring_funnel(workflow_state["candidates"])
-    first, second, third, fourth = st.columns(4)
-    first.metric("Screened", funnel_metrics["screened"])
-    second.metric("Advanced", funnel_metrics["advanced_after_screening"])
-    third.metric("Not proceeding", funnel_metrics["not_proceeding_total"])
-    fourth.metric("Hired", funnel_metrics["hired"])
-    report_signature = json.dumps(
-        {"job": job, "metrics": funnel_metrics},
-        sort_keys=True,
-        ensure_ascii=True,
-    )
-    st.info(
-        "This prototype currently tracks one active role at a time. Recruiting source, "
-        "market salary, offer acceptance, and candidate-experience data are not captured, "
-        "so this view cannot reliably identify the best job board, recommend a pay increase, "
-        "or compare schools."
-    )
-    if not agent:
-        st.warning("Configure an AI provider to generate strategic recommendations.")
-    elif not funnel_metrics["screened"]:
-        st.caption("Screen candidates to establish an evidence base for role-specific advice.")
-    elif st.button("Generate strategic recommendations", key="generate_hiring_intelligence"):
-        try:
-            with st.spinner("Reviewing hiring funnel evidence..."):
-                report = agent.generate_hiring_intelligence(
-                    job={
-                        key: job.get(key)
-                        for key in (
-                            "job_title",
-                            "location",
-                            "headcount",
-                            "salary_budget",
-                            "timeline",
-                            "requirements",
-                        )
-                    },
-                    funnel_metrics=funnel_metrics,
-                )
-        except Exception as exc:
-            st.error(f"Could not generate hiring intelligence: {exc}")
-        else:
-            workflow_state["intelligence_report"] = {
-                "signature": report_signature,
-                "recommendations": report["recommendations"],
-            }
-    intelligence_report = workflow_state.get("intelligence_report")
-    if intelligence_report:
-        if intelligence_report.get("signature") != report_signature:
-            st.caption("The funnel changed since this report. Generate a fresh analysis.")
-        else:
-            recommendations = intelligence_report.get("recommendations", [])
-            if not recommendations:
-                st.success(
-                    "No strategic change is supported by the current evidence. "
-                    "Continue collecting outcomes before changing the process."
-                )
-            for recommendation in recommendations:
-                with st.expander(recommendation["title"]):
-                    st.write(recommendation["action"])
-                    st.write(f"**Why:** {recommendation['rationale']}")
-                    st.write(
-                        f"**Confidence:** {recommendation['confidence'].title()} "
-                        "(advisory; confidence reflects evidence completeness)"
-                    )
-                    st.write("**Supporting evidence:**")
-                    for evidence in recommendation["supporting_evidence"]:
-                        st.markdown(f"- {evidence}")
-                    if recommendation["data_needed"]:
-                        st.write("**Data needed before acting:**")
-                        for item in recommendation["data_needed"]:
-                            st.markdown(f"- {item}")
-
-    st.markdown("### 8. Downstream workflow")
-    downstream = (
-        ("Candidate discovery (authorized sources)", "Integration + source authorization required"),
-        ("Interview email/call/calendar scheduling", "Draft queue only; sending and booking integration required"),
-        ("Offer and compensation", "Integration + human approval required"),
-        ("Verification Agent", "Consent-gated status tracker; provider contact and verification integrations required"),
-        ("Document Validation Agent", "OCR/API integrations required; no documents are uploaded or processed here"),
-        ("Onboarding Agent", "Consent-gated task checklist; account, device, and payroll integrations + human approval required"),
-    )
-    for stage, status in downstream:
-        st.markdown(f"- **{stage}:** {status}")
 
     if workflow_state["events"]:
         with st.expander("Workflow activity log"):

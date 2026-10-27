@@ -139,9 +139,11 @@ does not represent a company-wide workforce graph.
 The application presents its logical design as four connected layers:
 
 1. **Agent Workforce** — `agent_runtime.py` defines eight logical recruitment
-   agents and task ownership; `workflow.py` routes supported actions into the
-   shared `RecruitmentAgent` methods in `agents.py`. Candidate-round preparation
-   uses a bounded plan, allowlisted tool, observation, and validation; recruiters decide.
+   agents and task ownership; `workflow.py` routes supported actions to the
+   owning logical agent node, which invokes shared `RecruitmentAgent` methods
+   in `agents.py`. Candidate-round preparation uses a bounded plan, allowlisted
+   tool, observation, and validation; recruiters decide. The agent roster is
+   an internal implementation detail, not a Streamlit showcase.
 2. **Company Memory** — `organizational_memory.py` provides encrypted,
    candidate-consented cross-role history. `hiring_pipeline.py` assembles the
    current workforce relationship graph. Current-role ranking remains based on

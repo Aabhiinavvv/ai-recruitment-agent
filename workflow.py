@@ -59,6 +59,10 @@ TASK_ROUTES = {
     "get_improved_resume": "resume_coach_agent",
 }
 
+LOGICAL_AGENT_ROUTES = {
+    agent_id: agent_id for agent_id in TASK_AGENT_OWNERS.values()
+}
+
 
 async def _call_mcp_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     server_path = Path(__file__).with_name("mcp_server.py")
@@ -197,20 +201,28 @@ def _guardrail(state: RecruitmentState, config: RunnableConfig) -> dict[str, Any
 
 
 def _supervisor(state: RecruitmentState) -> dict[str, Any]:
-    route = TASK_ROUTES.get(state["task"])
-    if route is None:
+    task = state["task"]
+    legacy_route = TASK_ROUTES.get(task)
+    if legacy_route is None:
         raise ValueError(f"Unsupported recruitment action: {state['task']}")
+    logical_agent = TASK_AGENT_OWNERS.get(task)
+    route = LOGICAL_AGENT_ROUTES.get(logical_agent, legacy_route)
     result = {"route": route}
-    logical_agent = TASK_AGENT_OWNERS.get(state["task"])
     if logical_agent:
         result["logical_agent"] = logical_agent
     return result
 
 
 def _agent_node(state: RecruitmentState, config: RunnableConfig) -> dict[str, Any]:
+    logical_agent = state.get("logical_agent")
+    if logical_agent and state.get("route") != logical_agent:
+        raise RuntimeError("The workflow routed a task to the wrong logical agent.")
     agent, payload = _agent_and_payload(config)
     result = getattr(agent, state["task"])(**payload)
-    return {"result": result}
+    update = {"result": result}
+    if logical_agent:
+        update["logical_agent"] = logical_agent
+    return update
 
 
 def _job_matching_agent(state: RecruitmentState, config: RunnableConfig) -> dict[str, Any]:
@@ -320,7 +332,7 @@ def _build_graph():
     graph = StateGraph(RecruitmentState)
     graph.add_node("guardrail", _guardrail)
     graph.add_node("supervisor", _supervisor)
-    for node in {
+    legacy_agent_nodes = {
         "resume_screening_agent",
         "coding_interview_agent",
         "hr_decision_support_agent",
@@ -334,7 +346,10 @@ def _build_graph():
         "interview_agent",
         "resume_coach_agent",
         "communication_agent",
-    }:
+    }
+    logical_agent_nodes = set(LOGICAL_AGENT_ROUTES)
+    agent_nodes = legacy_agent_nodes | logical_agent_nodes
+    for node in agent_nodes:
         graph.add_node(node, _agent_node)
     graph.add_node("job_matching_agent", _job_matching_agent)
     graph.add_node("validate_candidate_screening", _validate_candidate_screening)
@@ -348,6 +363,7 @@ def _build_graph():
         "supervisor",
         lambda state: state["route"],
         {
+            **{node: node for node in logical_agent_nodes},
             "resume_screening_agent": "resume_screening_agent",
             "coding_interview_agent": "coding_interview_agent",
             "hr_decision_support_agent": "hr_decision_support_agent",
@@ -363,21 +379,7 @@ def _build_graph():
             "communication_agent": "communication_agent",
         },
     )
-    for node in {
-        "resume_screening_agent",
-        "coding_interview_agent",
-        "hr_decision_support_agent",
-        "offer_agent",
-        "verification_agent",
-        "document_validation_agent",
-        "onboarding_agent",
-        "employee_support_agent",
-        "job_description_agent",
-        "candidate_qa_agent",
-        "interview_agent",
-        "resume_coach_agent",
-        "communication_agent",
-    }:
+    for node in agent_nodes:
         graph.add_conditional_edges(
             node,
             _route_after_agent,
