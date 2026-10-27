@@ -113,8 +113,9 @@ def setup_sidebar():
         else:
             model = st.selectbox(
                 "Gemini Model",
-                ["gemini-2.5-flash", "gemini-2.5-pro"],
+                ["gemini-3.8-flash"],
                 index=0,
+                key="gemini_model",
             )
     return {
         "llm_provider": provider,
