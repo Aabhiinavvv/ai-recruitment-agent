@@ -1,0 +1,8 @@
+{
+  "name": "AI Recruitment Agent",
+  "description": "Recruiter-supervised AI recruitment workflow platform with automated JD drafting, multi-dimensional candidate resume scoring, adaptive interview rounds, live speech & proctored video interview, fairness auditing, and workforce intelligence graph.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
