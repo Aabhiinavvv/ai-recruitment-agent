@@ -5,7 +5,9 @@ import {
   EvaluationRubric, 
   HiringBrief, 
   RoundEvaluation,
-  RoundType 
+  RoundType,
+  FollowUpEmailOptions,
+  FollowUpEmailResult
 } from '../types';
 import { computeMultidimScore } from './scoringEngine';
 import { maskSensitiveAttributes } from './fairnessEngine';
@@ -158,6 +160,7 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
       resume_text: resumeText,
       resume_profile: maskedText.slice(0, 300) + (maskedText.length > 300 ? "..." : ""),
       overall_score: multiDim.final_score,
+      stage: 'Screening',
       recruiter_decision: multiDim.final_score >= this.cutoffScore ? 'advance' : 'hold',
       decision_status: 'Pending recruiter review',
       recommendation: multiDim.recommendation,
@@ -470,6 +473,207 @@ Results-driven **${targetRole || 'Software Engineer'}** with proven expertise in
     }
 
     return { answer, sources, needs_hr_follow_up };
+  }
+
+  // 14. Automated AI Email Template Generator for Candidate Follow-Up
+  public draftFollowUpEmail(options: FollowUpEmailOptions): FollowUpEmailResult {
+    const { 
+      candidate, 
+      jobTitle = candidate.role || 'Software Engineer', 
+      companyName = 'Our Organization',
+      emailType,
+      reasonCategory,
+      specificFeedback = '',
+      tone = 'professional',
+      schedulingLink = 'https://calendar.google.com/calendar/u/0/r',
+      includeNextSteps = true,
+      includeTalentPoolNote = true,
+      recruiterNotes = ''
+    } = options;
+
+    const firstName = candidate.name ? candidate.name.split(' ')[0] : 'Candidate';
+    const topStrengths = candidate.strengths && candidate.strengths.length > 0 
+      ? candidate.strengths.slice(0, 3).map(s => s.replace(/\s*\(\d+\/10\)/g, '')).join(', ')
+      : 'software engineering and problem-solving fundamentals';
+
+    const missingSkillsList = candidate.missing_skills && candidate.missing_skills.length > 0
+      ? candidate.missing_skills.join(', ')
+      : '';
+
+    const nextRound = options.nextRoundName || (
+      candidate.current_round === 'coding' ? 'Technical Architecture Interview' :
+      candidate.current_round === 'technical' ? 'Engineering Leadership & Culture Interview' :
+      'Final Offer & Alignment Discussion'
+    );
+
+    const reasonsCited: string[] = [];
+    let coreReasonParagraph = "";
+    let subject = "";
+    const suggestedSubjects: string[] = [];
+    let callScript = "";
+
+    if (emailType === 'progress') {
+      // ----------------- PROGRESSION EMAIL -----------------
+      if (reasonCategory === 'technical_excellence') {
+        reasonsCited.push(`Overall AI Evaluation Score of ${candidate.overall_score}%`);
+        reasonsCited.push(`Strong technical dimension proficiency (${candidate.dimension_scores?.technical || 80}%)`);
+        reasonsCited.push(`Demonstrated mastery in: ${topStrengths}`);
+        coreReasonParagraph = `Our engineering review committee was particularly impressed by your technical evaluation score of ${candidate.overall_score}% and your demonstrated proficiency in ${topStrengths}. Your practical architectural background and structured approach to problem-solving stand out as a strong match for the engineering standards on our team.`;
+      } else if (reasonCategory === 'next_round_invitation') {
+        reasonsCited.push(`Successful completion of previous assessment phase`);
+        reasonsCited.push(`Advancement to next round: ${nextRound}`);
+        coreReasonParagraph = `Following our comprehensive review of your profile and assessment responses, we are delighted to invite you to the next stage of our interview process: the **${nextRound}**. We were especially impressed by your background in ${topStrengths} and look forward to diving deeper into your engineering expertise.`;
+      } else if (reasonCategory === 'coding_performance') {
+        reasonsCited.push(`High coding challenge execution score`);
+        reasonsCited.push(`Clean procedural structure, robust typing, and edge-case handling`);
+        coreReasonParagraph = `Our engineering team reviewed your recent coding submission and noted your clean modular abstractions, thorough error-handling, and optimal algorithmic efficiency. You comfortably exceeded our evaluation benchmark for this stage.`;
+      } else if (reasonCategory === 'offer_stage') {
+        reasonsCited.push(`Unanimous hiring committee endorsement across all 6 rubric dimensions`);
+        reasonsCited.push(`Offer proposal for ${jobTitle}`);
+        coreReasonParagraph = `On behalf of the entire engineering team at ${companyName}, I am thrilled to share that our hiring committee has unanimously recommended advancing you to an official offer for the **${jobTitle}** role! Throughout each conversation and evaluation, your expertise, collaborative mindset, and technical depth made a lasting impression.`;
+      } else {
+        // Custom or general
+        const reasonText = specificFeedback || `Your exceptional qualifications and background in ${topStrengths}`;
+        reasonsCited.push(`Recruiter selection: ${reasonText}`);
+        coreReasonParagraph = `Based on your impressive qualifications and demonstrated expertise in ${topStrengths}, our team has decided to advance your application for the ${jobTitle} role. ${specificFeedback ? `Specifically, ${specificFeedback}` : ''}`;
+      }
+
+      // Add recruiter note if provided
+      if (recruiterNotes) {
+        reasonsCited.push(`Recruiter Note: ${recruiterNotes}`);
+      }
+
+      // Subject lines for progression
+      if (reasonCategory === 'offer_stage') {
+        subject = `Exciting News: Offer Recommendation for ${jobTitle} at ${companyName}`;
+        suggestedSubjects.push(`Exciting News: Offer Recommendation for ${jobTitle} at ${companyName}`);
+        suggestedSubjects.push(`Congratulations ${firstName} — Next Steps & Offer Discussion | ${companyName}`);
+        suggestedSubjects.push(`Offer Stage Update: ${jobTitle} at ${companyName}`);
+      } else {
+        subject = `Advancing to the Next Stage: ${jobTitle} at ${companyName}`;
+        suggestedSubjects.push(`Advancing to the Next Stage: ${jobTitle} at ${companyName}`);
+        suggestedSubjects.push(`Invitation to ${nextRound}: ${jobTitle} at ${companyName}`);
+        suggestedSubjects.push(`Great news regarding your ${jobTitle} application at ${companyName}`);
+      }
+
+      // Next steps paragraph
+      let nextStepsBlock = "";
+      if (includeNextSteps) {
+        if (reasonCategory === 'offer_stage') {
+          nextStepsBlock = `\n\n### Next Steps:\nWe would love to schedule a 30-minute conversation this week to formally walk through the offer details, compensation structure, equity, and benefits, as well as answer any questions you have for us. Please select a time that suits your calendar here: ${schedulingLink}.`;
+        } else {
+          nextStepsBlock = `\n\n### Next Steps:\nThe next step is a 45-minute **${nextRound}** conducted via Google Meet with senior members of our engineering team. Please use the following link to choose a convenient time slot over the next 3 to 5 business days: ${schedulingLink}.\n\nIf you have any accessibility requirements or prefer an alternate time window, please let us know and we will happily accommodate.`;
+        }
+      }
+
+      // Tone tuning
+      let greeting = `Hi ${firstName},`;
+      let signoff = `Best regards,\n\nRecruiting Team\n${companyName}`;
+
+      if (tone === 'warm') {
+        greeting = `Hi ${firstName}, hope you're having a wonderful week!`;
+        signoff = `Warmest regards and congratulations,\n\nRecruiting Team\n${companyName}`;
+      } else if (tone === 'concise') {
+        greeting = `Hello ${firstName},`;
+        signoff = `Regards,\n${companyName} Recruiting`;
+      } else if (tone === 'constructive') {
+        greeting = `Dear ${firstName},`;
+        signoff = `With enthusiasm for your next phase,\n\nTalent Acquisition Team\n${companyName}`;
+      }
+
+      let openingText = `Thank you for taking the time to speak with us and complete our hiring assessments for the **${jobTitle}** position at **${companyName}**.`;
+      if (tone === 'warm') {
+        openingText = `Thank you so much for your enthusiastic engagement and the thoughtful time you've spent exploring the **${jobTitle}** opportunity with us at **${companyName}**.`;
+      }
+
+      const body = `${greeting}\n\n${openingText}\n\n${coreReasonParagraph}${recruiterNotes ? `\n\nRecruiter note for context: ${recruiterNotes}` : ''}${nextStepsBlock}\n\nWe are truly excited about the prospect of working together!\n\n${signoff}`;
+
+      callScript = `Hi ${firstName}, this is the recruiting team from ${companyName}. I'm calling with fantastic news regarding your application for the ${jobTitle} role! The engineering panel was extremely impressed with your evaluation—particularly your strengths in ${topStrengths}. We'd love to schedule your ${nextRound}. I just sent an email with the details and calendar link; please check your inbox when you get a chance!`;
+
+      return {
+        subject,
+        body,
+        call_script: callScript,
+        reasons_cited: reasonsCited,
+        suggested_subjects: suggestedSubjects
+      };
+
+    } else {
+      // ----------------- REJECTION EMAIL -----------------
+      if (reasonCategory === 'skills_gap') {
+        const citedMissing = specificFeedback || missingSkillsList || 'specialized systems engineering competencies';
+        reasonsCited.push(`Immediate role requirement in: ${citedMissing}`);
+        reasonsCited.push(`Demonstrated strengths acknowledged in: ${topStrengths}`);
+        coreReasonParagraph = `While our technical team was very impressed by your background in ${topStrengths}, our immediate roadmap requires deep, production-tested experience in **${citedMissing}**. Because this role is expected to take direct ownership of these services from day one, we have chosen to move forward with candidates whose current production portfolio aligns more specifically with these exact requirements.`;
+      } else if (reasonCategory === 'seniority_mismatch') {
+        reasonsCited.push(`Role requires deep multi-year staff/lead distributed systems scale`);
+        reasonsCited.push(`Candidate profile currently calibrated for earlier-to-mid career scope`);
+        coreReasonParagraph = `Although your technical fundamentals and problem-solving abilities showed clear merit, our current headcount mandate for the **${jobTitle}** position specifically calls for extensive experience architecting and operating high-throughput production infrastructure at staff or principal scale. We evaluated that this current opening would not be the optimal fit for your current career trajectory.`;
+      } else if (reasonCategory === 'competitive_cohort') {
+        reasonsCited.push(`Highly competitive applicant pool with 100+ qualified candidates`);
+        reasonsCited.push(`Strong overall rating (${candidate.overall_score}%), but selected profile had closer domain specialization`);
+        coreReasonParagraph = `We received an extraordinary volume of exceptional applicants for this opening. Although your evaluation was strong (scoring ${candidate.overall_score}% on our rubric, with commendable performance in ${topStrengths}), we have ultimately decided to proceed with another finalist whose background uniquely matched our immediate specialized domain needs for this quarter.`;
+      } else if (reasonCategory === 'rubric_score_threshold') {
+        reasonsCited.push(`Evaluation score of ${candidate.overall_score}% against role cutoff of ${this.cutoffScore}%`);
+        reasonsCited.push(`Objective 6-dimension rubric standard applied`);
+        coreReasonParagraph = `In alignment with our objective, bias-free evaluation framework, all applicants are evaluated across a standardized 6-dimension rubric. While we saw promising signals in your background, your cumulative evaluation score did not meet the advancement threshold established for this particular requisition.`;
+      } else if (reasonCategory === 'talent_pool_future') {
+        reasonsCited.push(`Application archived in active engineering talent pool`);
+        reasonsCited.push(`Prioritized for future high-match requisitions`);
+        coreReasonParagraph = `While we are unable to offer you a role on this particular team today, your profile left a genuine positive impression on our review team. As ${companyName} continues to expand, we frequently open new requisitions where your specific background in ${topStrengths} will be an outstanding fit.`;
+      } else {
+        const reasonText = specificFeedback || `Our current technical requirements and hiring priorities`;
+        reasonsCited.push(`Recruiter specific reason: ${reasonText}`);
+        coreReasonParagraph = `After careful consideration by our hiring committee, we have decided not to advance your application for the ${jobTitle} position at this time. ${specificFeedback ? `To provide candid context: ${specificFeedback}` : `This was a tough decision given our immediate technical priorities.`}`;
+      }
+
+      if (recruiterNotes) {
+        reasonsCited.push(`Internal Recruiter Context: ${recruiterNotes}`);
+      }
+
+      // Subject lines for rejection
+      subject = `Update regarding your application for ${jobTitle} at ${companyName}`;
+      suggestedSubjects.push(`Update regarding your application for ${jobTitle} at ${companyName}`);
+      suggestedSubjects.push(`${companyName} Application Status: ${jobTitle}`);
+      suggestedSubjects.push(`Thank you for your interest in ${companyName} (${jobTitle})`);
+
+      // Talent pool & feedback block
+      let talentCommunityBlock = "";
+      if (includeTalentPoolNote) {
+        talentCommunityBlock = `\n\nWith your permission, we would love to keep your resume and profile in our active talent pool. If an engineering opening opens up in the future that aligns with your strengths, we will reach out to you directly before posting publicly.`;
+      }
+
+      let constructiveAdvice = "";
+      if (tone === 'constructive') {
+        constructiveAdvice = `\n\n### Career Insights & Recommendations:\nIf you are aiming to target similar roles in the future, our engineering team suggests highlighting hands-on production metrics with ${missingSkillsList || 'distributed microservices, automated testing, and CI/CD pipelines'}, as well as showcasing end-to-end open source or system architecture case studies on your resume or GitHub.`;
+      }
+
+      let greeting = `Dear ${firstName},`;
+      let signoff = `Sincerely,\n\nThe Talent Acquisition Team\n${companyName}`;
+
+      if (tone === 'warm') {
+        greeting = `Hi ${firstName},`;
+        signoff = `Warm regards and best wishes in your career journey,\n\nRecruiting Team\n${companyName}`;
+      } else if (tone === 'concise') {
+        greeting = `Hello ${firstName},`;
+        signoff = `Best regards,\n${companyName} Recruiting`;
+      } else if (tone === 'constructive') {
+        greeting = `Dear ${firstName},`;
+        signoff = `With great respect and encouragement,\n\nEngineering Talent Team\n${companyName}`;
+      }
+
+      const body = `${greeting}\n\nThank you very much for taking the time to apply for the **${jobTitle}** position at **${companyName}** and for sharing your background with us.\n\n${coreReasonParagraph}${constructiveAdvice}${talentCommunityBlock}\n\nWe genuinely appreciate the time, care, and effort you dedicated to our recruitment process, and we wish you continued success in your job search and professional endeavors.\n\n${signoff}`;
+
+      callScript = `Hi ${firstName}, this is the recruiting team from ${companyName}. I wanted to reach out personally regarding your application for the ${jobTitle} position. While we were impressed with your background in ${topStrengths}, we've decided to proceed with another profile that more closely fits our immediate production requirements. We sincerely value the time you spent with us and hope to stay in touch for future opportunities.`;
+
+      return {
+        subject,
+        body,
+        call_script: callScript,
+        reasons_cited: reasonsCited,
+        suggested_subjects: suggestedSubjects
+      };
+    }
   }
 }
 

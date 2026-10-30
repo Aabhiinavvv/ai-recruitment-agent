@@ -137,6 +137,7 @@ export function App() {
               setOutreachQueue={setOutreachQueue}
               events={events}
               setEvents={setEvents}
+              cutoffScore={cutoffScore}
             />
           )}
 

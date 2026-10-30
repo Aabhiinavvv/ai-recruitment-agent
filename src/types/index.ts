@@ -1,5 +1,7 @@
 export type RoundType = 'coding' | 'technical' | 'hr';
 
+export type HiringStage = 'Screening' | 'Technical' | 'Interview' | 'Offered' | 'Rejected';
+
 export type CandidateDecisionStatus = 
   | 'Pending recruiter review'
   | 'Advanced by recruiter'
@@ -94,12 +96,15 @@ export interface Candidate {
   resume_text: string;
   resume_profile: string;
   overall_score: number;
+  stage?: HiringStage;
   recruiter_decision?: 'advance' | 'reject' | 'hold';
   decision_status: CandidateDecisionStatus;
   recommendation?: 'Advance' | 'Hold' | 'Reject';
   safety_warnings: string[];
   review_flags: ReviewFlag[];
   review_note?: string;
+  private_notes?: string;
+  notes_updated_at?: string;
   dimension_scores: DimensionScores;
   dimension_evidence: Record<string, string>;
   skill_scores: Record<string, number>;
@@ -155,7 +160,7 @@ export interface HiringBrief {
 
 export interface OutreachDraft {
   id: string;
-  type: 'round' | 'rejection';
+  type: 'round' | 'rejection' | 'progress' | 'outreach';
   candidate_id: string;
   candidate_name: string;
   candidate_email: string;
@@ -167,6 +172,32 @@ export interface OutreachDraft {
   call_script: string;
   availability: string;
   status: 'Draft — not sent or scheduled' | 'Recruiter approved — integration required; not sent or called';
+}
+
+export type EmailDraftType = 'progress' | 'rejection';
+export type EmailDraftTone = 'warm' | 'professional' | 'constructive' | 'concise';
+
+export interface FollowUpEmailOptions {
+  candidate: Candidate;
+  jobTitle: string;
+  companyName: string;
+  emailType: EmailDraftType;
+  reasonCategory: string;
+  specificFeedback?: string;
+  tone?: EmailDraftTone;
+  nextRoundName?: string;
+  schedulingLink?: string;
+  includeNextSteps?: boolean;
+  includeTalentPoolNote?: boolean;
+  recruiterNotes?: string;
+}
+
+export interface FollowUpEmailResult {
+  subject: string;
+  body: string;
+  call_script: string;
+  reasons_cited: string[];
+  suggested_subjects: string[];
 }
 
 export interface AuditEvent {
