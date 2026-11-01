@@ -90,7 +90,6 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
     return { jd, rubric };
   }
 
-  // 2. Screen Resume
   public screenResume(
     candidateName: string,
     candidateEmail: string,
@@ -98,7 +97,8 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
     roleTitle: string,
     requiredSkills: string[],
     digitalProfileSources: any[] = [],
-    memoryConsent: boolean = false
+    memoryConsent: boolean = false,
+    candidatePhone?: string
   ): Candidate {
     const candidateId = `CAN-${Math.floor(1000 + Math.random() * 9000)}`;
     const { maskedText, redactedCount, labelsFound } = maskSensitiveAttributes(resumeText);
@@ -156,6 +156,7 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
       candidate_id: candidateId,
       name: candidateName || "Candidate " + candidateId,
       email: candidateEmail || `${candidateId.toLowerCase()}@applicant.example.com`,
+      phone: candidatePhone || "+1-555-019-" + Math.floor(1000 + Math.random() * 9000),
       role: roleTitle,
       resume_text: resumeText,
       resume_profile: maskedText.slice(0, 300) + (maskedText.length > 300 ? "..." : ""),

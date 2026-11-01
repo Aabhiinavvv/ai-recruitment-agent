@@ -17,7 +17,14 @@ import { CandidateComparisonModal } from './CandidateComparisonModal';
 import { CandidatePrivateNotes } from './CandidatePrivateNotes';
 import { EmailDraftModal } from './EmailDraftModal';
 import { BulkActionToolbar } from './BulkActionToolbar';
+import { CandidateKanbanBoard } from './CandidateKanbanBoard';
+import { LinkedInImportModal } from './LinkedInImportModal';
 import { WorkforceGraph } from './WorkforceGraph';
+import { CandidatePersonaCard } from './CandidatePersonaCard';
+import { CandidatePersonaModal } from './CandidatePersonaModal';
+import { generateCandidatePersona } from '../services/personaGenerator';
+import { SAMPLE_RESUME_PRESETS, SampleResumePreset } from '../data/sampleResumes';
+import { parseResumeText, ParsedResumeData } from '../services/resumeParser';
 import { 
   Briefcase, 
   FileCheck, 
@@ -54,7 +61,15 @@ import {
   Scale,
   CheckSquare,
   Square,
-  MinusSquare
+  MinusSquare,
+  Kanban,
+  ListFilter,
+  LayoutGrid,
+  Zap,
+  Check,
+  GraduationCap,
+  Link2,
+  Phone
 } from 'lucide-react';
 
 interface HiringWorkflowTabProps {
@@ -112,6 +127,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   // Step 3: Screen resume state
   const [candidateNameInput, setCandidateNameInput] = useState<string>("");
   const [candidateEmailInput, setCandidateEmailInput] = useState<string>("");
+  const [candidatePhoneInput, setCandidatePhoneInput] = useState<string>("");
   const [resumeTextInput, setResumeTextInput] = useState<string>("");
   const [githubUrl, setGithubUrl] = useState<string>("");
   const [linkedinUrl, setLinkedinUrl] = useState<string>("");
@@ -120,6 +136,9 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   const [processingConsent, setProcessingConsent] = useState<boolean>(true);
   const [memoryConsent, setMemoryConsent] = useState<boolean>(false);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const [autoFillNotification, setAutoFillNotification] = useState<string | null>(null);
+  const [lastParsedData, setLastParsedData] = useState<ParsedResumeData | null>(null);
 
   // Candidate list sorting & filtering state
   const [sortField, setSortField] = useState<'score' | 'technical' | 'experience' | 'name'>('score');
@@ -127,6 +146,9 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedSkillTag, setSelectedSkillTag] = useState<string | null>(null);
+
+  // Pipeline View Mode: List view vs Kanban board view
+  const [pipelineViewMode, setPipelineViewMode] = useState<'list' | 'kanban'>('list');
 
   // Expanded cards
   const [expandedCandidates, setExpandedCandidates] = useState<Record<string, boolean>>({});
@@ -157,6 +179,69 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       `Queued AI-drafted ${draft.type} email for delivery (Reason: ${reasonCategory.replace(/_/g, ' ')})`,
       `${draft.candidate_name} (${draft.candidate_id})`
     );
+  };
+
+  // Candidate Persona Modal & Generation State
+  const [personaModalCandidate, setPersonaModalCandidate] = useState<Candidate | null>(null);
+  const [showPersonaModal, setShowPersonaModal] = useState<boolean>(false);
+  const [generatingPersonaId, setGeneratingPersonaId] = useState<string | null>(null);
+
+  const handleOpenPersona = (cand: Candidate) => {
+    let target = cand;
+    if (!cand.persona) {
+      const persona = generateCandidatePersona(cand, brief);
+      target = { ...cand, persona };
+      setCandidates(prev => prev.map(c => c.candidate_id === cand.candidate_id ? target : c));
+      appendAudit(
+        "AI Agent",
+        `AI generated Candidate Persona summary card for ${cand.name} (${persona.archetype})`,
+        `${cand.name} (${cand.candidate_id})`
+      );
+    }
+    setPersonaModalCandidate(target);
+    setShowPersonaModal(true);
+  };
+
+  const handleRegeneratePersona = (candidateId: string) => {
+    setGeneratingPersonaId(candidateId);
+    const cand = candidates.find(c => c.candidate_id === candidateId);
+    if (!cand) {
+      setGeneratingPersonaId(null);
+      return;
+    }
+    const persona = generateCandidatePersona(cand, brief);
+    const updated = { ...cand, persona };
+    setCandidates(prev => prev.map(c => c.candidate_id === candidateId ? updated : c));
+    if (personaModalCandidate?.candidate_id === candidateId) {
+      setPersonaModalCandidate(updated);
+    }
+    appendAudit(
+      "AI Agent",
+      `AI refreshed Candidate Persona summary card for ${cand.name} (${persona.archetype})`,
+      `${cand.name} (${cand.candidate_id})`
+    );
+    setTimeout(() => {
+      setGeneratingPersonaId(null);
+    }, 350);
+  };
+
+  // LinkedIn Talent Import Modal state
+  const [showLinkedInImportModal, setShowLinkedInImportModal] = useState<boolean>(false);
+
+  const handleImportLinkedInCandidates = (newCandidates: Candidate[], auditDescription: string) => {
+    setCandidates(prev => [...newCandidates, ...prev]);
+    appendAudit(
+      "LinkedIn Talent Agent",
+      auditDescription,
+      `${newCandidates.length} Candidates (${newCandidates.map(c => c.name).join(', ')})`
+    );
+    if (newCandidates.length > 0) {
+      setSelectedCandidateId(newCandidates[0].candidate_id);
+      setExpandedCandidates(prev => ({
+        ...prev,
+        [newCandidates[0].candidate_id]: true
+      }));
+    }
   };
 
   // Bulk Action Selection State & Handlers
@@ -398,6 +483,85 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     appendAudit("Recruiter", "Approved job description for distribution", brief.job_title);
   };
 
+  const handleSelectSamplePreset = (preset: SampleResumePreset) => {
+    setSelectedPresetId(preset.id);
+    setCandidateNameInput(preset.candidateName);
+    setCandidateEmailInput(preset.candidateEmail);
+    setResumeTextInput(preset.resumeText);
+    setGithubUrl(preset.githubUrl);
+    setLinkedinUrl(preset.linkedinUrl);
+    setPortfolioUrl(preset.portfolioUrl);
+    setWorkHighlights(preset.workHighlights);
+
+    const requiredSkills = brief ? brief.requirements.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean) : [];
+    const parsed = parseResumeText(preset.resumeText, requiredSkills);
+    if (parsed.candidatePhone) {
+      setCandidatePhoneInput(parsed.candidatePhone);
+    }
+    setLastParsedData(parsed);
+
+    setAutoFillNotification(`Loaded sample resume for ${preset.name} (${preset.matchTier.split(' ')[0]}) & auto-populated profile details, links, and work highlights.`);
+    appendAudit("Recruiter", `Loaded test candidate sample preset for "${preset.name}" (${preset.title})`, `${brief?.job_title || 'Role'}: ${preset.name}`);
+  };
+
+  const handleAutoExtractFromResume = () => {
+    if (!resumeTextInput.trim()) {
+      setAutoFillNotification("Please enter or paste resume text first to run automated extraction.");
+      return;
+    }
+
+    const requiredSkills = brief ? brief.requirements.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean) : [];
+    const parsed = parseResumeText(resumeTextInput, requiredSkills);
+    setLastParsedData(parsed);
+
+    let filledCount = 0;
+    if (parsed.candidateName) {
+      setCandidateNameInput(parsed.candidateName);
+      filledCount++;
+    }
+    if (parsed.candidateEmail) {
+      setCandidateEmailInput(parsed.candidateEmail);
+      filledCount++;
+    }
+    if (parsed.candidatePhone) {
+      setCandidatePhoneInput(parsed.candidatePhone);
+      filledCount++;
+    }
+    if (parsed.githubUrl) {
+      setGithubUrl(parsed.githubUrl);
+      filledCount++;
+    }
+    if (parsed.linkedinUrl) {
+      setLinkedinUrl(parsed.linkedinUrl);
+      filledCount++;
+    }
+    if (parsed.portfolioUrl) {
+      setPortfolioUrl(parsed.portfolioUrl);
+      filledCount++;
+    }
+    if (parsed.workHighlights) {
+      setWorkHighlights(parsed.workHighlights);
+      filledCount++;
+    }
+
+    setAutoFillNotification(`AI Auto-Fill Extracted: ${filledCount} candidate fields identified · ${parsed.matchedSkills.length} required skills verified (${parsed.matchRatePercent}% match coverage)`);
+    appendAudit("AI Parser", `Auto-extracted candidate profile & skills from resume text (${filledCount} fields)`, parsed.candidateName || "Candidate");
+  };
+
+  const handleClearScreeningForm = () => {
+    setCandidateNameInput("");
+    setCandidateEmailInput("");
+    setCandidatePhoneInput("");
+    setResumeTextInput("");
+    setGithubUrl("");
+    setLinkedinUrl("");
+    setPortfolioUrl("");
+    setWorkHighlights("");
+    setSelectedPresetId(null);
+    setLastParsedData(null);
+    setAutoFillNotification(null);
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -406,9 +570,27 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     reader.onload = (event) => {
       const content = event.target?.result as string;
       setResumeTextInput(content);
-      if (!candidateNameInput) {
+      setSelectedPresetId(null);
+
+      // Automated parsing directly upon upload
+      const requiredSkills = brief ? brief.requirements.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean) : [];
+      const parsed = parseResumeText(content, requiredSkills);
+      setLastParsedData(parsed);
+
+      if (parsed.candidateName) {
+        setCandidateNameInput(parsed.candidateName);
+      } else {
         setCandidateNameInput(file.name.replace(/\.[^/.]+$/, ""));
       }
+      if (parsed.candidateEmail) setCandidateEmailInput(parsed.candidateEmail);
+      if (parsed.candidatePhone) setCandidatePhoneInput(parsed.candidatePhone);
+      if (parsed.githubUrl) setGithubUrl(parsed.githubUrl);
+      if (parsed.linkedinUrl) setLinkedinUrl(parsed.linkedinUrl);
+      if (parsed.portfolioUrl) setPortfolioUrl(parsed.portfolioUrl);
+      if (parsed.workHighlights) setWorkHighlights(parsed.workHighlights);
+
+      setAutoFillNotification(`Uploaded "${file.name}" & auto-extracted profile: ${parsed.candidateName || file.name} (${parsed.matchedSkills.length} matching skills detected)`);
+      appendAudit("AI Screener", `Uploaded and auto-parsed resume file "${file.name}"`, parsed.candidateName || file.name);
     };
     reader.readAsText(file);
   };
@@ -436,6 +618,14 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         content: "Candidate-provided link only."
       });
     }
+    if (portfolioUrl.trim()) {
+      digitalSources.push({
+        source_type: "Portfolio",
+        source_ref: "portfolio",
+        source_location: portfolioUrl.trim(),
+        content: "Candidate-provided portfolio site."
+      });
+    }
     if (workHighlights.trim()) {
       digitalSources.push({
         source_type: "Candidate-submitted work highlights",
@@ -452,7 +642,8 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       brief.job_title,
       requiredSkills,
       digitalSources,
-      memoryConsent
+      memoryConsent,
+      candidatePhoneInput
     );
 
     setCandidates(prev => [screenedCandidate, ...prev]);
@@ -462,17 +653,11 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     appendAudit(
       "AI Screener",
       `Screened resume with 6-dimension evaluation (Score: ${screenedCandidate.overall_score}%)`,
-      `${brief.job_title}: ${screenedCandidate.candidate_id}`
+      `${brief.job_title}: ${screenedCandidate.candidate_id} (${screenedCandidate.name})`
     );
 
     // Reset screening form inputs
-    setCandidateNameInput("");
-    setCandidateEmailInput("");
-    setResumeTextInput("");
-    setGithubUrl("");
-    setLinkedinUrl("");
-    setPortfolioUrl("");
-    setWorkHighlights("");
+    handleClearScreeningForm();
   };
 
   const toggleExpand = (candidateId: string) => {
@@ -606,10 +791,14 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       };
     }));
 
+    const observationSnippet = notes.trim()
+      ? `"${notes.trim().slice(0, 50)}${notes.trim().length > 50 ? '...' : ''}"`
+      : 'Cleared observation';
+
     appendAudit(
       "Recruiter",
-      "Saved confidential recruiter notes",
-      `${candidate.name} (${candidateId})`
+      `Saved private observation in candidate notes (${observationSnippet})`,
+      `${brief?.job_title || 'Role'}: ${candidate.name} (${candidateId})`
     );
   };
 
@@ -1045,131 +1234,428 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       )}
 
       {/* 3. Screen Candidate Resumes */}
-      {brief && (
-        <section className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-4">
-          <div className="flex items-center gap-2.5 pb-2 border-b border-slate-100">
-            <div className="p-2 bg-blue-50 text-blue-700 rounded-xl">
-              <Upload className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-slate-900">3. Screen Candidate Resumes</h2>
-              <p className="text-xs text-slate-500">
-                Parsing → Information extraction → PII redaction → 6-Dimension semantic matching
-              </p>
-            </div>
-          </div>
+      {brief && (() => {
+        const activePreset = SAMPLE_RESUME_PRESETS.find(p => p.id === selectedPresetId);
+        const requiredSkillsList = brief.requirements.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
+        const displayParsed = lastParsedData || (resumeTextInput.trim().length > 30 ? parseResumeText(resumeTextInput, requiredSkillsList) : null);
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Candidate Name (Optional)</label>
-              <input
-                type="text"
-                value={candidateNameInput}
-                onChange={(e) => setCandidateNameInput(e.target.value)}
-                placeholder="e.g. Elena Rostova"
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+        return (
+          <section className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-5">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-blue-50 text-blue-700 rounded-xl">
+                  <Upload className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-bold text-slate-900">3. Screen Candidate Resumes</h2>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-[#5b43d6] flex items-center gap-1">
+                      <Sparkles className="w-3 h-3" />
+                      1-Click Test Presets & AI Auto-Fill
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Quick-load candidate profiles or paste any resume → Auto-extract details & links → 6-Dimension semantic evaluation
+                  </p>
+                </div>
+              </div>
+
+              {/* Reset / Clear Form */}
+              {(resumeTextInput || candidateNameInput || candidateEmailInput) && (
+                <button
+                  type="button"
+                  onClick={handleClearScreeningForm}
+                  className="px-2.5 py-1 text-slate-500 hover:text-slate-800 text-xs font-semibold rounded-lg hover:bg-slate-100 flex items-center gap-1.5 transition-colors self-start sm:self-auto border border-slate-200"
+                  title="Clear all inputs and reset form"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Clear Form</span>
+                </button>
+              )}
+            </div>
+
+            {/* Quick-Load Sample Resumes Bar */}
+            <div className="p-4 bg-gradient-to-r from-purple-50/70 via-slate-50 to-blue-50/70 rounded-xl border border-purple-200/80 space-y-3 shadow-2xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-[#6743ee] text-white rounded-lg shadow-2xs">
+                    <Zap className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-900">Quick-Load Sample Resumes</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-200/70 text-purple-900 font-semibold">
+                        Instant 1-Click Test Profiles
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-slate-500 block">
+                      Choose any candidate persona to instantly populate resume text, contact info, GitHub/LinkedIn links, and project metrics.
+                    </span>
+                  </div>
+                </div>
+
+                {selectedPresetId && (
+                  <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1 self-start sm:self-auto shrink-0">
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    Preset Loaded
+                  </span>
+                )}
+              </div>
+
+              {/* Sample Resume Preset Buttons Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5 pt-1">
+                {SAMPLE_RESUME_PRESETS.map((preset) => {
+                  const isSelected = selectedPresetId === preset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => handleSelectSamplePreset(preset)}
+                      className={`p-3 rounded-xl border text-left transition-all relative flex flex-col justify-between group ${
+                        isSelected
+                          ? 'bg-white border-[#6743ee] ring-2 ring-[#6743ee]/30 shadow-xs'
+                          : 'bg-white/85 border-slate-200 hover:border-purple-300 hover:bg-white shadow-2xs'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className={`text-xs font-bold truncate ${isSelected ? 'text-[#6743ee]' : 'text-slate-900 group-hover:text-[#6743ee]'}`}>
+                            {preset.name}
+                          </span>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-[#6743ee] shrink-0" />}
+                        </div>
+                        <span className="text-[10px] text-slate-500 line-clamp-1 block mb-2">
+                          {preset.title}
+                        </span>
+                      </div>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-bold self-start border ${preset.tierColor}`}>
+                        {preset.matchTier.split(' ')[0]}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Selected Preset Details Box */}
+              {activePreset && (
+                <div className="p-3 bg-white/95 rounded-lg border border-purple-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-slate-700">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-900">{activePreset.name}</span>
+                      <span className="text-slate-400">•</span>
+                      <span className="text-slate-600 font-medium">{activePreset.title}</span>
+                      <span className="text-slate-400">•</span>
+                      <span className="text-purple-700 font-semibold text-[11px]">Target: {activePreset.targetRole}</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">{activePreset.summary}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border shadow-2xs ${activePreset.tierColor}`}>
+                      {activePreset.matchTier}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Auto-Fill Status Alert Banner */}
+            {autoFillNotification && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-center justify-between gap-3 shadow-2xs animate-fadeIn">
+                <div className="flex items-center gap-2.5">
+                  <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="font-medium">{autoFillNotification}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAutoFillNotification(null)}
+                  className="text-emerald-700 hover:text-emerald-900 text-[11px] font-bold hover:underline shrink-0"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {/* Candidate Identity & Contact Fields */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>Candidate Name</span>
+                  {candidateNameInput && <span className="text-[10px] text-emerald-600 font-medium">Captured</span>}
+                </label>
+                <input
+                  type="text"
+                  value={candidateNameInput}
+                  onChange={(e) => setCandidateNameInput(e.target.value)}
+                  placeholder="e.g. Marcus Vance"
+                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>Candidate Email</span>
+                  {candidateEmailInput && <span className="text-[10px] text-emerald-600 font-medium">Captured</span>}
+                </label>
+                <input
+                  type="email"
+                  value={candidateEmailInput}
+                  onChange={(e) => setCandidateEmailInput(e.target.value)}
+                  placeholder="e.g. marcus.vance@aiml-innovations.io"
+                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>Candidate Phone (Optional)</span>
+                  {candidatePhoneInput && <span className="text-[10px] text-emerald-600 font-medium">Captured</span>}
+                </label>
+                <input
+                  type="text"
+                  value={candidatePhoneInput}
+                  onChange={(e) => setCandidatePhoneInput(e.target.value)}
+                  placeholder="e.g. +1 (415) 555-0182"
+                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+                />
+              </div>
+            </div>
+
+            {/* Resume Content Textarea & Auto-Extract Toolbar */}
+            <div className="space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-[#6743ee]" />
+                  <span>Resume Content (Paste text or upload file below)</span>
+                </label>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Automated Parsing Button */}
+                  <button
+                    type="button"
+                    onClick={handleAutoExtractFromResume}
+                    disabled={!resumeTextInput.trim()}
+                    className="px-3 py-1.5 bg-gradient-to-r from-[#6743ee] to-indigo-600 hover:from-[#5837d7] hover:to-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Automatically extract candidate name, email, phone, web links, and matching skills from the resume text"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Auto-Extract & Fill Fields</span>
+                  </button>
+
+                  {/* Upload File */}
+                  <label className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-colors shadow-2xs">
+                    <Upload className="w-3.5 h-3.5 text-[#6743ee]" />
+                    <span>Upload File (.txt, .pdf)</span>
+                    <input type="file" accept=".txt,.pdf" onChange={handleFileUpload} className="hidden" />
+                  </label>
+                </div>
+              </div>
+
+              <textarea
+                value={resumeTextInput}
+                onChange={(e) => {
+                  setResumeTextInput(e.target.value);
+                  setSelectedPresetId(null);
+                }}
+                rows={6}
+                placeholder="Paste candidate resume text or click a quick-load test profile above..."
+                className="w-full text-xs font-mono p-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
               />
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Candidate Email (for Persistent Memory)</label>
-              <input
-                type="email"
-                value={candidateEmailInput}
-                onChange={(e) => setCandidateEmailInput(e.target.value)}
-                placeholder="e.g. elena.rostova@example.com"
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-              />
-            </div>
-          </div>
 
-          {/* Upload or paste */}
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-xs font-semibold text-slate-700">Resume Content (PDF / TXT upload or paste)</label>
-              <label className="text-xs font-medium text-[#6743ee] cursor-pointer hover:underline flex items-center gap-1">
-                <Upload className="w-3.5 h-3.5" />
-                Upload file
-                <input type="file" accept=".txt,.pdf" onChange={handleFileUpload} className="hidden" />
+            {/* Live Skill Match & Extracted Intelligence Card */}
+            {displayParsed && (
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200/80">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-[#6743ee]" />
+                    <span className="text-xs font-bold text-slate-900">Extracted Intelligence & Live Skill Coverage</span>
+                  </div>
+
+                  {/* Live Match Rate Gauge */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-500 font-medium">Job Requirements Match:</span>
+                    <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold border ${
+                      displayParsed.matchRatePercent >= 75
+                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                        : displayParsed.matchRatePercent >= 50
+                        ? 'bg-amber-100 text-amber-800 border-amber-300'
+                        : 'bg-slate-200 text-slate-700 border-slate-300'
+                    }`}>
+                      {displayParsed.matchRatePercent}% ({displayParsed.matchedSkills.length}/{requiredSkillsList.length} skills)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Detected Attribute Pills */}
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  {displayParsed.detectedTitle && (
+                    <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 shadow-2xs">
+                      <Briefcase className="w-3.5 h-3.5 text-[#6743ee]" />
+                      <span className="font-semibold">{displayParsed.detectedTitle}</span>
+                    </div>
+                  )}
+
+                  {displayParsed.detectedDegree && (
+                    <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 shadow-2xs">
+                      <GraduationCap className="w-3.5 h-3.5 text-blue-600" />
+                      <span>{displayParsed.detectedDegree}</span>
+                    </div>
+                  )}
+
+                  {displayParsed.detectedExperienceYears && (
+                    <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 shadow-2xs">
+                      <Clock className="w-3.5 h-3.5 text-amber-600" />
+                      <span>{displayParsed.detectedExperienceYears}</span>
+                    </div>
+                  )}
+
+                  {displayParsed.candidatePhone && (
+                    <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 shadow-2xs">
+                      <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>{displayParsed.candidatePhone}</span>
+                    </div>
+                  )}
+
+                  {displayParsed.githubUrl && (
+                    <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 shadow-2xs">
+                      <Link2 className="w-3.5 h-3.5 text-slate-600" />
+                      <span>GitHub Link Found</span>
+                    </div>
+                  )}
+
+                  {displayParsed.linkedinUrl && (
+                    <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 shadow-2xs">
+                      <Link2 className="w-3.5 h-3.5 text-blue-600" />
+                      <span>LinkedIn Link Found</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Skills Breakdown */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                    Skills Verification Breakdown:
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {displayParsed.matchedSkills.map((skill) => (
+                      <span
+                        key={skill}
+                        className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1"
+                      >
+                        <Check className="w-3 h-3 text-emerald-600" />
+                        {skill}
+                      </span>
+                    ))}
+
+                    {displayParsed.missingSkills.map((skill) => (
+                      <span
+                        key={skill}
+                        className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200/80 flex items-center gap-1"
+                        title="Skill not explicitly mentioned in resume"
+                      >
+                        <AlertCircle className="w-3 h-3 text-amber-500" />
+                        {skill} (missing)
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Digital Profile Sources Accordion */}
+            <details 
+              open={Boolean(githubUrl || linkedinUrl || portfolioUrl || workHighlights)}
+              className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-3"
+            >
+              <summary className="font-semibold text-slate-700 cursor-pointer flex items-center justify-between">
+                <span>Candidate Digital Profile Sources & Work Highlights</span>
+                <span className="text-[10px] text-slate-400 font-normal">
+                  {(githubUrl || linkedinUrl || portfolioUrl) ? 'Links detected & auto-populated' : 'Optional'}
+                </span>
+              </summary>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">GitHub URL</label>
+                  <input
+                    type="url"
+                    value={githubUrl}
+                    onChange={(e) => setGithubUrl(e.target.value)}
+                    placeholder="https://github.com/username"
+                    className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">LinkedIn URL</label>
+                  <input
+                    type="url"
+                    value={linkedinUrl}
+                    onChange={(e) => setLinkedinUrl(e.target.value)}
+                    placeholder="https://linkedin.com/in/username"
+                    className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Portfolio URL</label>
+                  <input
+                    type="url"
+                    value={portfolioUrl}
+                    onChange={(e) => setPortfolioUrl(e.target.value)}
+                    placeholder="https://candidate.dev"
+                    className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                  Candidate Project, Metric or Research Highlights
+                </label>
+                <textarea
+                  value={workHighlights}
+                  onChange={(e) => setWorkHighlights(e.target.value)}
+                  placeholder="Candidate-submitted project, hackathon, or research highlights..."
+                  rows={2}
+                  className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+                />
+              </div>
+            </details>
+
+            {/* Compliance & Consent Checkboxes */}
+            <div className="space-y-2 text-xs text-slate-600 pt-1">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={processingConsent}
+                  onChange={(e) => setProcessingConsent(e.target.checked)}
+                  className="mt-0.5 accent-[#6743ee]"
+                />
+                <span>I confirm these resumes were submitted for hiring and may be processed for this role.</span>
+              </label>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={memoryConsent}
+                  onChange={(e) => setMemoryConsent(e.target.checked)}
+                  className="mt-0.5 accent-[#6743ee]"
+                />
+                <span>I confirm the candidate gave informed consent to retain full hiring history in organizational memory.</span>
               </label>
             </div>
-            <textarea
-              value={resumeTextInput}
-              onChange={(e) => setResumeTextInput(e.target.value)}
-              rows={5}
-              placeholder="Paste candidate resume text or upload above..."
-              className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-            />
-          </div>
 
-          {/* Digital Profile Sources Accordion */}
-          <details className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-2">
-            <summary className="font-semibold text-slate-700 cursor-pointer">
-              Candidate-submitted digital profile sources (Optional)
-            </summary>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
-              <input
-                type="url"
-                value={githubUrl}
-                onChange={(e) => setGithubUrl(e.target.value)}
-                placeholder="GitHub Profile URL"
-                className="text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800"
-              />
-              <input
-                type="url"
-                value={linkedinUrl}
-                onChange={(e) => setLinkedinUrl(e.target.value)}
-                placeholder="LinkedIn Profile URL"
-                className="text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800"
-              />
-              <input
-                type="url"
-                value={portfolioUrl}
-                onChange={(e) => setPortfolioUrl(e.target.value)}
-                placeholder="Portfolio URL"
-                className="text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800"
-              />
-            </div>
-            <textarea
-              value={workHighlights}
-              onChange={(e) => setWorkHighlights(e.target.value)}
-              placeholder="Candidate-submitted project, hackathon, or research highlights..."
-              rows={2}
-              className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800 mt-2"
-            />
-          </details>
-
-          {/* Consent Checkboxes */}
-          <div className="space-y-2 text-xs text-slate-600 pt-1">
-            <label className="flex items-start gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={processingConsent}
-                onChange={(e) => setProcessingConsent(e.target.checked)}
-                className="mt-0.5 accent-[#6743ee]"
-              />
-              <span>I confirm these resumes were submitted for hiring and may be processed for this role.</span>
-            </label>
-            <label className="flex items-start gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={memoryConsent}
-                onChange={(e) => setMemoryConsent(e.target.checked)}
-                className="mt-0.5 accent-[#6743ee]"
-              />
-              <span>I confirm the candidate gave informed consent to retain full hiring history in organizational memory.</span>
-            </label>
-          </div>
-
-          <button
-            onClick={handleScreenResume}
-            disabled={!resumeTextInput.trim() || !processingConsent || !brief.status.includes('Approved')}
-            className="px-5 py-2.5 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Sparkles className="w-4 h-4" />
-            Screen Candidate Resume
-          </button>
-        </section>
-      )}
+            {/* Submit Screening Button */}
+            <button
+              onClick={handleScreenResume}
+              disabled={!resumeTextInput.trim() || !processingConsent || !brief.status.includes('Approved')}
+              className="px-5 py-2.5 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>Screen Candidate Resume</span>
+              {candidateNameInput && <span className="opacity-90 font-normal">({candidateNameInput})</span>}
+            </button>
+          </section>
+        );
+      })()}
 
       {/* 4. Candidate Insights Radar & Overview */}
       {candidates.length > 0 && (
@@ -1195,28 +1681,96 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                 </p>
               </div>
 
-              {/* Status Badge */}
-              <div className="flex items-center gap-2">
-                <span className="px-2.5 py-1 bg-purple-50 text-[#5b43d6] border border-purple-200 rounded-lg text-xs font-semibold flex items-center gap-1.5">
+              {/* Status Badge & View Mode Switcher */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* View Switcher: List vs Kanban Board */}
+                <div className="inline-flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setPipelineViewMode('list')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                      pipelineViewMode === 'list'
+                        ? 'bg-white text-slate-900 shadow-xs border border-slate-200/80'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                    title="List view with rank sorting, sticky bulk action toolbar, and detailed candidate cards"
+                  >
+                    <ListFilter className="w-3.5 h-3.5 text-[#6743ee]" />
+                    <span>List View</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPipelineViewMode('kanban')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                      pipelineViewMode === 'kanban'
+                        ? 'bg-[#6743ee] text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                    title="Kanban Board view: Drag & drop candidates across recruitment stages"
+                  >
+                    <Kanban className="w-3.5 h-3.5" />
+                    <span>Kanban Board</span>
+                  </button>
+                </div>
+
+                {/* Import from LinkedIn Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowLinkedInImportModal(true)}
+                  className="px-3 py-1.5 bg-[#0a66c2] hover:bg-[#004182] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs hover:shadow-xs transition-all active:scale-95"
+                  title="Generate and import realistic candidate profiles from LinkedIn with AI agent"
+                >
+                  <span className="w-4 h-4 rounded bg-white text-[#0a66c2] font-black text-[11px] flex items-center justify-center leading-none">
+                    in
+                  </span>
+                  <span>Import from LinkedIn</span>
+                </button>
+
+                <span className="px-2.5 py-1.5 bg-purple-50 text-[#5b43d6] border border-purple-200 rounded-lg text-xs font-semibold flex items-center gap-1.5">
                   <Award className="w-3.5 h-3.5 text-[#6743ee]" />
                   <span>
-                    {sortField === 'score'
-                      ? `Ranked by AI Score (${sortDirection === 'desc' ? 'Highest first' : 'Lowest first'})`
-                      : `Sorted by ${sortField}`}
+                    {pipelineViewMode === 'kanban'
+                      ? '5 Pipeline Stages'
+                      : sortField === 'score'
+                        ? `Ranked by AI Score (${sortDirection === 'desc' ? 'Highest first' : 'Lowest first'})`
+                        : `Sorted by ${sortField}`}
                   </span>
                 </span>
               </div>
             </div>
 
-            {/* Candidate Sorting Component */}
-            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                {/* Left title & quick rank */}
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2 bg-white rounded-xl border border-slate-200 text-[#6743ee] shadow-2xs">
-                    <SlidersHorizontal className="w-4 h-4" />
-                  </div>
-                  <div>
+            {pipelineViewMode === 'kanban' ? (
+              <CandidateKanbanBoard
+                candidates={candidates}
+                brief={brief}
+                cutoffScore={cutoffScore}
+                onStageChange={handleStageChange}
+                onOpenEmailModal={handleOpenEmailDraftModal}
+                onInspectCandidate={(id) => {
+                  setSelectedCandidateId(id);
+                  setExpandedCandidates((prev) => ({ ...prev, [id]: true }));
+                  setPipelineViewMode('list');
+                  setTimeout(() => {
+                    const el = document.getElementById(`candidate-card-${id}`);
+                    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }, 150);
+                }}
+                onSaveNotes={handleSaveCandidateNotes}
+                auditEvents={events}
+                onOpenLinkedInImport={() => setShowLinkedInImportModal(true)}
+                onOpenPersona={handleOpenPersona}
+              />
+            ) : (
+              <>
+                {/* Candidate Sorting Component */}
+                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    {/* Left title & quick rank */}
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-white rounded-xl border border-slate-200 text-[#6743ee] shadow-2xs">
+                        <SlidersHorizontal className="w-4 h-4" />
+                      </div>
+                      <div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-slate-900">Rank & Sort Candidates</span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-semibold">
@@ -1308,6 +1862,19 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                       <span>Compare Radars</span>
                     </button>
                   )}
+
+                  {/* Import from LinkedIn Button */}
+                  <button
+                    type="button"
+                    onClick={() => setShowLinkedInImportModal(true)}
+                    className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#0a66c2] border border-blue-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs hover:shadow-xs active:scale-95"
+                    title="Import placeholder candidate profiles from LinkedIn using AI agent"
+                  >
+                    <span className="w-3.5 h-3.5 rounded bg-[#0a66c2] text-white font-black text-[9px] flex items-center justify-center leading-none">
+                      in
+                    </span>
+                    <span>Import from LinkedIn</span>
+                  </button>
 
                   {(sortField !== 'score' || sortDirection !== 'desc' || statusFilter !== 'all' || searchQuery.trim() !== '') && (
                     <button
@@ -1725,63 +2292,24 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
               </div>
             )}
 
-            {/* Candidate List Selection & Bulk Control Strip */}
+            {/* Sticky Header Toolbar for Candidate Bulk Actions */}
             {sortedCandidates.length > 0 && (
-              <div className="flex flex-wrap items-center justify-between gap-2.5 px-3 py-2 bg-slate-100/90 border border-slate-200/90 rounded-xl text-xs">
-                <div className="flex items-center gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const isAllSelected = sortedCandidates.length > 0 && sortedCandidates.every(c => selectedCandidateIds.includes(c.candidate_id));
-                      if (isAllSelected) {
-                        handleDeselectAll();
-                      } else {
-                        handleSelectAllFiltered();
-                      }
-                    }}
-                    className="flex items-center gap-2 font-semibold text-slate-700 hover:text-slate-900 cursor-pointer"
-                  >
-                    {sortedCandidates.length > 0 && sortedCandidates.every(c => selectedCandidateIds.includes(c.candidate_id)) ? (
-                      <CheckSquare className="w-4 h-4 text-[#6743ee]" />
-                    ) : sortedCandidates.some(c => selectedCandidateIds.includes(c.candidate_id)) ? (
-                      <MinusSquare className="w-4 h-4 text-[#6743ee]" />
-                    ) : (
-                      <Square className="w-4 h-4 text-slate-400" />
-                    )}
-                    <span>
-                      {selectedCandidateIds.length > 0 
-                        ? `${selectedCandidateIds.length} of ${sortedCandidates.length} Selected` 
-                        : `Select All Filtered (${sortedCandidates.length})`}
-                    </span>
-                  </button>
-
-                  {selectedCandidateIds.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleDeselectAll}
-                      className="text-[11px] text-slate-500 hover:text-rose-600 underline font-medium"
-                    >
-                      Clear Selection
-                    </button>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleSelectAboveCutoff}
-                    className="px-2 py-1 rounded bg-white hover:bg-purple-50 text-slate-700 hover:text-[#5b43d6] border border-slate-200 text-[11px] font-medium flex items-center gap-1 shadow-2xs transition-colors"
-                    title={`Select candidates with AI evaluation score >= ${cutoffScore}%`}
-                  >
-                    <Award className="w-3 h-3 text-[#6743ee]" />
-                    <span>Select Above Cutoff (≥{cutoffScore}%)</span>
-                  </button>
-
-                  <span className="hidden sm:inline text-[11px] text-slate-400">
-                    Check cards to enable bulk action toolbar
-                  </span>
-                </div>
-              </div>
+              <BulkActionToolbar
+                selectedCandidateIds={selectedCandidateIds}
+                allFilteredCandidates={sortedCandidates}
+                allCandidates={candidates}
+                brief={brief}
+                cutoffScore={cutoffScore}
+                onSelectAll={handleSelectAllFiltered}
+                onDeselectAll={handleDeselectAll}
+                onSelectAboveCutoff={handleSelectAboveCutoff}
+                onBulkStageChange={handleBulkStageChange}
+                onBulkAdvance={handleBulkAdvance}
+                onBulkReject={handleBulkReject}
+                onBulkAssignCoding={handleBulkAssignCoding}
+                onBulkQueueEmails={handleBulkQueueEmails}
+                onLaunchCompare={(idA, idB) => handleLaunchCompare(idA, idB)}
+              />
             )}
 
             {/* Candidate List with Rank Indicators */}
@@ -1809,6 +2337,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                   return (
                     <div
                       key={cand.candidate_id}
+                      id={`candidate-card-${cand.candidate_id}`}
                       className={`border rounded-xl overflow-hidden bg-white shadow-xs transition-all ${
                         isSelectedForBulk
                           ? 'border-[#6743ee] ring-2 ring-[#6743ee]/30 bg-purple-50/15'
@@ -1820,22 +2349,25 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                       {/* Header bar */}
                       <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3">
                         <div className="flex items-center gap-3">
-                          {/* Bulk Selection Checkbox */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleToggleSelectCandidate(cand.candidate_id);
-                            }}
-                            className="p-1 rounded-lg hover:bg-slate-200/80 text-slate-400 hover:text-[#6743ee] transition-colors shrink-0"
-                            title={isSelectedForBulk ? "Deselect candidate" : "Select candidate for bulk actions"}
+                          {/* Candidate Bulk Selection Checkbox */}
+                          <label
+                            onClick={(e) => e.stopPropagation()}
+                            className="cursor-pointer p-1 rounded-lg hover:bg-slate-200/80 text-slate-400 hover:text-[#6743ee] transition-colors shrink-0 flex items-center"
+                            title={isSelectedForBulk ? `Deselect ${cand.name}` : `Select ${cand.name} for bulk actions`}
                           >
+                            <input
+                              type="checkbox"
+                              checked={isSelectedForBulk}
+                              onChange={() => handleToggleSelectCandidate(cand.candidate_id)}
+                              className="sr-only"
+                              aria-label={`Select ${cand.name} for bulk actions`}
+                            />
                             {isSelectedForBulk ? (
                               <CheckSquare className="w-5 h-5 text-[#6743ee]" />
                             ) : (
                               <Square className="w-5 h-5 text-slate-300 hover:text-slate-500" />
                             )}
-                          </button>
+                          </label>
 
                           {/* Score Box with Rank Position Badge */}
                           <div className="relative shrink-0">
@@ -1883,15 +2415,57 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                                   Inspect Radar
                                 </button>
                               )}
-                              {cand.private_notes && (
-                                <span 
-                                  className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-50 text-[#6743ee] border border-purple-200 flex items-center gap-1"
-                                  title={`Confidential recruiter note recorded (${cand.notes_updated_at || 'Saved'})`}
+                              {cand.digital_profile_sources?.some(s => s.source_type === 'LinkedIn') && (
+                                <a
+                                  href={cand.digital_profile_sources.find(s => s.source_type === 'LinkedIn')?.source_location || '#'}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-[#0a66c2] border border-blue-200 hover:bg-blue-100 transition-colors flex items-center gap-1 shadow-2xs"
+                                  title="Candidate profile imported via LinkedIn Talent Agent. Click to view profile link."
                                 >
-                                  <FileText className="w-2.5 h-2.5" />
-                                  Notes
-                                </span>
+                                  <span className="w-3 h-3 rounded bg-[#0a66c2] text-white font-black text-[8px] flex items-center justify-center leading-none">
+                                    in
+                                  </span>
+                                  <span>LinkedIn Sourced</span>
+                                </a>
                               )}
+                              {cand.persona && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenPersona(cand);
+                                  }}
+                                  className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-[#5b43d6] border border-purple-200 hover:bg-purple-100 transition-colors flex items-center gap-1 shadow-2xs"
+                                  title={`Archetype: ${cand.persona.archetype}. Click to open full persona summary reel.`}
+                                >
+                                  <Sparkles className="w-2.5 h-2.5 text-amber-500 shrink-0" />
+                                  <span>{cand.persona.archetype}</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!isExpanded) {
+                                    setExpandedCandidates(prev => ({ ...prev, [cand.candidate_id]: true }));
+                                  }
+                                  setTimeout(() => {
+                                    const el = document.getElementById(`candidate-notes-${cand.candidate_id}`);
+                                    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                  }, 100);
+                                }}
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-medium flex items-center gap-1 transition-colors cursor-pointer ${
+                                  cand.private_notes
+                                    ? 'bg-purple-100 text-[#5b43d6] border border-purple-300 font-semibold hover:bg-purple-200'
+                                    : 'bg-slate-100 text-slate-500 border border-slate-200 hover:text-purple-600 hover:bg-purple-50'
+                                }`}
+                                title={cand.private_notes ? `Confidential recruiter note recorded (${cand.notes_updated_at || 'Saved'}). Click to view or edit.` : 'Add private recruiter note'}
+                              >
+                                <FileText className="w-2.5 h-2.5" />
+                                <span>{cand.private_notes ? 'Notes' : '+ Add Note'}</span>
+                              </button>
                             </div>
                             <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
                               <span>{cand.email}</span>
@@ -1972,6 +2546,21 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                                 ? selectedCompareIds[0] === cand.candidate_id ? 'Compare [A]' : 'Compare [B]'
                                 : 'Compare'}
                             </span>
+                          </button>
+
+                          {/* AI Candidate Persona Reel Trigger Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPersona(cand)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-2xs ${
+                              cand.persona
+                                ? 'bg-gradient-to-r from-amber-50 to-purple-50 hover:from-amber-100 hover:to-purple-100 text-[#5b43d6] border border-purple-200 font-bold'
+                                : 'bg-white hover:bg-purple-50 text-slate-700 hover:text-[#6743ee] border border-slate-200 hover:border-purple-200'
+                            }`}
+                            title={cand.persona ? `View ${cand.name}'s AI Persona Reel (${cand.persona.archetype})` : `Generate AI Candidate Persona summary reel for ${cand.name}`}
+                          >
+                            <Sparkles className={`w-3.5 h-3.5 ${cand.persona ? 'text-amber-500 fill-amber-400/20' : 'text-slate-400'}`} />
+                            <span>{cand.persona ? 'Persona Reel' : '⚡ Persona Reel'}</span>
                           </button>
 
                           {/* AI Follow-Up Email Trigger Button */}
@@ -2061,6 +2650,67 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                             evidence={cand.dimension_evidence}
                             cutoffScore={cutoffScore}
                           />
+                        </div>
+
+                        {/* AI Candidate Persona Summary Card & Highlight Reel */}
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Sparkles className="w-4 h-4 text-amber-500" />
+                              <span className="text-xs font-bold text-slate-800">
+                                AI Candidate Persona & Executive Highlight Reel
+                              </span>
+                              {cand.persona && (
+                                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                  Archetype: {cand.persona.archetype}
+                                </span>
+                              )}
+                            </div>
+                            {cand.persona && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPersona(cand)}
+                                className="px-2.5 py-1 bg-white hover:bg-purple-50 text-[#6743ee] font-bold border border-purple-200 hover:border-purple-300 rounded-lg text-xs transition-colors shadow-2xs flex items-center gap-1.5"
+                                title="Open in expanded modal view with candidate switcher"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Full Screen Persona</span>
+                              </button>
+                            )}
+                          </div>
+
+                          {cand.persona ? (
+                            <CandidatePersonaCard
+                              candidate={cand}
+                              persona={cand.persona}
+                              onRegenerate={handleRegeneratePersona}
+                              isRegenerating={generatingPersonaId === cand.candidate_id}
+                              isModal={false}
+                            />
+                          ) : (
+                            <div className="p-5 rounded-2xl bg-gradient-to-r from-purple-50/70 via-indigo-50/40 to-amber-50/50 border border-dashed border-purple-300 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <Sparkles className="w-4 h-4 text-amber-500" />
+                                  <span className="text-xs font-black text-slate-900">
+                                    Generate AI Candidate Persona & Highlight Reel
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-600 max-w-xl">
+                                  Distill {cand.name}'s resume and 6-dimension evaluation into an executive persona archetype, professional highlight reel, verified strengths with business impact, and targeted interview probes for hiring managers.
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPersona(cand)}
+                                className="px-4 py-2.5 bg-gradient-to-r from-[#6743ee] to-indigo-600 hover:from-[#5637d2] hover:to-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs shrink-0 active:scale-95 transition-all"
+                              >
+                                <Sparkles className="w-4 h-4 text-amber-300" />
+                                <span>Distill AI Persona Reel</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
 
                         {/* Pipeline Stage Progression Stepper */}
@@ -2153,6 +2803,13 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                             </ul>
                           </div>
                         </div>
+
+                        {/* Recruiter Private Notes & Observations (Tracked in System Audit Log) */}
+                        <CandidatePrivateNotes
+                          candidate={cand}
+                          onSaveNotes={handleSaveCandidateNotes}
+                          auditHistory={events}
+                        />
 
                         {/* Interview Rounds & Verification Sub-tabs inside candidate card */}
                         <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-4">
@@ -2345,12 +3002,6 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                           </div>
                         </div>
 
-                        {/* Recruiter Private Notes */}
-                        <CandidatePrivateNotes
-                          candidate={cand}
-                          onSaveNotes={handleSaveCandidateNotes}
-                        />
-
                         {/* AI Follow-Up Email Generator Callout & Triggers */}
                         <div className="p-4 bg-gradient-to-r from-purple-50/90 via-indigo-50/70 to-purple-50/90 border border-purple-200/90 rounded-xl space-y-3 shadow-2xs">
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
@@ -2420,27 +3071,11 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                 );
               }))}
             </div>
-
-            {/* Sticky Floating Bulk Action Toolbar */}
-            <BulkActionToolbar
-              selectedCandidateIds={selectedCandidateIds}
-              allFilteredCandidates={sortedCandidates}
-              allCandidates={candidates}
-              brief={brief}
-              cutoffScore={cutoffScore}
-              onSelectAll={handleSelectAllFiltered}
-              onDeselectAll={handleDeselectAll}
-              onSelectAboveCutoff={handleSelectAboveCutoff}
-              onBulkStageChange={handleBulkStageChange}
-              onBulkAdvance={handleBulkAdvance}
-              onBulkReject={handleBulkReject}
-              onBulkAssignCoding={handleBulkAssignCoding}
-              onBulkQueueEmails={handleBulkQueueEmails}
-              onLaunchCompare={(idA, idB) => handleLaunchCompare(idA, idB)}
-            />
-          </div>
-        </section>
-      )}
+          </>
+        )}
+      </div>
+    </section>
+  )}
 
       {/* 5. Outreach & Scheduling Draft Queue */}
       {outreachQueue.length > 0 && (
@@ -2568,6 +3203,29 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
           brief={brief}
           initialType={emailModalInitialType}
           onQueueDraft={handleQueueEmailDraft}
+        />
+      )}
+
+      {/* 10. LinkedIn Talent Sourcing Import Modal */}
+      {showLinkedInImportModal && (
+        <LinkedInImportModal
+          isOpen={showLinkedInImportModal}
+          onClose={() => setShowLinkedInImportModal(false)}
+          brief={brief}
+          onImport={handleImportLinkedInCandidates}
+        />
+      )}
+
+      {/* 11. AI Candidate Persona & Highlight Reel Modal */}
+      {showPersonaModal && personaModalCandidate && (
+        <CandidatePersonaModal
+          isOpen={showPersonaModal}
+          onClose={() => setShowPersonaModal(false)}
+          candidate={personaModalCandidate}
+          candidatesList={sortedCandidates}
+          onSelectCandidate={handleOpenPersona}
+          onRegeneratePersona={handleRegeneratePersona}
+          isRegenerating={generatingPersonaId === personaModalCandidate.candidate_id}
         />
       )}
     </div>

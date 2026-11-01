@@ -132,6 +132,44 @@ export interface Candidate {
       snapshot_json: string;
     }>;
   };
+  persona?: CandidatePersona;
+}
+
+export interface PersonaHighlight {
+  title: string;
+  metric?: string;
+  category: 'Impact' | 'Architecture' | 'Leadership' | 'Execution';
+  description: string;
+}
+
+export interface PersonaStrength {
+  trait: string;
+  evidence: string;
+  businessImpact: string;
+}
+
+export interface PersonaGrowthArea {
+  area: string;
+  context: string;
+  interviewProbe: string;
+}
+
+export interface CandidatePersona {
+  candidateId: string;
+  archetype: string;
+  tagline: string;
+  superpower: string;
+  highlightReel: PersonaHighlight[];
+  strengths: PersonaStrength[];
+  growthAreas: PersonaGrowthArea[];
+  workingStyle: {
+    paceAndExecution: string;
+    collaborationStyle: string;
+    decisionMaking: string;
+  };
+  idealEnvironment: string;
+  fitSignal: 'Immediate High-Impact Lead' | 'High-Ceiling Technical Generalist' | 'Specialized Domain Authority' | 'Rapid-Cycle Execution Specialist';
+  generatedAt: string;
 }
 
 export interface JobRubricCriterion {

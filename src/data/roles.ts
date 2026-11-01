@@ -211,7 +211,76 @@ def top_k_cosine(query: list[float], matrix: list[list[float]], k: int) -> list[
       experience: { label: "Service / Relieving Letter", status: 'submitted' }
     },
     memory_consent: true,
-    memory_email: "alex.rivera@example.com"
+    memory_email: "alex.rivera@example.com",
+    persona: {
+      candidateId: "CAN-9821",
+      archetype: "The Production AI & LLM Systems Architect",
+      tagline: "Bridges cutting-edge transformer models with resilient, low-latency production serving.",
+      superpower: "Distills theoretical ML architectures into hyper-efficient inference pipelines operating at sub-50ms latencies under heavy query load.",
+      highlightReel: [
+        {
+          title: "10M queries/day with <45ms p95 latency",
+          description: "Deployed transformer models at Cortex Labs serving 10M queries daily with strict SLA compliance.",
+          category: "Impact",
+          metric: "10M queries/day"
+        },
+        {
+          title: "35% inference cost reduction with quantization",
+          description: "Optimized deep learning vision models through FP16/INT8 weight quantization and engine pruning.",
+          category: "Architecture",
+          metric: "-35% Cost"
+        },
+        {
+          title: "Open-Source RAG Benchmark Toolkit",
+          description: "Authored open-source benchmark harness adopted by 2,100+ GitHub developers.",
+          category: "Leadership",
+          metric: "2.1k Stars"
+        },
+        {
+          title: "Ray Feature Engineering Pipelines",
+          description: "Built distributed feature store ingestion handling high-dimensional vector embeddings.",
+          category: "Execution",
+          metric: "Distributed"
+        }
+      ],
+      strengths: [
+        {
+          trait: "Production Scale & Latency Mastery",
+          evidence: "Demonstrated experience running LLMs at scale with sub-50ms latency",
+          businessImpact: "Ensures mission-critical API responsiveness without degraded user experience under traffic bursts."
+        },
+        {
+          trait: "MLOps & Cloud Orchestration",
+          evidence: "Comprehensive knowledge of PyTorch, MLOps, and Kubernetes containerization",
+          businessImpact: "Accelerates model deployment cadence while eliminating production drift."
+        },
+        {
+          trait: "Computer Science Foundation",
+          evidence: "Master's degree in Computer Science from Georgia Tech",
+          businessImpact: "Applies sound mathematical foundations to vector similarity and loss curve optimization."
+        }
+      ],
+      growthAreas: [
+        {
+          area: "Reinforcement Learning & Policy Optimization (RLHF / PPO)",
+          context: "Resume demonstrates heavy production inference and supervised fine-tuning; minimal explicit RLHF alignment work cited.",
+          interviewProbe: "Ask Alex: 'Walk us through your familiarity with RLHF and DPO reward modeling. How would you design a feedback loop to align LLM generation against policy guidelines?'"
+        },
+        {
+          area: "Multi-Node Distributed Training Cluster Management",
+          context: "Heavy expertise in serving and quantization; less emphasis on training 70B+ parameter models from raw pretraining checkpoints.",
+          interviewProbe: "Ask Alex: 'How have you handled gradient synchronization bottlenecks and network fabric topologies during large-scale distributed training?'"
+        }
+      ],
+      workingStyle: {
+        paceAndExecution: "Deliberate architectural planning followed by rapid, high-leverage execution sprints.",
+        collaborationStyle: "Proactive communicator; writes crisp RFCs and advocates for blameless postmortems.",
+        decisionMaking: "First-principles data-driven; benchmarks alternatives with empirical latency and cost metrics."
+      },
+      idealEnvironment: "High-autonomy culture with direct ownership of ML infrastructure roadmaps, modern GPU clusters, and minimal bureaucratic gatekeeping.",
+      fitSignal: "Immediate High-Impact Lead",
+      generatedAt: "Verified Baseline"
+    }
   },
   {
     candidate_id: "CAN-4150",

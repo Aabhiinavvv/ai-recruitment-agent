@@ -22,11 +22,10 @@ import {
   Layers, 
   Sparkles, 
   ChevronDown, 
-  ArrowRight, 
   Check,
   Send,
-  Users,
-  Award
+  Award,
+  FileText
 } from 'lucide-react';
 
 interface BulkActionToolbarProps {
@@ -41,9 +40,9 @@ interface BulkActionToolbarProps {
   onBulkStageChange: (newStage: HiringStage, candidateIds: string[]) => void;
   onBulkAdvance: (candidateIds: string[]) => void;
   onBulkReject: (candidateIds: string[]) => void;
-  onBulkAssignCoding: (candidateIds: string[]) => void;
+  onBulkAssignCoding?: (candidateIds: string[]) => void;
   onBulkQueueEmails: (drafts: OutreachDraft[], description: string) => void;
-  onLaunchCompare: (idA: string, idB: string) => void;
+  onLaunchCompare?: (idA: string, idB: string) => void;
 }
 
 export const BulkActionToolbar: React.FC<BulkActionToolbarProps> = ({
@@ -63,6 +62,7 @@ export const BulkActionToolbar: React.FC<BulkActionToolbarProps> = ({
   onLaunchCompare,
 }) => {
   const [showStageDropdown, setShowStageDropdown] = useState<boolean>(false);
+  const [showExportDropdown, setShowExportDropdown] = useState<boolean>(false);
   const [showBatchEmailModal, setShowBatchEmailModal] = useState<boolean>(false);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
@@ -74,41 +74,54 @@ export const BulkActionToolbar: React.FC<BulkActionToolbarProps> = ({
   const [isGeneratingBatch, setIsGeneratingBatch] = useState<boolean>(false);
 
   const selectedCount = selectedCandidateIds.length;
-  if (selectedCount === 0) return null;
-
+  const hasSelection = selectedCount > 0;
   const selectedCandidates = allCandidates.filter(c => selectedCandidateIds.includes(c.candidate_id));
+  
   const isAllFilteredSelected = allFilteredCandidates.length > 0 && 
     allFilteredCandidates.every(c => selectedCandidateIds.includes(c.candidate_id));
+  const isPartiallySelected = !isAllFilteredSelected && 
+    allFilteredCandidates.some(c => selectedCandidateIds.includes(c.candidate_id));
 
   const showToast = (msg: string) => {
     setFeedbackMessage(msg);
-    setTimeout(() => setFeedbackMessage(null), 3000);
+    setTimeout(() => setFeedbackMessage(null), 3200);
   };
 
   const handleStageSelect = (stage: HiringStage) => {
+    if (!hasSelection) return;
     onBulkStageChange(stage, selectedCandidateIds);
     setShowStageDropdown(false);
     showToast(`Updated ${selectedCount} candidates to stage: ${stage}`);
   };
 
   const handleAdvanceClick = () => {
+    if (!hasSelection) return;
     onBulkAdvance(selectedCandidateIds);
     showToast(`Advanced ${selectedCount} candidates`);
   };
 
   const handleRejectClick = () => {
+    if (!hasSelection) return;
     onBulkReject(selectedCandidateIds);
-    showToast(`Rejected ${selectedCount} candidates`);
+    showToast(`Marked ${selectedCount} candidates as Rejected`);
   };
 
-  const handleAssignCodingClick = () => {
-    onBulkAssignCoding(selectedCandidateIds);
-    showToast(`Assigned adaptive coding tasks to ${selectedCount} candidates`);
-  };
-
-  // Export selected candidates to CSV
+  // Export Data: CSV format
   const handleExportCSV = () => {
-    const headers = ["Candidate ID", "Name", "Email", "Role", "Overall Score (%)", "Stage", "Decision Status", "Technical Score (%)", "Experience Score (%)", "Strengths", "Missing Skills"];
+    if (!hasSelection) return;
+    const headers = [
+      "Candidate ID", 
+      "Name", 
+      "Email", 
+      "Role", 
+      "Overall Score (%)", 
+      "Stage", 
+      "Decision Status", 
+      "Technical Score (%)", 
+      "Experience Score (%)", 
+      "Strengths", 
+      "Missing Skills"
+    ];
     const rows = selectedCandidates.map(c => [
       c.candidate_id,
       `"${c.name.replace(/"/g, '""')}"`,
@@ -131,11 +144,51 @@ export const BulkActionToolbar: React.FC<BulkActionToolbarProps> = ({
     a.download = `candidates-export-${Date.now()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+    setShowExportDropdown(false);
     showToast(`Exported ${selectedCount} candidates to CSV`);
+  };
+
+  // Export Data: JSON format
+  const handleExportJSON = () => {
+    if (!hasSelection) return;
+    const exportPayload = {
+      exported_at: new Date().toISOString(),
+      role: brief?.job_title || 'Software Engineer',
+      company: brief?.company_name || 'Organization',
+      count: selectedCandidates.length,
+      candidates: selectedCandidates.map(c => ({
+        candidate_id: c.candidate_id,
+        name: c.name,
+        email: c.email,
+        phone: c.phone,
+        role: c.role,
+        stage: c.stage || 'Screening',
+        overall_score: c.overall_score,
+        decision_status: c.decision_status,
+        recruiter_decision: c.recruiter_decision,
+        dimension_scores: c.dimension_scores,
+        strengths: c.strengths,
+        missing_skills: c.missing_skills,
+        skill_scores: c.skill_scores,
+        private_notes: c.private_notes
+      }))
+    };
+
+    const jsonString = JSON.stringify(exportPayload, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `candidates-export-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setShowExportDropdown(false);
+    showToast(`Exported ${selectedCount} candidates to JSON`);
   };
 
   // Generate & Queue Batch AI Emails for all selected candidates
   const handleExecuteBatchEmail = () => {
+    if (!hasSelection) return;
     setIsGeneratingBatch(true);
 
     setTimeout(() => {
@@ -170,83 +223,111 @@ export const BulkActionToolbar: React.FC<BulkActionToolbarProps> = ({
       onBulkQueueEmails(generatedDrafts, `Batch ${batchEmailType} email (${batchReasonCategory.replace(/_/g, ' ')})`);
       setIsGeneratingBatch(false);
       setShowBatchEmailModal(false);
-      showToast(`Generated & queued ${generatedDrafts.length} personalized emails`);
-    }, 300);
+      showToast(`Generated & queued ${generatedDrafts.length} personalized follow-up emails`);
+    }, 250);
   };
 
   return (
     <>
-      {/* Sticky Floating Bulk Action Bar */}
-      <aside 
-        aria-label="Bulk actions for selected candidates" 
-        className="sticky bottom-4 z-40 my-3 animate-in fade-in slide-in-from-bottom-3 duration-200"
+      {/* Sticky Header Toolbar: Docked at the top of candidate list */}
+      <header 
+        aria-label="Candidate Bulk Action Toolbar"
+        className="sticky top-2 sm:top-3 z-30 my-2.5 transition-all duration-200"
       >
-        <div className="bg-slate-900/95 backdrop-blur-md text-white px-4 py-3 rounded-2xl shadow-xl border border-slate-700/80 flex flex-wrap items-center justify-between gap-3">
-          
-          {/* Left section: Selection counter & Quick Selectors */}
+        <div 
+          className={`px-3.5 py-2.5 rounded-2xl border shadow-md backdrop-blur-md transition-all flex flex-wrap items-center justify-between gap-2.5 ${
+            hasSelection 
+              ? 'bg-slate-900/95 text-white border-slate-700 ring-2 ring-[#6743ee]/30' 
+              : 'bg-white/95 text-slate-700 border-slate-200/90'
+          }`}
+        >
+          {/* Left section: Master Checkbox, Selection Counter & Quick Helpers */}
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="w-7 h-7 rounded-lg bg-[#6743ee] text-white font-black text-xs flex items-center justify-center shadow-xs">
-                {selectedCount}
+            <button
+              type="button"
+              onClick={isAllFilteredSelected ? onDeselectAll : onSelectAll}
+              className={`flex items-center gap-2 font-bold text-xs transition-colors cursor-pointer ${
+                hasSelection ? 'text-white hover:text-purple-200' : 'text-slate-800 hover:text-[#6743ee]'
+              }`}
+              title={isAllFilteredSelected ? "Deselect all candidates" : "Select all filtered candidates"}
+            >
+              {isAllFilteredSelected ? (
+                <CheckSquare className="w-4 h-4 text-[#8a72ff]" />
+              ) : isPartiallySelected ? (
+                <MinusSquare className="w-4 h-4 text-[#8a72ff]" />
+              ) : (
+                <Square className="w-4 h-4 text-slate-400" />
+              )}
+              <span>
+                {hasSelection 
+                  ? `${selectedCount} of ${allFilteredCandidates.length} Selected` 
+                  : `Select All Candidates (${allFilteredCandidates.length})`}
               </span>
-              <div>
-                <span className="text-xs font-bold text-white block">
-                  {selectedCount} {selectedCount === 1 ? 'candidate' : 'candidates'} selected
+            </button>
+
+            {hasSelection ? (
+              <div className="flex items-center gap-2 border-l border-slate-700 pl-3">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#6743ee] text-white shadow-2xs">
+                  {selectedCount} Active
                 </span>
-                <span className="text-[10px] text-slate-400">
-                  of {allFilteredCandidates.length} filtered ({allCandidates.length} total)
+                <button
+                  type="button"
+                  onClick={onDeselectAll}
+                  className="text-[11px] text-slate-400 hover:text-white underline transition-colors"
+                >
+                  Clear Selection
+                </button>
+              </div>
+            ) : (
+              <div className="hidden md:flex items-center gap-2 border-l border-slate-200 pl-3">
+                <button
+                  type="button"
+                  onClick={onSelectAboveCutoff}
+                  className="px-2 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-[#5b43d6] text-[11px] font-semibold transition-colors flex items-center gap-1 border border-purple-200/70"
+                  title={`Select candidates with AI evaluation score >= ${cutoffScore}%`}
+                >
+                  <Award className="w-3 h-3 text-[#6743ee]" />
+                  <span>Select Qualified (≥{cutoffScore}%)</span>
+                </button>
+                <span className="text-[11px] text-slate-400">
+                  Select candidates below to perform bulk actions
                 </span>
               </div>
-            </div>
-
-            <div className="hidden sm:flex items-center gap-1.5 border-l border-slate-700/80 pl-3">
-              <button
-                type="button"
-                onClick={isAllFilteredSelected ? onDeselectAll : onSelectAll}
-                className="text-[11px] font-medium text-slate-300 hover:text-white px-2 py-1 rounded-md hover:bg-white/10 transition-colors"
-              >
-                {isAllFilteredSelected ? 'Deselect Filtered' : 'Select All Filtered'}
-              </button>
-
-              <button
-                type="button"
-                onClick={onSelectAboveCutoff}
-                className="text-[11px] font-medium text-purple-300 hover:text-white px-2 py-1 rounded-md hover:bg-purple-900/40 transition-colors flex items-center gap-1"
-                title={`Select all candidates scoring >= ${cutoffScore}%`}
-              >
-                <Award className="w-3 h-3 text-purple-400" />
-                <span>Top Qualified (≥{cutoffScore}%)</span>
-              </button>
-            </div>
+            )}
           </div>
 
-          {/* Center / Right section: Batch Action Buttons */}
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Right section: Dedicated Bulk Action Buttons */}
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
             
-            {/* 1. Bulk Stage Change Dropdown */}
+            {/* 1. Update Stage Button with Dropdown */}
             <div className="relative">
               <button
                 type="button"
                 onClick={() => setShowStageDropdown(prev => !prev)}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs"
-                title="Change hiring stage for all selected candidates"
+                disabled={!hasSelection}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs ${
+                  hasSelection
+                    ? 'bg-purple-600 hover:bg-purple-500 text-white cursor-pointer ring-1 ring-purple-400/40'
+                    : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60'
+                }`}
+                title={hasSelection ? "Bulk update hiring stage for all selected candidates" : "Select candidates to enable"}
               >
-                <Layers className="w-3.5 h-3.5 text-purple-400" />
-                <span>Change Stage</span>
-                <ChevronDown className="w-3.5 h-3.5 opacity-70" />
+                <Layers className="w-3.5 h-3.5" />
+                <span>Update Stage</span>
+                <ChevronDown className="w-3 h-3 opacity-80" />
               </button>
 
-              {showStageDropdown && (
-                <div className="absolute right-0 bottom-full mb-2 w-44 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-slate-800 text-xs">
+              {showStageDropdown && hasSelection && (
+                <div className="absolute right-0 top-full mt-1.5 w-44 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-slate-800 text-xs animate-in fade-in zoom-in-95">
                   <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100">
-                    Move all to:
+                    Bulk Move {selectedCount} to:
                   </div>
                   {(['Screening', 'Technical', 'Interview', 'Offered', 'Rejected'] as const).map((stg) => (
                     <button
                       key={stg}
                       type="button"
                       onClick={() => handleStageSelect(stg)}
-                      className="w-full text-left px-3 py-1.5 hover:bg-purple-50 hover:text-[#5b43d6] font-medium flex items-center justify-between"
+                      className="w-full text-left px-3 py-1.5 hover:bg-purple-50 hover:text-[#5b43d6] font-semibold flex items-center justify-between transition-colors"
                     >
                       <span>{stg}</span>
                     </button>
@@ -255,83 +336,114 @@ export const BulkActionToolbar: React.FC<BulkActionToolbarProps> = ({
               )}
             </div>
 
-            {/* 2. Bulk Advance */}
-            <button
-              type="button"
-              onClick={handleAdvanceClick}
-              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5"
-              title="Mark all selected candidates as Advanced"
-            >
-              <CheckCircle className="w-3.5 h-3.5" />
-              <span>Bulk Advance</span>
-            </button>
-
-            {/* 3. Bulk Reject */}
-            <button
-              type="button"
-              onClick={handleRejectClick}
-              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5"
-              title="Mark all selected candidates as Rejected"
-            >
-              <XCircle className="w-3.5 h-3.5" />
-              <span>Bulk Reject</span>
-            </button>
-
-            {/* 4. Batch AI Email Generator */}
+            {/* 2. Send Batch Email Button */}
             <button
               type="button"
               onClick={() => setShowBatchEmailModal(true)}
-              className="px-3 py-1.5 bg-gradient-to-r from-[#6743ee] to-indigo-600 hover:from-[#5637d2] hover:to-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5"
-              title="Draft personalized follow-up emails for all selected candidates"
+              disabled={!hasSelection}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs ${
+                hasSelection
+                  ? 'bg-gradient-to-r from-[#6743ee] to-indigo-600 hover:from-[#5637d2] hover:to-indigo-700 text-white cursor-pointer ring-1 ring-[#8a72ff]/40'
+                  : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60'
+              }`}
+              title={hasSelection ? "Draft and queue personalized AI follow-up emails for all selected" : "Select candidates to enable"}
             >
-              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              <span>Batch AI Email</span>
+              <Mail className="w-3.5 h-3.5 text-amber-300" />
+              <span>Send Batch Email</span>
             </button>
 
-            {/* 5. Bulk Assign Coding Challenge */}
-            <button
-              type="button"
-              onClick={handleAssignCodingClick}
-              className="hidden md:flex px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-xl text-xs font-semibold items-center gap-1.5 transition-colors"
-              title="Assign adaptive coding challenge to all selected"
-            >
-              <FileCode className="w-3.5 h-3.5 text-blue-400" />
-              <span>Assign Coding</span>
-            </button>
+            {/* 3. Export Data Button with Dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowExportDropdown(prev => !prev)}
+                disabled={!hasSelection}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-2xs ${
+                  hasSelection
+                    ? 'bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-600 cursor-pointer'
+                    : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60'
+                }`}
+                title={hasSelection ? "Export selected candidate records to CSV or JSON" : "Select candidates to enable"}
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export Data</span>
+                <ChevronDown className="w-3 h-3 opacity-70" />
+              </button>
 
-            {/* 6. Compare Radars (when exactly 2 candidates are selected) */}
-            {selectedCount === 2 && (
+              {showExportDropdown && hasSelection && (
+                <div className="absolute right-0 top-full mt-1.5 w-44 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-slate-800 text-xs animate-in fade-in zoom-in-95">
+                  <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                    Export {selectedCount} Records:
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleExportCSV}
+                    className="w-full text-left px-3 py-1.5 hover:bg-slate-100 font-semibold flex items-center gap-2 transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Download CSV (.csv)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportJSON}
+                    className="w-full text-left px-3 py-1.5 hover:bg-slate-100 font-semibold flex items-center gap-2 transition-colors"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-[#6743ee]" />
+                    <span>Download JSON (.json)</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Quick Bulk Advance & Reject Buttons */}
+            {hasSelection && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleAdvanceClick}
+                  className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1"
+                  title="Bulk mark selected as Advanced"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Advance</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleRejectClick}
+                  className="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1"
+                  title="Bulk mark selected as Rejected"
+                >
+                  <XCircle className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Reject</span>
+                </button>
+              </>
+            )}
+
+            {/* Compare Both (when exactly 2 candidates are checked) */}
+            {selectedCount === 2 && onLaunchCompare && (
               <button
                 type="button"
                 onClick={() => onLaunchCompare(selectedCandidateIds[0], selectedCandidateIds[1])}
-                className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 animate-pulse"
+                className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 animate-pulse"
                 title="Launch head-to-head radar comparison for the 2 selected candidates"
               >
                 <Scale className="w-3.5 h-3.5" />
-                <span>Compare Both</span>
+                <span>Compare Radars</span>
               </button>
             )}
 
-            {/* 7. Export CSV */}
-            <button
-              type="button"
-              onClick={handleExportCSV}
-              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors"
-              title="Export selected candidates to CSV"
-            >
-              <Download className="w-3.5 h-3.5 text-slate-400" />
-              <span className="hidden sm:inline">Export CSV</span>
-            </button>
-
-            {/* 8. Deselect All / Close */}
-            <button
-              type="button"
-              onClick={onDeselectAll}
-              className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-xl transition-colors ml-1"
-              title="Clear candidate selection"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            {/* Close / Deselect button */}
+            {hasSelection && (
+              <button
+                type="button"
+                onClick={onDeselectAll}
+                className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-xl transition-colors ml-0.5"
+                title="Clear candidate selection"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -342,7 +454,7 @@ export const BulkActionToolbar: React.FC<BulkActionToolbarProps> = ({
             <span>{feedbackMessage}</span>
           </div>
         )}
-      </aside>
+      </header>
 
       {/* Batch AI Email Generator Modal */}
       {showBatchEmailModal && (
@@ -362,9 +474,9 @@ export const BulkActionToolbar: React.FC<BulkActionToolbarProps> = ({
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <span>Batch AI Email Generator</span>
+                    <span>Send Batch Email (AI Template Generator)</span>
                     <span className="text-[10px] bg-purple-400/20 text-purple-300 border border-purple-400/30 px-2 py-0.5 rounded-full">
-                      {selectedCount} Candidates
+                      {selectedCount} Selected Recipients
                     </span>
                   </h3>
                   <p className="text-xs text-slate-300 mt-0.5">
