@@ -6,7 +6,8 @@ import {
   AuditEvent, 
   RoundType,
   HiringStage,
-  EmailDraftType
+  EmailDraftType,
+  ScheduledInterview
 } from '../types';
 import { ROLE_REQUIREMENTS } from '../data/roles';
 import { recruitmentAgent } from '../services/recruitmentAgent';
@@ -23,6 +24,9 @@ import { WorkforceGraph } from './WorkforceGraph';
 import { CandidatePersonaCard } from './CandidatePersonaCard';
 import { CandidatePersonaModal } from './CandidatePersonaModal';
 import { generateCandidatePersona } from '../services/personaGenerator';
+import { InterviewSchedulerModal } from './InterviewSchedulerModal';
+import { ScheduledInterviewsSection } from './ScheduledInterviewsSection';
+import { generateInterviewEmailConfirmation } from '../services/interviewSchedulerService';
 import { SAMPLE_RESUME_PRESETS, SampleResumePreset } from '../data/sampleResumes';
 import { parseResumeText, ParsedResumeData } from '../services/resumeParser';
 import { 
@@ -69,7 +73,9 @@ import {
   Check,
   GraduationCap,
   Link2,
-  Phone
+  Phone,
+  Calendar,
+  CalendarCheck
 } from 'lucide-react';
 
 interface HiringWorkflowTabProps {
@@ -242,6 +248,90 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         [newCandidates[0].candidate_id]: true
       }));
     }
+  };
+
+  // AI Interview Scheduler State & Handlers
+  const [scheduledInterviews, setScheduledInterviews] = useState<ScheduledInterview[]>([
+    {
+      id: "interview-init-1",
+      candidateId: "CAN-9821",
+      candidateName: "Alex Rivera",
+      candidateEmail: "alex.rivera@example.com",
+      candidatePhone: "+1-555-019-2831",
+      jobTitle: brief?.job_title || "AI/ML Engineer",
+      companyName: brief?.company_name || "Anthropic Tech",
+      roundName: "Technical Live Coding Round",
+      roundType: "coding",
+      durationMinutes: 45,
+      format: "video_meet",
+      meetingLink: "https://meet.google.com/ari-eval-recr",
+      dateStr: "2026-11-04",
+      startTime: "14:00",
+      endTime: "14:45",
+      timezone: "America/New_York (EST)",
+      panelInterviewerIds: ["int-2"],
+      panelInterviewerNames: ["David Chen"],
+      calendarInviteSent: true,
+      calendarInviteSentAt: "10:18 AM",
+      status: "Confirmed",
+      createdAt: new Date().toISOString()
+    }
+  ]);
+  const [showSchedulerModal, setShowSchedulerModal] = useState<boolean>(false);
+  const [schedulerCandidate, setSchedulerCandidate] = useState<Candidate | null>(null);
+
+  const handleOpenScheduler = (cand?: Candidate) => {
+    const target = cand || sortedCandidates[0] || candidates[0] || null;
+    setSchedulerCandidate(target);
+    setShowSchedulerModal(true);
+    if (target) {
+      appendAudit(
+        "Recruiter",
+        `Opened AI Interview Scheduler for ${target.name} to check team calendar availability`,
+        `${target.name} (${target.candidate_id})`
+      );
+    }
+  };
+
+  const handleConfirmScheduledInterview = (scheduled: ScheduledInterview) => {
+    setScheduledInterviews(prev => [scheduled, ...prev]);
+
+    // Update candidate stage to 'Interview' if currently Screening
+    setCandidates(prev => prev.map(c => {
+      if (c.candidate_id !== scheduled.candidateId) return c;
+      return {
+        ...c,
+        stage: 'Interview',
+        recruiter_decision: 'advance',
+        decision_status: 'Advanced by recruiter',
+        current_round: scheduled.roundType,
+      };
+    }));
+
+    // Auto-queue calendar confirmation email with meeting link
+    const { subject, body } = generateInterviewEmailConfirmation(scheduled);
+    const draft: OutreachDraft = {
+      id: `draft-${Date.now()}`,
+      type: 'round',
+      candidate_id: scheduled.candidateId,
+      candidate_name: scheduled.candidateName,
+      candidate_email: scheduled.candidateEmail,
+      candidate_phone: scheduled.candidatePhone,
+      round_name: scheduled.roundType,
+      interview_format: `${scheduled.format.replace('_', ' ').toUpperCase()} (${scheduled.meetingLink})`,
+      subject,
+      body,
+      call_script: `Hi ${scheduled.candidateName}, calling from ${scheduled.companyName} to confirm your upcoming ${scheduled.roundName} on ${scheduled.dateStr}. Google Meet and calendar invite have been dispatched.`,
+      availability: `${scheduled.dateStr} at ${scheduled.startTime} EST`,
+      status: 'Recruiter approved — integration required; not sent or called'
+    };
+    setOutreachQueue(prev => [draft, ...prev]);
+
+    appendAudit(
+      "AI Scheduler",
+      `Scheduled ${scheduled.durationMinutes}m ${scheduled.roundName} on ${scheduled.dateStr} at ${scheduled.startTime} EST (Google Meet & .ics invite dispatched to candidate & ${scheduled.panelInterviewerNames.length} panel members)`,
+      `${scheduled.candidateName} (${scheduled.candidateId})`
+    );
   };
 
   // Bulk Action Selection State & Handlers
@@ -1657,6 +1747,13 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         );
       })()}
 
+      {/* 3.5. Scheduled Interviews & Shared Team Calendar Availability */}
+      <ScheduledInterviewsSection
+        scheduledInterviews={scheduledInterviews}
+        onOpenScheduler={handleOpenScheduler}
+        candidates={candidates}
+      />
+
       {/* 4. Candidate Insights Radar & Overview */}
       {candidates.length > 0 && (
         <section className="space-y-6">
@@ -1759,6 +1856,8 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                 auditEvents={events}
                 onOpenLinkedInImport={() => setShowLinkedInImportModal(true)}
                 onOpenPersona={handleOpenPersona}
+                onLaunchCompare={handleLaunchCompare}
+                onOpenScheduler={handleOpenScheduler}
               />
             ) : (
               <>
@@ -1856,12 +1955,23 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                       type="button"
                       onClick={() => handleLaunchCompare()}
                       className="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs bg-gradient-to-r from-[#6743ee] to-teal-600 hover:from-[#5637d2] hover:to-teal-700 text-white"
-                      title="View side-by-side radar charts and strength differences"
+                      title="View side-by-side split screen to compare scores, strengths, and persona summaries"
                     >
                       <Scale className="w-3.5 h-3.5" />
-                      <span>Compare Radars</span>
+                      <span>⚡ Split-Screen Compare</span>
                     </button>
                   )}
+
+                  {/* Schedule Interview Button */}
+                  <button
+                    type="button"
+                    onClick={() => handleOpenScheduler()}
+                    className="px-2.5 py-1.5 bg-purple-50 hover:bg-purple-100 text-[#5b43d6] border border-purple-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs hover:shadow-xs active:scale-95"
+                    title="Generate AI-suggested time slots based on hiring team shared calendar availability"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-[#6743ee]" />
+                    <span>Schedule Interview</span>
+                  </button>
 
                   {/* Import from LinkedIn Button */}
                   <button
@@ -2574,6 +2684,17 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                             <span>Draft Email</span>
                           </button>
 
+                          {/* AI Interview Scheduler Trigger Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenScheduler(cand)}
+                            className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-700 hover:text-emerald-800 border border-emerald-200 hover:border-emerald-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs"
+                            title={`Schedule interview with ${cand.name} using hiring team shared calendar availability`}
+                          >
+                            <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Schedule</span>
+                          </button>
+
                           {/* Hiring Stage Dropdown Menu */}
                           <CandidateStageDropdown
                             currentStage={getCandidateStage(cand)}
@@ -3191,6 +3312,8 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
           }}
           onClose={() => setShowCompareModal(false)}
           cutoffScore={cutoffScore}
+          brief={brief}
+          onOpenPersonaModal={handleOpenPersona}
         />
       )}
 
@@ -3226,6 +3349,19 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
           onSelectCandidate={handleOpenPersona}
           onRegeneratePersona={handleRegeneratePersona}
           isRegenerating={generatingPersonaId === personaModalCandidate.candidate_id}
+        />
+      )}
+
+      {/* 12. AI Interview Scheduler & Calendar Invites Modal */}
+      {showSchedulerModal && schedulerCandidate && (
+        <InterviewSchedulerModal
+          isOpen={showSchedulerModal}
+          onClose={() => setShowSchedulerModal(false)}
+          candidate={schedulerCandidate}
+          candidatesList={sortedCandidates}
+          onSelectCandidate={(cand) => setSchedulerCandidate(cand)}
+          brief={brief}
+          onConfirmSchedule={handleConfirmScheduledInterview}
         />
       )}
     </div>

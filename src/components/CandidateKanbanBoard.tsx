@@ -28,7 +28,8 @@ import {
   SlidersHorizontal,
   ChevronRight,
   Calendar,
-  Briefcase
+  Briefcase,
+  Scale
 } from 'lucide-react';
 
 interface CandidateKanbanBoardProps {
@@ -42,6 +43,8 @@ interface CandidateKanbanBoardProps {
   auditEvents: AuditEvent[];
   onOpenLinkedInImport?: () => void;
   onOpenPersona?: (candidate: Candidate) => void;
+  onLaunchCompare?: (candidateAId?: string, candidateBId?: string) => void;
+  onOpenScheduler?: (candidate: Candidate) => void;
 }
 
 const STAGES: { stage: HiringStage; label: string; desc: string; color: string; badgeColor: string; headerBg: string }[] = [
@@ -98,6 +101,8 @@ export const CandidateKanbanBoard: React.FC<CandidateKanbanBoardProps> = ({
   auditEvents,
   onOpenLinkedInImport,
   onOpenPersona,
+  onLaunchCompare,
+  onOpenScheduler,
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [draggedCandidateId, setDraggedCandidateId] = useState<string | null>(null);
@@ -201,6 +206,18 @@ export const CandidateKanbanBoard: React.FC<CandidateKanbanBoardProps> = ({
 
         {/* Column & View options */}
         <div className="flex flex-wrap items-center gap-3">
+          {onLaunchCompare && candidates.length >= 2 && (
+            <button
+              type="button"
+              onClick={() => onLaunchCompare()}
+              className="px-2.5 py-1 bg-gradient-to-r from-[#6743ee] to-teal-600 hover:from-[#5637d2] hover:to-teal-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all hover:shadow-xs active:scale-95"
+              title="Launch head-to-head split-screen comparison for candidates"
+            >
+              <Scale className="w-3.5 h-3.5" />
+              <span>⚡ Split-Screen Compare</span>
+            </button>
+          )}
+
           {onOpenLinkedInImport && (
             <button
               type="button"
@@ -446,6 +463,34 @@ export const CandidateKanbanBoard: React.FC<CandidateKanbanBoardProps> = ({
                             >
                               <Mail className="w-3 h-3 text-[#6743ee]" />
                             </button>
+
+                            {onOpenScheduler && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenScheduler(cand);
+                                }}
+                                className="p-1 text-slate-400 hover:text-[#6743ee] hover:bg-purple-50 rounded transition-colors"
+                                title={`Schedule interview with ${cand.name} using AI calendar availability`}
+                              >
+                                <Calendar className="w-3 h-3 text-[#6743ee]" />
+                              </button>
+                            )}
+
+                            {onLaunchCompare && candidates.length >= 2 && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onLaunchCompare(cand.candidate_id);
+                                }}
+                                className="p-1 text-slate-400 hover:text-teal-700 hover:bg-teal-50 rounded transition-colors"
+                                title={`Compare ${cand.name} side-by-side with another candidate`}
+                              >
+                                <Scale className="w-3 h-3 text-[#0d9488]" />
+                              </button>
+                            )}
 
                             <button
                               type="button"

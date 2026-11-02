@@ -256,3 +256,67 @@ export interface InterviewHistoryItem {
   motion_alert: number | null;
   timestamp: number;
 }
+
+export interface InterviewerMember {
+  id: string;
+  name: string;
+  role: string;
+  email: string;
+  avatarColor: string;
+  timezone: string;
+  workingHours: { start: string; end: string };
+  busySlots: Array<{
+    dayOffset: number; // 0 = today, 1 = tomorrow, etc.
+    startTime: string; // "10:00"
+    endTime: string; // "11:00"
+    title: string;
+  }>;
+}
+
+export type InterviewFormatType = 'video_meet' | 'video_zoom' | 'onsite' | 'phone';
+
+export interface AISlotSuggestion {
+  id: string;
+  dateStr: string; // e.g. "2026-11-04"
+  dayLabel: string; // e.g. "Wed, Nov 4"
+  startTime: string; // e.g. "14:00"
+  endTime: string; // e.g. "14:45"
+  durationMinutes: number;
+  matchScore: number; // 0-100
+  recommendationTag: 'Optimal Team Focus' | 'Rapid Progression' | 'Zero Fatigue Slot' | 'Timezone Harmony';
+  rationale: string;
+  interviewerAvailability: Array<{
+    interviewerId: string;
+    interviewerName: string;
+    isAvailable: boolean;
+    bufferMinutes: number;
+  }>;
+}
+
+export interface ScheduledInterview {
+  id: string;
+  candidateId: string;
+  candidateName: string;
+  candidateEmail: string;
+  candidatePhone?: string;
+  jobTitle: string;
+  companyName: string;
+  roundName: string;
+  roundType: RoundType;
+  durationMinutes: number;
+  format: InterviewFormatType;
+  meetingLink: string;
+  dateStr: string;
+  startTime: string;
+  endTime: string;
+  timezone: string;
+  panelInterviewerIds: string[];
+  panelInterviewerNames: string[];
+  calendarInviteSent: boolean;
+  calendarInviteSentAt?: string;
+  icsDownloadUrl?: string;
+  googleCalendarUrl?: string;
+  status: 'Scheduled' | 'Confirmed' | 'Completed' | 'Cancelled';
+  notes?: string;
+  createdAt: string;
+}
