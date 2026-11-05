@@ -6,6 +6,9 @@ export interface JobIntelligenceRequest {
   salary_budget: string;
   hiring_timeline: string;
   requirements: string;
+  seniority: string;
+  employment_type: string;
+  workplace_type: string;
 }
 
 export interface JobRubricCriterion {
