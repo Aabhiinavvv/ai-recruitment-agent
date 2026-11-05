@@ -121,11 +121,11 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
 }) => {
   // Step 1: Form state
   const [selectedRolePreset, setSelectedRolePreset] = useState<string>("AI/ML Engineer");
-  const [companyName, setCompanyName] = useState<string>("Anthropic Tech");
+  const [companyName, setCompanyName] = useState<string>("");
   const [jobTitle, setJobTitle] = useState<string>("AI/ML Engineer");
-  const [location, setLocation] = useState<string>("San Francisco, CA / Remote");
+  const [location, setLocation] = useState<string>("");
   const [headcount, setHeadcount] = useState<number>(1);
-  const [salaryBudget, setSalaryBudget] = useState<string>("$160,000 – $210,000");
+  const [salaryBudget, setSalaryBudget] = useState<string>("");
   const [timeline, setTimeline] = useState<string>("Within 30 days");
   const [requirementsText, setRequirementsText] = useState<string>(
     ROLE_REQUIREMENTS["AI/ML Engineer"].join(", ")
