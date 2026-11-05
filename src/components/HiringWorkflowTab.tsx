@@ -27,6 +27,7 @@ import { generateCandidatePersona } from '../services/personaGenerator';
 import { InterviewSchedulerModal } from './InterviewSchedulerModal';
 import { ScheduledInterviewsSection } from './ScheduledInterviewsSection';
 import { generateInterviewEmailConfirmation } from '../services/interviewSchedulerService';
+import { generateJobDraft, JobIntelligenceResponse } from '../services/jobIntelligenceApi';
 import { SAMPLE_RESUME_PRESETS, SampleResumePreset } from '../data/sampleResumes';
 import { parseResumeText, ParsedResumeData } from '../services/resumeParser';
 import { 
@@ -129,6 +130,9 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   const [requirementsText, setRequirementsText] = useState<string>(
     ROLE_REQUIREMENTS["AI/ML Engineer"].join(", ")
   );
+  const [isGeneratingJd, setIsGeneratingJd] = useState<boolean>(false);
+  const [jdGenerationError, setJdGenerationError] = useState<string | null>(null);
+  const [jdGenerationResult, setJdGenerationResult] = useState<JobIntelligenceResponse | null>(null);
 
   // Step 3: Screen resume state
   const [candidateNameInput, setCandidateNameInput] = useState<string>("");
@@ -533,35 +537,76 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     }
   };
 
-  const handleGenerateJd = (e: React.FormEvent) => {
+  const handleGenerateJd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!jobTitle.trim() || !requirementsText.trim()) return;
+    if (!jobTitle.trim() || !requirementsText.trim() || isGeneratingJd) return;
 
-    const { jd, rubric } = recruitmentAgent.generateJobDescription({
-      company_name: companyName,
-      job_title: jobTitle,
-      location,
-      headcount,
-      salary_budget: salaryBudget,
-      timeline,
-      requirements: requirementsText,
-    });
+    setIsGeneratingJd(true);
+    setJdGenerationError(null);
+    setJdGenerationResult(null);
 
-    const newBrief: HiringBrief = {
-      company_name: companyName,
-      job_title: jobTitle,
-      location,
-      headcount,
-      salary_budget: salaryBudget,
-      timeline,
-      requirements: requirementsText,
-      jd,
-      status: 'Draft — recruiter review required',
-      evaluation_rubric: rubric,
-    };
+    try {
+      const result = await generateJobDraft({
+        company_name: companyName,
+        job_title: jobTitle,
+        location,
+        headcount,
+        salary_budget: salaryBudget,
+        hiring_timeline: timeline,
+        requirements: requirementsText,
+      });
+      setJdGenerationResult(result);
 
-    setBrief(newBrief);
-    appendAudit("AI Agent", "AI drafted inclusive job description & rubric", jobTitle);
+      if (result.status === 'needs_clarification') {
+        appendAudit(
+          "Job Intelligence Agent",
+          "Requested additional hiring details before drafting the job description",
+          jobTitle
+        );
+        return;
+      }
+
+      if (!result.job_description_markdown || !result.rubric) {
+        throw new Error("The Job Intelligence Agent returned an incomplete draft.");
+      }
+
+      const newBrief: HiringBrief = {
+        company_name: companyName,
+        job_title: jobTitle,
+        location,
+        headcount,
+        salary_budget: salaryBudget,
+        timeline,
+        requirements: requirementsText,
+        jd: result.job_description_markdown,
+        status: 'Draft — recruiter review required',
+        evaluation_rubric: {
+          scoring_scale: result.rubric.scoring_scale,
+          criteria: result.rubric.criteria.map(item => ({
+            criterion: item.criterion,
+            weight_percent: item.weight_percent,
+          })),
+          decision_boundary: result.rubric.decision_boundary,
+        },
+      };
+
+      setBrief(newBrief);
+      appendAudit(
+        "Job Intelligence Agent",
+        result.generation_mode === 'ollama'
+          ? "Generated job description and evaluation rubric using the local LLM"
+          : "Generated a clearly labelled template-based JD and evaluation rubric",
+        jobTitle
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error occurred.";
+      setJdGenerationError(
+        message + " Check that the Python backend is running at http://localhost:8000."
+      );
+      appendAudit("Job Intelligence Agent", "Job description generation failed", jobTitle);
+    } finally {
+      setIsGeneratingJd(false);
+    }
   };
 
   const handleApproveJd = () => {
@@ -1248,12 +1293,64 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
 
           <button
             type="submit"
-            className="px-5 py-2.5 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-2"
+            disabled={isGeneratingJd}
+            className="px-5 py-2.5 bg-[#6743ee] hover:bg-[#5637d2] disabled:opacity-60 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-2"
           >
             <Sparkles className="w-4 h-4" />
-            Generate JD Draft with AI Agent
+            {isGeneratingJd ? "Generating job description..." : "Generate JD Draft with AI Agent"}
           </button>
         </form>
+
+        {isGeneratingJd && (
+          <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-800">
+            Job Intelligence Agent is analysing the hiring brief, checking completeness and preparing a structured JD and evaluation rubric.
+          </div>
+        )}
+
+        {jdGenerationError && (
+          <div role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
+            {jdGenerationError}
+          </div>
+        )}
+
+        {jdGenerationResult?.status === "needs_clarification" && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
+            <p className="font-bold mb-2">More information is required before the JD can be drafted.</p>
+            <ul className="list-disc pl-5 space-y-1">
+              {jdGenerationResult.clarification_questions.map((question, index) => (
+                <li key={index}>{question}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {jdGenerationResult?.review_flags && jdGenerationResult.review_flags.length > 0 && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
+            <p className="font-bold mb-2">Criteria requiring human review</p>
+            {jdGenerationResult.review_flags.map((flag, index) => (
+              <div key={index} className="mb-2 last:mb-0">
+                <p className="font-semibold">{flag.category}: {flag.evidence}</p>
+                <p>{flag.action}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {jdGenerationResult?.warnings && jdGenerationResult.warnings.length > 0 && (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-700">
+            {jdGenerationResult.warnings.map((warning, index) => (
+              <p key={index}>{warning}</p>
+            ))}
+          </div>
+        )}
+
+        {jdGenerationResult?.status === "draft_ready" && (
+          <p className="mt-3 text-[11px] text-slate-500">
+            Generation mode: {jdGenerationResult.generation_mode}
+            {jdGenerationResult.model_name ? " · Model: " + jdGenerationResult.model_name : ""}
+            {" · "}Company approval is required before publishing.
+          </p>
+        )}
       </section>
 
       {/* 2. Review and Approve JD */}
