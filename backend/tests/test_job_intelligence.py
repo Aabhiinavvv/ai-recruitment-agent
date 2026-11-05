@@ -10,7 +10,7 @@ def agent():
     return JobIntelligenceAgent(
         Settings(
             llm_enabled=False,
-            frontend_origins=["http://localhost:3000"],
+            frontend_origins="http://localhost:3000",
         )
     )
 
