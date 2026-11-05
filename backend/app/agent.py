@@ -95,7 +95,9 @@ def _clarification_questions(brief: JobRequirementInput) -> list[str]:
             "Please list skills or describe the work the person will perform."
         )
     if not brief.location:
-        questions.append("What is the job location, and is the role onsite, hybrid, or remote?")
+        questions.append("What is the job location?")
+    if brief.workplace_type == "unspecified":
+        questions.append("Is the role onsite, hybrid, or remote?")
     if not brief.seniority and brief.min_experience_months is None:
         questions.append(
             "What experience level should applicants have (entry-level, mid-level, senior, or a number of years)?"
