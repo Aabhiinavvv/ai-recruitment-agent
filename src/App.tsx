@@ -23,31 +23,8 @@ export function App() {
   const [isFairnessOpen, setIsFairnessOpen] = useState<boolean>(false);
   const [isResumeToolsOpen, setIsResumeToolsOpen] = useState<boolean>(false);
 
-  // Workflow Data
-  const [brief, setBrief] = useState<HiringBrief | null>(() => {
-    const { jd, rubric } = recruitmentAgent.generateJobDescription({
-      company_name: "Anthropic Tech",
-      job_title: "AI/ML Engineer",
-      location: "San Francisco, CA / Remote",
-      headcount: 2,
-      salary_budget: "$160,000 – $210,000",
-      timeline: "Within 30 days",
-      requirements: ROLE_REQUIREMENTS["AI/ML Engineer"].join(", "),
-    });
-
-    return {
-      company_name: "Anthropic Tech",
-      job_title: "AI/ML Engineer",
-      location: "San Francisco, CA / Remote",
-      headcount: 2,
-      salary_budget: "$160,000 – $210,000",
-      timeline: "Within 30 days",
-      requirements: ROLE_REQUIREMENTS["AI/ML Engineer"].join(", "),
-      jd,
-      status: 'Approved by recruiter — publishing integration required',
-      evaluation_rubric: rubric,
-    };
-  });
+  // Workflow Data — a real job brief is created through Job Intelligence Agent 1.
+  const [brief, setBrief] = useState<HiringBrief | null>(null);
 
   const [candidates, setCandidates] = useState<Candidate[]>(SAMPLE_CANDIDATES);
   const [outreachQueue, setOutreachQueue] = useState<OutreachDraft[]>([
