@@ -75,14 +75,6 @@ class EvaluationRubric(BaseModel):
         "Advisory support only. A recruiter must review the evidence before any candidate decision."
     )
 
-    @model_validator(mode="after")
-    def validate_weights(self):
-        total = sum(item.weight_percent for item in self.criteria)
-        if total != 100:
-            raise ValueError(f"Rubric weights must total 100; received {total}")
-        return self
-
-
 class JobDraftContent(BaseModel):
     role_summary: str = Field(min_length=20, max_length=1800)
     responsibilities: list[str] = Field(min_length=2, max_length=15)
