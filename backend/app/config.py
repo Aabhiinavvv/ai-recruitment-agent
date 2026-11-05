@@ -1,6 +1,5 @@
 from functools import lru_cache
 
-from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,11 +7,10 @@ class Settings(BaseSettings):
     app_env: str = "development"
     api_host: str = "127.0.0.1"
     api_port: int = 8000
-    frontend_origins: list[str] = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",
-    ]
+    # Comma-separated string avoids JSON parsing surprises for .env values.
+    frontend_origins: str = (
+        "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173"
+    )
     llm_enabled: bool = True
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen3:4b"
@@ -25,12 +23,13 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    @field_validator("frontend_origins", mode="before")
-    @classmethod
-    def parse_frontend_origins(cls, value):
-        if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
-        return value
+    @property
+    def allowed_origins(self) -> list[str]:
+        return [
+            item.strip()
+            for item in self.frontend_origins.split(",")
+            if item.strip()
+        ]
 
 
 @lru_cache
