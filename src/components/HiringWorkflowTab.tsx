@@ -27,7 +27,7 @@ import { generateCandidatePersona } from '../services/personaGenerator';
 import { InterviewSchedulerModal } from './InterviewSchedulerModal';
 import { ScheduledInterviewsSection } from './ScheduledInterviewsSection';
 import { generateInterviewEmailConfirmation } from '../services/interviewSchedulerService';
-import { generateJobDraft, JobIntelligenceResponse } from '../services/jobIntelligenceApi';
+import { generateJobDraft, type JobIntelligenceResponse } from '../services/jobIntelligenceApi';
 import { SAMPLE_RESUME_PRESETS, SampleResumePreset } from '../data/sampleResumes';
 import { parseResumeText, ParsedResumeData } from '../services/resumeParser';
 import { 
@@ -130,6 +130,9 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   const [requirementsText, setRequirementsText] = useState<string>(
     ROLE_REQUIREMENTS["AI/ML Engineer"].join(", ")
   );
+  const [seniority, setSeniority] = useState<string>("Mid-level");
+  const [employmentType, setEmploymentType] = useState<string>("full_time");
+  const [workplaceType, setWorkplaceType] = useState<string>("unspecified");
   const [isGeneratingJd, setIsGeneratingJd] = useState<boolean>(false);
   const [jdGenerationError, setJdGenerationError] = useState<string | null>(null);
   const [jdGenerationResult, setJdGenerationResult] = useState<JobIntelligenceResponse | null>(null);
@@ -554,6 +557,9 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         salary_budget: salaryBudget,
         hiring_timeline: timeline,
         requirements: requirementsText,
+        seniority,
+        employment_type: employmentType,
+        workplace_type: workplaceType,
       });
       setJdGenerationResult(result);
 
@@ -1276,6 +1282,47 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                 className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
               />
             </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Seniority / Experience Level</label>
+              <input
+                type="text"
+                value={seniority}
+                onChange={(e) => setSeniority(e.target.value)}
+                placeholder="e.g. Entry-level, Mid-level, Senior"
+                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Employment Type</label>
+              <select
+                value={employmentType}
+                onChange={(e) => setEmploymentType(e.target.value)}
+                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+              >
+                <option value="full_time">Full-time</option>
+                <option value="part_time">Part-time</option>
+                <option value="contract">Contract</option>
+                <option value="internship">Internship</option>
+                <option value="temporary">Temporary</option>
+                <option value="unspecified">Not specified</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Work Arrangement</label>
+              <select
+                value={workplaceType}
+                onChange={(e) => setWorkplaceType(e.target.value)}
+                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+              >
+                <option value="onsite">Onsite</option>
+                <option value="hybrid">Hybrid</option>
+                <option value="remote">Remote</option>
+                <option value="unspecified">Not specified</option>
+              </select>
+            </div>
           </div>
 
           <div>
@@ -1313,9 +1360,13 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
           </div>
         )}
 
-        {jdGenerationResult?.status === "needs_clarification" && (
+        {jdGenerationResult?.clarification_questions && jdGenerationResult.clarification_questions.length > 0 && (
           <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
-            <p className="font-bold mb-2">More information is required before the JD can be drafted.</p>
+            <p className="font-bold mb-2">
+              {jdGenerationResult.status === "needs_clarification"
+                ? "More information is required before the JD can be drafted."
+                : "Optional details to confirm before publishing"}
+            </p>
             <ul className="list-disc pl-5 space-y-1">
               {jdGenerationResult.clarification_questions.map((question, index) => (
                 <li key={index}>{question}</li>
