@@ -429,3 +429,42 @@ The schema rejects unknown fields, so names, email addresses, phone numbers, res
 - This module is descriptive. It does not make employment decisions, rank recruiters, infer source causality or estimate missing values.
 
 For historical dashboards, cohort conversion, time-in-stage, SLA tracking, source attribution and trend reporting, production requires a persistent, timestamped, access-controlled event model with consent/purpose controls, immutable audit logs and documented data-quality rules.
+
+
+---
+
+# Agent 9 — Workforce Planning & Predictive Hiring Agent
+
+Agent 9 creates aggregate demand and headcount scenarios using monthly historical requisition, hire and exit counts plus HR-approved planning assumptions.
+
+## API
+
+- POST /api/v1/workforce-planning/forecast
+
+## Required inputs
+
+- 3–36 consecutive monthly records, oldest first.
+- Each month: new requisitions, completed hires and employee exits.
+- Current headcount and target headcount.
+- Open requisition backlog.
+- Baseline monthly hiring capacity.
+- Annual attrition percentage.
+- Forecast horizon (1–18 months).
+- Scenario: conservative, base or accelerated.
+
+The API rejects extra fields. It does not accept names, employee IDs, candidate records, salaries or individual employee details.
+
+## Forecast method
+
+- Ordinary least-squares linear trend is fitted to monthly new requisition counts.
+- The demand range is the point forecast ± in-sample mean absolute trend residual, with a minimum one-requisition range. It is not a calibrated confidence interval.
+- Scenario capacity multipliers: conservative 0.75×, base 1.00×, accelerated 1.25×.
+- Planned hires are the lower of available demand (opening requisition backlog plus forecast new demand) and scenario-adjusted monthly hiring capacity.
+- Annual attrition is divided by 12 and applied to projected monthly headcount. Expected exits are rounded to whole people per month.
+- Projected workforce gap = target headcount − projected headcount. Positive indicates a projected shortage; negative indicates a projected surplus.
+
+## Limitations
+
+This first version does not model seasonal demand, role/skill mix, budget constraints, internal mobility, productivity, macroeconomic indicators, hiring-stage conversion or department-specific recruiter capacity. The forecast is a directional planning estimate, not a guarantee, calibrated probabilistic forecast or automated staffing decision. Use at least 6–12 months of clean aggregate history where possible and validate assumptions with HR and business leaders.
+
+The endpoint is stateless, returns only aggregate projections, and does not persist historical workforce snapshots or employee-level data.
