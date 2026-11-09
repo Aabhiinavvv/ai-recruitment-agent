@@ -30,6 +30,7 @@ import { InterviewAgentPanel } from './InterviewAgentPanel';
 import { BackgroundVerificationPanel } from './BackgroundVerificationPanel';
 import { OfferOnboardingPanel } from './OfferOnboardingPanel';
 import { RecruitmentAnalyticsPanel } from './RecruitmentAnalyticsPanel';
+import { WorkforcePlanningPanel } from './WorkforcePlanningPanel';
 import { ScheduledInterviewsSection } from './ScheduledInterviewsSection';
 import { generateInterviewEmailConfirmation } from '../services/interviewSchedulerService';
 import { generateJobDraft, type JobIntelligenceResponse } from '../services/jobIntelligenceApi';
@@ -1939,6 +1940,11 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       <RecruitmentAnalyticsPanel
         candidates={candidates}
         onAudit={(action, subject) => appendAudit("Recruitment Analytics Agent", action, subject)}
+      />
+
+      {/* Agent 9 — Workforce Planning & Predictive Hiring */}
+      <WorkforcePlanningPanel
+        onAudit={(action, subject) => appendAudit("Workforce Planning Agent", action, subject)}
       />
 
       {/* 4. Candidate Insights Radar & Overview */}
