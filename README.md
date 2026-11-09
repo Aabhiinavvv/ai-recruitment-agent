@@ -182,3 +182,21 @@ Agent 6 prepares a consent-gated verification checklist for a recruiter-advanced
 - All outcomes remain subject to recruiter review. A discrepancy or inability to verify is not an automatic rejection.
 
 Prototype limits: no identity-document upload, Aadhaar/PAN/passport number processing, employer/institution/government database lookup, criminal-record check, provider API call, candidate notification, database persistence or final hiring decision. No provider has been contacted. Provider integrations require an authorised licensed provider, candidate-specific consent, jurisdiction-specific legal review, secure credentials, access controls, retention policy and auditable results.
+
+
+## Agent 7 — Offer Management & Onboarding Agent
+
+Agent 7 creates a non-binding offer draft from recruiter-supplied terms, records recruiter-attested offer lifecycle events, and prepares an onboarding task checklist after an offer is recorded as accepted.
+
+- Create offer draft: POST /api/v1/onboarding/offers/drafts
+- Record offer event: POST /api/v1/onboarding/offers/events
+- Create onboarding plan: POST /api/v1/onboarding/plans
+- Update onboarding task: POST /api/v1/onboarding/tasks/events
+- Offer preparation requires the approved job, a recruiter-recorded final hire decision, background verification review attestation with opaque internal references for the hire approval and verification result, zero unresolved verification items and all mandatory offer terms.
+- Compensation, currency, work mode, work location, dates, probation, benefits and additional terms are supplied explicitly by the recruiter. The agent does not invent compensation or legal clauses.
+- Offer status transitions are explicit: draft → approved → manually sent outside platform → accepted/declined, with withdrawal and expiry paths.
+- Onboarding can be prepared only for an accepted offer with recruiter start approval.
+- Task ownership is assigned to HR, manager, IT or candidate; task changes require human attestation.
+- JSON/text exports are generated in the browser.
+
+Prototype limits: no offer email dispatch, e-signature, legally binding contract generation, HRIS/payroll integration, document collection, IT account provisioning, equipment ordering or database persistence. Agent 6 verification results are not automatically linked to Agent 7 because the current prototype is stateless; the verification-complete flag is a recruiter attestation. Use approved secure HR/legal/payroll systems for actual offer issuance and onboarding.
