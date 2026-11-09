@@ -50,8 +50,6 @@ const STATUS_STYLES: Record<string, string> = {
   not_applicable: 'bg-slate-100 text-slate-600 border-slate-200',
 };
 
-const AGENT_ICONS = ['FileText', 'FileSearch', 'GitCompare', 'MessageSquare', 'MessageCircle', 'ShieldCheck', 'ClipboardList', 'ChartNoAxesCombined', 'Users'];
-
 const decisionFor = (candidate: Candidate): RecruiterDecision => {
   if (candidate.decision_status === 'Hired by recruiter') return 'hire_approved';
   if (candidate.decision_status === 'Advanced by recruiter') return 'advance';
@@ -84,7 +82,7 @@ export const RecruitmentOrchestratorPanel: React.FC<RecruitmentOrchestratorPanel
   candidates,
   onAudit,
 }) => {
-  const [candidateIndex, setCandidateIndex] = useState('0');
+  const [candidateIndex, setCandidateIndex] = useState('-1');
   const [matchingReviewed, setMatchingReviewed] = useState(false);
   const [communicationConsent, setCommunicationConsent] = useState(false);
   const [communicationStatus, setCommunicationStatus] = useState<CommunicationStatus>('not_started');
@@ -273,7 +271,7 @@ export const RecruitmentOrchestratorPanel: React.FC<RecruitmentOrchestratorPanel
 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex items-start gap-2 rounded-lg border border-slate-200 p-3">
-              <input type="checkbox" checked={communicationConsent} onChange={(event) => setCommunicationConsent(event.target.checked)} className="mt-0.5 h-4 w-4 accent-fuchsia-700"/>
+              <input type="checkbox" checked={communicationConsent} onChange={(event) => { setCommunicationConsent(event.target.checked); if (!event.target.checked) setCommunicationStatus('not_started'); }} className="mt-0.5 h-4 w-4 accent-fuchsia-700"/>
               <span className="text-xs leading-5 text-slate-700">Candidate has consented to recruitment communications.</span>
             </label>
             <SelectField
@@ -290,7 +288,7 @@ export const RecruitmentOrchestratorPanel: React.FC<RecruitmentOrchestratorPanel
               ]}
             />
             <label className="flex items-start gap-2 rounded-lg border border-slate-200 p-3">
-              <input type="checkbox" checked={interviewConsent} onChange={(event) => setInterviewConsent(event.target.checked)} className="mt-0.5 h-4 w-4 accent-fuchsia-700"/>
+              <input type="checkbox" checked={interviewConsent} onChange={(event) => { setInterviewConsent(event.target.checked); if (!event.target.checked) setInterviewStatus('not_started'); }} className="mt-0.5 h-4 w-4 accent-fuchsia-700"/>
               <span className="text-xs leading-5 text-slate-700">Candidate has consented to interview processing.</span>
             </label>
             <SelectField
@@ -306,7 +304,7 @@ export const RecruitmentOrchestratorPanel: React.FC<RecruitmentOrchestratorPanel
               ]}
             />
             <label className="flex items-start gap-2 rounded-lg border border-slate-200 p-3">
-              <input type="checkbox" checked={verificationConsent} onChange={(event) => setVerificationConsent(event.target.checked)} className="mt-0.5 h-4 w-4 accent-fuchsia-700"/>
+              <input type="checkbox" checked={verificationConsent} onChange={(event) => { setVerificationConsent(event.target.checked); if (!event.target.checked) setVerificationStatus('not_started'); }} className="mt-0.5 h-4 w-4 accent-fuchsia-700"/>
               <span className="text-xs leading-5 text-slate-700">Candidate has authorised the selected background checks.</span>
             </label>
             <SelectField
