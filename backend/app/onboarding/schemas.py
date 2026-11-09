@@ -40,7 +40,9 @@ class OfferDraftRequest(BaseModel):
     job_title: str = Field(min_length=2, max_length=160)
     company_name: str = Field(min_length=2, max_length=160)
     recruiter_hire_approved: bool
+    hire_approval_reference: str = Field(pattern=r"^vault:[A-Za-z0-9._:-]{3,114}$")
     verification_review_completed: bool
+    verification_review_reference: str = Field(pattern=r"^vault:[A-Za-z0-9._:-]{3,114}$")
     unresolved_verification_items: int = Field(default=0, ge=0, le=100)
     employment_type: EmploymentType
     currency: str = Field(pattern=r"^[A-Z]{3}$")
@@ -82,6 +84,8 @@ class OfferDraftResponse(BaseModel):
     candidate_id: str
     job_title: str
     company_name: str
+    hire_approval_reference: str
+    verification_review_reference: str
     employment_type: EmploymentType
     currency: str
     compensation_amount: Decimal
@@ -144,8 +148,12 @@ class OfferEventRequest(BaseModel):
                 raise ValueError("Candidate response events require confirmation and an opaque evidence reference.")
         if self.event == "mark_sent" and not self.event_reference:
             raise ValueError("Record a secure internal reference for the manually sent offer.")
-        if self.event == "mark_expired" and date.today() < self.offer_expiry_date:
-            raise ValueError("An offer cannot be marked expired before its expiry date.")
+        if self.event in {"approve", "mark_sent"} and date.today() > self.offer_expiry_date:
+            raise ValueError("An expired offer cannot be approved or marked as sent.")
+        if self.event in {"record_acceptance", "record_decline"} and date.today() > self.offer_expiry_date:
+            raise ValueError("Candidate responses cannot be recorded after the offer expiry date.")
+        if self.event == "mark_expired" and date.today() <= self.offer_expiry_date:
+            raise ValueError("An offer can only be marked expired after its expiry date.")
         return self
 
 
