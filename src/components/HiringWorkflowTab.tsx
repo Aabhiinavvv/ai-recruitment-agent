@@ -29,6 +29,7 @@ import { CommunicationAgentPanel } from './CommunicationAgentPanel';
 import { InterviewAgentPanel } from './InterviewAgentPanel';
 import { BackgroundVerificationPanel } from './BackgroundVerificationPanel';
 import { OfferOnboardingPanel } from './OfferOnboardingPanel';
+import { RecruitmentAnalyticsPanel } from './RecruitmentAnalyticsPanel';
 import { ScheduledInterviewsSection } from './ScheduledInterviewsSection';
 import { generateInterviewEmailConfirmation } from '../services/interviewSchedulerService';
 import { generateJobDraft, type JobIntelligenceResponse } from '../services/jobIntelligenceApi';
@@ -1932,6 +1933,12 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         brief={brief}
         candidates={candidates}
         onAudit={(action, subject) => appendAudit("Offer & Onboarding Agent", action, subject)}
+      />
+
+      {/* Agent 8 — Recruitment Analytics & Workforce Intelligence */}
+      <RecruitmentAnalyticsPanel
+        candidates={candidates}
+        onAudit={(action, subject) => appendAudit("Recruitment Analytics Agent", action, subject)}
       />
 
       {/* 4. Candidate Insights Radar & Overview */}
