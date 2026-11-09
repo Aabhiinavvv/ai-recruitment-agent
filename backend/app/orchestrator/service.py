@@ -94,6 +94,10 @@ def _candidate_tasks(
         tasks.append(_task(5, "AI Interview", ref, "blocked",
                            "Wait for an explicit recruiter decision to advance the candidate.",
                            ["Candidate has not been explicitly advanced by the recruiter."], [3]))
+    elif not candidate.matching_reviewed:
+        tasks.append(_task(5, "AI Interview", ref, "blocked",
+                           "Complete recruiter review of the explainable matching result before interview planning.",
+                           ["Matching and ranking evidence has not been reviewed by the recruiter."], [3]))
     elif not candidate.interview_consent_confirmed:
         tasks.append(_task(5, "AI Interview", ref, "blocked",
                            "Confirm candidate consent before preparing or processing interview responses.",
@@ -119,6 +123,10 @@ def _candidate_tasks(
         tasks.append(_task(6, "Background Verification", ref, "blocked",
                            "Wait for an explicit recruiter advance decision.",
                            ["Recruiter advancement is required before verification."], [5]))
+    elif candidate.interview_status != "completed":
+        tasks.append(_task(6, "Background Verification", ref, "blocked",
+                           "Complete and review the recruiter-led interview before starting background verification.",
+                           ["Interview is not marked completed and reviewed."], [5]))
     elif not candidate.verification_consent_confirmed:
         tasks.append(_task(6, "Background Verification", ref, "blocked",
                            "Obtain candidate authorisation for each proportionate, lawful check.",
@@ -149,6 +157,10 @@ def _candidate_tasks(
         tasks.append(_task(7, "Offer & Onboarding", ref, "blocked",
                            "Obtain an explicit final hire approval from an authorised recruiter.",
                            ["Final recruiter hire approval is not recorded."], [5, 6]))
+    elif candidate.interview_status != "completed":
+        tasks.append(_task(7, "Offer & Onboarding", ref, "blocked",
+                           "Complete and review the recruiter-led interview before preparing an offer.",
+                           ["Interview is not marked completed and reviewed."], [5]))
     elif candidate.verification_status != "completed":
         review_block = candidate.verification_status in {"discrepancy", "unable_to_verify"}
         tasks.append(_task(7, "Offer & Onboarding", ref,
