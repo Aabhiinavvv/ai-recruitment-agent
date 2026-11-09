@@ -6,6 +6,7 @@ from app.communication.router import router as communication_router
 from app.interview.router import router as interview_router
 from app.verification.router import router as verification_router
 from app.onboarding.router import router as onboarding_router
+from app.analytics.router import router as analytics_router
 from app.candidate_intelligence.router import router as candidate_intelligence_router
 from app.matching.router import router as matching_router
 from app.config import get_settings
@@ -15,7 +16,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="AI Recruitment Platform API",
-    version="0.6.0",
+    version="0.7.0",
     description="Recruiter-supervised APIs for the agentic recruitment platform.",
 )
 
@@ -34,6 +35,7 @@ app.include_router(communication_router)
 app.include_router(interview_router)
 app.include_router(verification_router)
 app.include_router(onboarding_router)
+app.include_router(analytics_router)
 
 
 @app.get("/health")
@@ -41,7 +43,7 @@ async def health():
     return {
         "status": "ok",
         "service": "ai-recruitment-backend",
-        "agents": ["job-intelligence", "candidate-intelligence", "matching-ranking", "communication", "interview", "background-verification", "offer-onboarding"],
+        "agents": ["job-intelligence", "candidate-intelligence", "matching-ranking", "communication", "interview", "background-verification", "offer-onboarding", "recruitment-analytics"],
     }
 
 
