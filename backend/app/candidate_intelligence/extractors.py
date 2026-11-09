@@ -48,6 +48,21 @@ def _extract_pdf(data: bytes) -> tuple[str, list[str], str, list[str]]:
     text = "\n\n".join(pages).strip()
     warnings: list[str] = []
     parser = "pymupdf"
+    if os.getenv("DOCLING_ENABLED", "false").lower() == "true":
+        try:
+            from docling.document_converter import DocumentConverter
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "resume.pdf"
+                path.write_bytes(data)
+                result = DocumentConverter().convert(str(path))
+                docling_text = result.document.export_to_markdown().strip()
+                if docling_text:
+                    text = docling_text
+                    parser = "docling+pymupdf"
+        except ImportError:
+            warnings.append("Docling is not installed; PyMuPDF was used.")
+        except Exception as exc:
+            warnings.append(f"Docling PDF enhancement failed; PyMuPDF fallback used ({type(exc).__name__}).")
     if sum(len(p.strip()) for p in pages) < 80:
         ocr_pages = _try_paddle_ocr(data)
         if ocr_pages:
@@ -125,10 +140,10 @@ def _extract_docx(data: bytes) -> tuple[str, list[str], str, list[str]]:
     if os.getenv("DOCLING_ENABLED", "false").lower() == "true":
         try:
             from docling.document_converter import DocumentConverter
-            with tempfile.NamedTemporaryFile(suffix=".docx") as tmp:
-                tmp.write(data)
-                tmp.flush()
-                result = DocumentConverter().convert(tmp.name)
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "resume.docx"
+                path.write_bytes(data)
+                result = DocumentConverter().convert(str(path))
                 docling_text = result.document.export_to_markdown().strip()
                 if docling_text:
                     text = docling_text
@@ -249,6 +264,9 @@ def build_candidate_profile(
 
     def add_evidence(field: str, quote: str, page_number: int | None = None) -> str:
         clean_quote = _normalise_text(quote)[:500]
+        # Evidence should not re-expose direct contact identifiers from surrounding text.
+        clean_quote = re.sub(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "[EMAIL_ADDRESS]", clean_quote, flags=re.I)
+        clean_quote = re.sub(r"(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(?\d{2,5}\)?[\s.-]?)?\d{3,5}[\s.-]?\d{4,5}(?!\d)", "[PHONE_NUMBER]", clean_quote)
         if len(clean_quote) < 2:
             return ""
         evidence_id = f"EV-{len(evidence) + 1:04d}"
