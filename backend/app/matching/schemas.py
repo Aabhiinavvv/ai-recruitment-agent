@@ -4,7 +4,14 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.candidate_intelligence.schemas import CandidateProfile
+from app.candidate_intelligence.schemas import (
+    EducationEntry,
+    EvidenceItem,
+    ExperienceEntry,
+    ExtractedSkill,
+    ProjectEntry,
+    ReviewFlag,
+)
 from app.schemas import EvaluationRubric
 
 
@@ -33,11 +40,28 @@ class JobMatchContext(BaseModel):
         return self
 
 
+class CandidateMatchProfile(BaseModel):
+    """Minimal job-related profile data; direct personal identifiers are not accepted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str
+    source_file: str
+    skills: list[ExtractedSkill] = Field(default_factory=list)
+    work_experience: list[ExperienceEntry] = Field(default_factory=list)
+    education: list[EducationEntry] = Field(default_factory=list)
+    projects: list[ProjectEntry] = Field(default_factory=list)
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+    field_confidence: dict[str, float] = Field(default_factory=dict)
+    extraction_status: Literal["parsed", "needs_review"]
+    review_flags: list[ReviewFlag] = Field(default_factory=list)
+
+
 class CandidateMatchBatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     job: JobMatchContext
-    candidates: list[CandidateProfile] = Field(min_length=1, max_length=200)
+    candidates: list[CandidateMatchProfile] = Field(min_length=1, max_length=200)
 
     @model_validator(mode="after")
     def unique_candidate_ids(self):
