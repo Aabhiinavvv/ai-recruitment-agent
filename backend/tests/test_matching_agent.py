@@ -1,8 +1,16 @@
 from app.candidate_intelligence.schemas import (
-    CandidateProfile, EvidenceItem, ExtractedSkill, PrivacyMetadata, ReviewFlag,
+    EvidenceItem,
+    ExtractedSkill,
+    ExperienceEntry,
+    PrivacyMetadata,
 )
 from app.matching.engine import estimate_experience_months, match_candidate_batch
-from app.matching.schemas import CandidateMatchBatchRequest, JobMatchContext
+from app.matching.retrieval import retrieve_evidence
+from app.matching.schemas import (
+    CandidateMatchBatchRequest,
+    CandidateMatchProfile,
+    JobMatchContext,
+)
 from app.schemas import EvaluationRubric, RubricCriterion
 
 
@@ -11,8 +19,7 @@ def _profile(
     skills: list[str],
     evidence_text: list[tuple[str, str]],
     experience_dates: str | None = "Jan 2022 - Dec 2024",
-    name: str = "Candidate Example",
-) -> CandidateProfile:
+) -> CandidateMatchProfile:
     evidence = [
         EvidenceItem(
             evidence_id=f"EV-{index:04d}",
@@ -23,17 +30,13 @@ def _profile(
         )
         for index, (field, quote) in enumerate(evidence_text, start=1)
     ]
-    skill_ids = [
-        item.evidence_id for item in evidence if item.field == "skills"
-    ]
+    skill_ids = [item.evidence_id for item in evidence if item.field == "skills"]
     experience_ids = [
         item.evidence_id for item in evidence if item.field == "work_experience"
     ]
-    return CandidateProfile(
+    return CandidateMatchProfile(
         candidate_id=candidate_id,
         source_file=f"{candidate_id}.txt",
-        full_name=name,
-        email=f"{candidate_id.lower()}@example.com",
         skills=[
             ExtractedSkill(
                 name=skill,
@@ -43,28 +46,22 @@ def _profile(
             for skill in skills
         ],
         work_experience=[
-            {
-                "raw_entry": "Software Engineer, Example Co",
-                "date_range": experience_dates,
-                "evidence_ids": experience_ids[:1],
-            }
+            ExperienceEntry(
+                raw_entry="Software Engineer, Example Co",
+                date_range=experience_dates,
+                evidence_ids=experience_ids[:1],
+            )
         ] if experience_dates else [],
         education=[],
+        projects=[],
         evidence=evidence,
         field_confidence={"skills": 0.9 if skills else 0, "education": 0},
         extraction_status="parsed",
         review_flags=[],
-        nlp_engine="regex-rules",
-        privacy=PrivacyMetadata(
-            redaction_applied=False,
-            redacted_entities=[],
-            redaction_engine="regex-fallback",
-            redacted_resume_text="Candidate resume content [EMAIL_ADDRESS]",
-        ),
     )
 
 
-def _request(profiles: list[CandidateProfile]) -> CandidateMatchBatchRequest:
+def _request(profiles: list[CandidateMatchProfile]) -> CandidateMatchBatchRequest:
     return CandidateMatchBatchRequest(
         job=JobMatchContext(
             job_id="JOB-ML-001",
@@ -124,40 +121,63 @@ def test_experience_months_unions_overlapping_date_ranges():
     profile = _profile(
         "CAND-DATES",
         ["Python"],
-        [("skills", "Python"), ("work_experience", "Engineering work evidence")],
-        experience_dates="Jan 2022 - Dec 2024",
+        [
+            ("skills", "Python"),
+            ("work_experience", "First engineering role evidence"),
+            ("work_experience", "Second engineering role evidence"),
+        ],
+        experience_dates=None,
     )
+    profile.work_experience = [
+        ExperienceEntry(
+            raw_entry="First role",
+            date_range="Jan 2022 - Dec 2023",
+            evidence_ids=["EV-0002"],
+        ),
+        ExperienceEntry(
+            raw_entry="Second role",
+            date_range="Jan 2023 - Dec 2024",
+            evidence_ids=["EV-0003"],
+        ),
+    ]
     assert estimate_experience_months(profile) == 36
-
-
-def test_identifying_information_does_not_change_match_index():
-    first = _profile(
-        "CAND-ONE",
-        ["Python", "PyTorch", "SQL"],
-        [("skills", "Python PyTorch SQL"), ("projects", "Machine learning models deploy APIs")],
-        name="Alex Candidate",
-    )
-    second = _profile(
-        "CAND-TWO",
-        ["Python", "PyTorch", "SQL"],
-        [("skills", "Python PyTorch SQL"), ("projects", "Machine learning models deploy APIs")],
-        name="Sam Candidate",
-    )
-    results = match_candidate_batch(_request([first, second])).results
-    assert results[0].evidence_alignment_index == results[1].evidence_alignment_index
 
 
 def test_unparseable_experience_is_not_treated_as_zero():
     profile = _profile(
         "CAND-UNKNOWN",
         ["Python", "PyTorch", "SQL"],
-        [("skills", "Python PyTorch SQL"), ("projects", "Machine learning models deploy APIs")],
+        [
+            ("skills", "Python PyTorch SQL"),
+            ("projects", "Machine learning models deploy APIs"),
+        ],
         experience_dates=None,
     )
     request = _request([profile])
     request.job.minimum_experience_months = 24
     result = match_candidate_batch(request).results[0]
     assert any("could not be calculated" in item.lower() for item in result.not_detected_or_unverified)
+
+
+def test_matching_input_contract_excludes_direct_personal_identifiers():
+    fields = set(CandidateMatchProfile.model_fields)
+    assert "full_name" not in fields
+    assert "email" not in fields
+    assert "phone_numbers" not in fields
+    assert "location" not in fields
+    assert "profile_links" not in fields
+
+
+def test_matching_retrieves_a_single_evidence_chunk_even_when_bm25_idf_is_negative():
+    matches, method, coverage = retrieve_evidence(
+        "machine learning deployment",
+        [{"evidence_id": "EV-0001", "field": "projects", "text": "Machine learning APIs"}],
+        top_k=5,
+    )
+    assert matches
+    assert matches[0]["evidence_id"] == "EV-0001"
+    assert method == "bm25"
+    assert coverage > 0
 
 
 def test_matching_requires_an_approved_job_rubric():
