@@ -192,7 +192,7 @@ Agent 7 creates a non-binding offer draft from recruiter-supplied terms, records
 - Record offer event: POST /api/v1/onboarding/offers/events
 - Create onboarding plan: POST /api/v1/onboarding/plans
 - Update onboarding task: POST /api/v1/onboarding/tasks/events
-- Offer preparation requires the approved job, a recruiter-recorded final hire decision, background verification review attestation, zero unresolved verification items and all mandatory offer terms.
+- Offer preparation requires the approved job, a recruiter-recorded final hire decision, background verification review attestation with opaque internal references for the hire approval and verification result, zero unresolved verification items and all mandatory offer terms.
 - Compensation, currency, work mode, work location, dates, probation, benefits and additional terms are supplied explicitly by the recruiter. The agent does not invent compensation or legal clauses.
 - Offer status transitions are explicit: draft → approved → manually sent outside platform → accepted/declined, with withdrawal and expiry paths.
 - Onboarding can be prepared only for an accepted offer with recruiter start approval.
