@@ -387,3 +387,45 @@ The API returns task update results without persistence. The UI exports the in-s
 ## Human review and production requirements
 
 The offer draft is explicitly non-binding and is not legal advice or a signed agreement. Actual offer issuance and contract execution must remain in approved HR/legal systems. Production requires server-authoritative hire approval, verified background-check record linkage, immutable offer-version history, authorised e-sign/provider integration, authenticated role-based access, audit and retention controls, candidate response verification and persistent onboarding task state.
+
+
+---
+
+# Agent 8 — Recruitment Analytics & Workforce Intelligence
+
+Agent 8 calculates a pseudonymous aggregate snapshot from candidate pipeline states and optional attribution/cost metadata.
+
+## API
+
+- POST /api/v1/analytics/recruitment
+
+Each input row accepts only:
+- A synthetic row reference such as `row-0001`.
+- Pipeline stage and recruiter decision status.
+- Optional overall score (0–100).
+- Optional acquisition source channel and anonymised recruiter/team label.
+- Optional application and hire dates.
+
+The schema rejects unknown fields, so names, email addresses, phone numbers, resumes and raw candidate IDs are not accepted. The React dashboard maps local candidate records to sequential row references; personal candidate identifiers remain in the browser.
+
+## Metrics
+
+- Stage and decision breakdown.
+- Overall hire rate and recruiter advance rate.
+- Average supplied candidate score and sample size.
+- Source-channel applicant count and recruiter-confirmed hire rate.
+- Recruiter/team assigned-record count, advanced/hired count, hire count and average score.
+- Time-to-hire in calendar days for recruiter-confirmed hires with both dates.
+- Cost per hire from supplied total recruitment spend divided by a separately supplied hire count for the same period.
+
+## Limitations and methodology
+
+- Funnel counts are a snapshot of current supplied records, not historical stage-entry events or stage-to-stage cohort conversion.
+- Source/recruiter metrics include only records with actual supplied attribution.
+- Time-to-hire includes only completed hires with both application and hire dates; missing dates are not inferred.
+- Cost per hire requires an explicit total cost, ISO currency and hire count for the same reporting period. A zero hire count produces no ratio.
+- Recruiter labels should be team labels or anonymised aliases, not personal names or contact details.
+- The API returns aggregate metrics only and does not persist analytics snapshots or candidate-level input.
+- This module is descriptive. It does not make employment decisions, rank recruiters, infer source causality or estimate missing values.
+
+For historical dashboards, cohort conversion, time-in-stage, SLA tracking, source attribution and trend reporting, production requires a persistent, timestamped, access-controlled event model with consent/purpose controls, immutable audit logs and documented data-quality rules.

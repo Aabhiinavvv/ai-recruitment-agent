@@ -10,6 +10,7 @@ on:
       - feature/communication-agent
       - feature/interview-agent
       - feature/background-verification-agent
+      - feature/offer-onboarding-agent
   push:
     branches:
       - feature/candidate-intelligence-agent
@@ -18,6 +19,7 @@ on:
       - feature/interview-agent
       - feature/background-verification-agent
       - feature/offer-onboarding-agent
+      - feature/recruitment-analytics-agent
 
 permissions:
   contents: read

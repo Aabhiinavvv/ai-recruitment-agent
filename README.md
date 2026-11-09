@@ -200,3 +200,19 @@ Agent 7 creates a non-binding offer draft from recruiter-supplied terms, records
 - JSON/text exports are generated in the browser.
 
 Prototype limits: no offer email dispatch, e-signature, legally binding contract generation, HRIS/payroll integration, document collection, IT account provisioning, equipment ordering or database persistence. Agent 6 verification results are not automatically linked to Agent 7 because the current prototype is stateless; the verification-complete flag is a recruiter attestation. Use approved secure HR/legal/payroll systems for actual offer issuance and onboarding.
+
+
+## Agent 8 — Recruitment Analytics & Workforce Intelligence
+
+Agent 8 calculates a privacy-minimised recruitment analytics snapshot from pseudonymous candidate pipeline records and optional, explicitly supplied attribution data.
+
+- API: POST /api/v1/analytics/recruitment
+- Metrics: current pipeline stage distribution, recruiter decision breakdown, overall hire rate, recruiter advance rate, average available candidate score, source-channel hire rate, recruiter/team workload and outcomes, time-to-hire, and cost per hire.
+- The dashboard accepts optional source channel, anonymised recruiter/team alias, application date and hire date metadata when these are actually available.
+- Time-to-hire uses only recruiter-confirmed hires with both application and hire dates.
+- Cost per hire requires total recruitment spend and a separate hire count for the same reporting period and currency.
+- Metrics unavailable due to missing source data are explicitly reported as unavailable with a coverage warning.
+- Candidate names, email addresses, phone numbers, resumes and candidate IDs are not sent to the analytics API; sequential anonymous row references are used.
+- The API returns aggregate metrics only and does not persist analytics snapshots.
+
+Methodology note: funnel counts represent the current submitted pipeline snapshot, not historical stage transitions. Historical conversion, cohort analysis, source attribution and recruiter performance over time require persisted event-level data with timestamps and audit history. This prototype does not infer missing data or claim causal recruiter/source performance.
