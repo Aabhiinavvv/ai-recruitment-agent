@@ -21,7 +21,7 @@ from app.interview.schemas import (
 logger = logging.getLogger(__name__)
 
 PROTECTED_CONTEXT = re.compile(
-    r"\b(?:age|aged|gender|sex|male|female|race|racial|ethnic\w*|caste|"
+    r"\b(?:age|aged|young|old|gender|sex|male|female|race|racial|ethnic\w*|caste|"
     r"religion|marital|married|pregnan\w*|disabilit\w*|medical|health|"
     r"ulcerative|diagnos\w*|nationality|citizenship|family status|"
     r"political|union member|photo|appearance)\b",
