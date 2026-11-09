@@ -127,3 +127,18 @@ def test_health_lists_interview_agent():
     response = client.get("/health")
     assert response.status_code == 200
     assert "interview" in response.json()["agents"]
+
+
+@pytest.mark.asyncio
+async def test_answer_protected_context_is_flagged_for_manual_review():
+    result = await evaluate_interview_answer(
+        _answer_request(
+            answer=(
+                "I have a medical condition that affects my schedule. "
+                "I wrote pytest unit tests and an API integration test."
+            )
+        ),
+        Settings(llm_enabled=False),
+    )
+    assert result.score is None
+    assert any("omitted from the model context" in flag for flag in result.review_flags)
