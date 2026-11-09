@@ -4,11 +4,12 @@ import re
 from datetime import date
 from typing import Any
 
-from app.candidate_intelligence.schemas import CandidateProfile, EvidenceItem
+from app.candidate_intelligence.schemas import EvidenceItem
 from app.matching.retrieval import retrieve_evidence
 from app.matching.schemas import (
     CandidateMatchBatchRequest,
     CandidateMatchBatchResponse,
+    CandidateMatchProfile,
     CandidateMatchResult,
     CriterionMatch,
     SkillMatch,
@@ -34,11 +35,11 @@ def normalize_skill(value: str) -> str:
     return SKILL_ALIASES.get(key, key)
 
 
-def _evidence_lookup(profile: CandidateProfile) -> dict[str, EvidenceItem]:
+def _evidence_lookup(profile: CandidateMatchProfile) -> dict[str, EvidenceItem]:
     return {item.evidence_id: item for item in profile.evidence}
 
 
-def _skill_matches(profile: CandidateProfile, required: list[str]) -> list[SkillMatch]:
+def _skill_matches(profile: CandidateMatchProfile, required: list[str]) -> list[SkillMatch]:
     detected = {normalize_skill(item.name): item for item in profile.skills}
     evidence = _evidence_lookup(profile)
     results: list[SkillMatch] = []
@@ -56,7 +57,7 @@ def _skill_matches(profile: CandidateProfile, required: list[str]) -> list[Skill
     return results
 
 
-def _profile_chunks(profile: CandidateProfile) -> list[dict[str, Any]]:
+def _profile_chunks(profile: CandidateMatchProfile) -> list[dict[str, Any]]:
     """Only job-related text is searchable; identifiers and demographic signals are excluded."""
     permitted_fields = {"skills", "work_experience", "education", "projects"}
     evidence = _evidence_lookup(profile)
@@ -181,7 +182,7 @@ def _evidence_for_ids(
 
 
 def _score_criterion(
-    profile: CandidateProfile,
+    profile: CandidateMatchProfile,
     criterion: str,
     weight_percent: int,
     evidence_to_look_for: list[str],
@@ -290,7 +291,7 @@ def _score_criterion(
     ), method
 
 
-def _build_match(profile: CandidateProfile, job: Any) -> tuple[CandidateMatchResult, float | None]:
+def _build_match(profile: CandidateMatchProfile, job: Any) -> tuple[CandidateMatchResult, float | None]:
     chunks = _profile_chunks(profile)
     criteria: list[CriterionMatch] = []
     retrieval_methods: set[str] = set()
@@ -379,7 +380,6 @@ def match_candidate_batch(request: CandidateMatchBatchRequest) -> CandidateMatch
             pair[0].evidence_alignment_index is not None,
             pair[0].evidence_alignment_index if pair[0].evidence_alignment_index is not None else -1,
             pair[0].evidence_coverage_percent,
-            pair[0].candidate_id,
         ),
         reverse=True,
     )
