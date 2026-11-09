@@ -5,6 +5,7 @@ import uuid
 
 from app.candidate_intelligence.extractors import build_candidate_profile, extract_document
 from app.candidate_intelligence.schemas import CandidateIntelligenceBatchResponse, ResumeFileResult
+from starlette.concurrency import run_in_threadpool
 
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -46,14 +47,15 @@ async def process_resume_batch(files, consent_confirmed: bool) -> CandidateIntel
                 continue
             seen_hashes[digest] = filename
 
-            text, pages, parser, warnings = extract_document(data, filename)
-            profile, profile_warnings = build_candidate_profile(
-                text=text,
-                pages=pages,
-                filename=filename,
-                candidate_id="CAND-" + uuid.uuid4().hex[:12].upper(),
-                parser_used=parser,
-                parser_warnings=warnings,
+            text, pages, parser, warnings = await run_in_threadpool(extract_document, data, filename)
+            profile, profile_warnings = await run_in_threadpool(
+                build_candidate_profile,
+                text,
+                pages,
+                filename,
+                "CAND-" + uuid.uuid4().hex[:12].upper(),
+                parser,
+                warnings,
             )
             results.append(ResumeFileResult(
                 file_name=filename,
