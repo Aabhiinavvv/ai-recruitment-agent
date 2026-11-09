@@ -1,39 +1,164 @@
-# Python Backend — Agent 1 and Agent 2
+# Agent 1 — Job Intelligence Agent
 
-This service provides two recruiter-supervised capabilities:
+This Python service accepts a company's hiring brief and returns a structured, recruiter-reviewable job description, required/preferred skills, clarification questions and an evaluation rubric.
 
-- Agent 1 — Job Intelligence: LangGraph workflow for JD drafting, clarifications, review flags and weighted evaluation rubrics.
-- Agent 2 — Candidate Intelligence: batch resume intake, document extraction, structured candidate profiles, evidence references, PII redaction and review flags.
+## Responsibilities
 
-Neither agent makes final hiring decisions. Candidate profiles from Agent 2 are unranked. Matching and ranking belongs to a later, separate agent and must be reviewed by a recruiter.
+- Normalize the company-provided hiring brief.
+- Identify essential missing information and ask clarifying questions.
+- Generate a structured JD and role-specific evaluation rubric.
+- Detect potentially sensitive or exclusionary wording for human review.
+- Require company approval before the job is published.
+- Use a local Ollama model when available; use an explicitly labelled deterministic template fallback when it is not.
 
-## 1. Setup
+The agent does not publish jobs, rank candidates, or make hiring decisions.
+
+## Architecture
+
+The workflow is implemented as a LangGraph state graph:
+
+1. Normalize the request.
+2. Assess completeness and review flags.
+3. Route to clarification or generation.
+4. Generate structured content using Ollama, or a transparent fallback.
+5. Validate and render the final draft.
+
+## Local setup
 
 Use Python 3.11 or newer.
 
-~~~powershell
+~~~bash
 cd backend
 python -m venv .venv
+~~~
+
+Windows PowerShell:
+
+~~~powershell
 .venv\Scripts\Activate.ps1
+~~~
+
+Install dependencies:
+
+~~~bash
 pip install -r requirements.txt
-Copy-Item .env.example .env
+~~~
+
+Copy .env.example to .env. The service works without a model, but then uses a deterministic fallback.
+
+To enable local model generation, install and start Ollama, then pull a compatible model:
+
+~~~bash
+ollama pull qwen3:4b
+~~~
+
+Start the API:
+
+~~~bash
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ~~~
 
-API docs: http://127.0.0.1:8000/docs
+API documentation: http://127.0.0.1:8000/docs.
 
-The core backend includes PyMuPDF for PDFs, python-docx for DOCX, and text parsing for TXT. python-multipart is required for file uploads.
+## Example request
 
-## 2. Optional document engines
+~~~json
+{
+  "company_name": "Example Labs",
+  "job_title": "Machine Learning Engineer",
+  "department": "Engineering",
+  "location": "Bengaluru, India",
+  "workplace_type": "hybrid",
+  "headcount": 2,
+  "employment_type": "full_time",
+  "seniority": "Mid-level",
+  "min_experience_months": 24,
+  "salary_budget": "INR 12–18 LPA",
+  "currency": "INR",
+  "hiring_timeline": "Within 30 days",
+  "requirements": "Python, PyTorch, SQL, model deployment",
+  "required_skills": ["Python", "PyTorch", "SQL"],
+  "preferred_skills": ["Docker", "MLflow"],
+  "responsibilities": [
+    "Build and evaluate machine-learning models",
+    "Deploy models behind reliable APIs"
+  ],
+  "education_requirements": [],
+  "industry": "Technology",
+  "additional_context": "The role works with product and engineering teams."
+}
+~~~
 
-Install only the engines you intend to use:
+## API
+
+- GET /health
+- POST /api/v1/job-intelligence/draft
+
+The response includes status, job_description_markdown, structured_job, rubric, required_skills, preferred_skills, clarification_questions, review_flags, warnings, generation_mode, model_name, and requires_company_approval.
+
+## Tests
+
+~~~bash
+pytest -q
+~~~
+
+## Frontend connection
+
+The existing React + Vite application calls http://localhost:8000 by default. Override it with VITE_API_BASE_URL in the frontend environment.
+
+## Safety and scope
+
+- Model-generated requirements must be reviewed by the company.
+- Potentially sensitive criteria are flagged for human review.
+- Rubrics support consistent assessment; they do not make an autonomous hiring decision.
+- This service does not send emails or publish vacancies.
+
+
+---
+
+# Agent 2 — Candidate Intelligence Agent
+
+Agent 2 provides batch resume upload and evidence-backed candidate profile extraction.
+
+## Responsibilities
+
+- Accept PDF, DOCX and TXT resumes in one upload batch.
+- Extract text with PyMuPDF and python-docx.
+- Optionally use Docling for layout-aware PDF/DOCX extraction.
+- Use PaddleOCR for scanned PDF pages when installed and selectable text is insufficient.
+- Use spaCy for optional named-entity annotations (ORG, GPE, LOC and DATE).
+- Use Presidio for optional PII redaction, with a basic email/phone regex fallback.
+- Produce Pydantic-validated candidate profiles, confidence values, evidence references and review flags.
+- Continue processing the remaining files if one file is corrupt or unsupported.
+
+It does not score role fit, rank candidates, make shortlisting decisions, or persist the uploaded documents.
+
+## Agent 2 API
+
+POST /api/v1/candidate-intelligence/resumes/batch
+
+Send multipart/form-data with:
+- files: one or more PDF, DOCX or TXT files.
+- consent_confirmed: true.
+
+Limits: maximum 15 files per batch, 10 MB per file. Files are processed in memory and then released.
+
+## Extraction engine setup
+
+Core setup uses:
+
+~~~powershell
+pip install -r requirements.txt
+~~~
+
+Optional engines:
 
 ~~~powershell
 pip install -r requirements-extraction-extras.txt
 python -m spacy download en_core_web_sm
 ~~~
 
-Set these values in .env:
+Configure .env as needed:
 
 ~~~dotenv
 DOCLING_ENABLED=false
@@ -41,51 +166,24 @@ SPACY_MODEL=en_core_web_sm
 PRESIDIO_ENABLED=false
 ~~~
 
-- PyMuPDF: default PDF text extraction, retaining page-level provenance.
-- Docling: optional structured DOCX extraction. Set DOCLING_ENABLED=true; python-docx remains the fallback.
-- spaCy: optional named-entity annotations (organisations, places and dates). Install the en_core_web_sm model separately; no model downloads happen automatically.
-- Presidio: optional PII redaction. Set PRESIDIO_ENABLED=true after installing/configuring the appropriate Presidio recognisers.
-- PaddleOCR: optional OCR for scanned/image-only PDFs. Install a compatible paddlepaddle or paddlepaddle-gpu build for your Python/CUDA environment separately. The adapter attempts PaddleOCR 2.x and 3.x interfaces.
+PaddleOCR additionally requires a PaddlePaddle package matching the local Python, OS and CPU/CUDA setup. Install paddlepaddle or paddlepaddle-gpu separately. Do not install OCR extras unless you need scanned-resume support.
 
-For CPU/GPU compatibility, choose the PaddlePaddle build that matches your Python, operating system and CUDA environment. OCR and Docling dependencies can be large; do not install them unless needed.
+## Profile output
 
-## 3. Agent 2 API
+Each successful file contains:
+- Contact fields detected from the source resume.
+- Skill mentions from a built-in keyword vocabulary.
+- Raw experience, education and project entries.
+- Profile URLs and certification mentions.
+- Evidence IDs and source excerpts; PDF text evidence includes page numbers where available.
+- Extraction confidence markers and review flags.
+- Redacted resume text and information about the redaction engine.
 
-POST /api/v1/candidate-intelligence/resumes/batch
+## Privacy, accuracy and production limitations
 
-Content type: multipart/form-data
-
-Fields:
-- files: one or more PDF, DOCX or TXT files. Maximum 15 files.
-- consent_confirmed: boolean form field. Must be true; the calling organisation is responsible for confirming lawful notice/authorisation.
-
-Limits:
-- 10 MB per file.
-- Unsupported, empty, oversized, duplicate, corrupt or unparseable files receive their own error result. One bad file does not stop the rest of the batch.
-- Files are processed in memory and are not persisted by this endpoint.
-
-The response contains a per-file result. A successful profile includes contact fields, detected skills, experience, education, projects, certifications, profile links, optional spaCy annotations, field confidence, evidence IDs and excerpts, privacy/redaction metadata, and review flags.
-
-## 4. Evidence and privacy behaviour
-
-- Every extracted skill and structured section item links to one or more evidence IDs.
-- Evidence records retain the source filename and PDF page number when page-based extraction is available.
-- Extracted values are not treated as verified credentials. Recruiters must check the original document and supporting evidence.
-- Email/phone detection is heuristic. Names are only accepted from a conservative first-lines pattern.
-- The fallback PII redactor masks email addresses and phone-like strings. Presidio can be enabled for richer detection, but language/model configuration must be reviewed.
-- The complete original resume text is not returned in the API response. A redacted text representation is retained in the profile response for audit/review; restrict access to that response in production.
-- Candidate data is not saved to a database by this implementation. Persistent storage, authentication, tenant isolation, retention/deletion workflows, malware scanning and encrypted object storage are production work still required.
-- Consent checkbox/API flag is a gate, not proof of consent. Store and audit the actual consent record in a production deployment.
-
-## 5. Tests
-
-~~~powershell
-pytest -q
-~~~
-
-## 6. Agent 1 API
-
-- GET /health
-- POST /api/v1/job-intelligence/draft
-
-Agent 1 uses a local Ollama model when enabled, otherwise a clearly labelled deterministic fallback. Every job draft requires company approval before publishing.
+- The frontend requires a consent confirmation. This is an application gate, not proof of candidate consent. A production system must persist the consent notice/version, timestamp, purpose and actor.
+- The regex redaction fallback masks email and phone-like values only. Enable and configure Presidio for broader entity detection; validate language-specific recognisers before production.
+- The original extracted resume text is not returned; the response includes a redacted text representation. The structured contact fields remain visible to authorised workflow users and require access control.
+- Extraction is heuristic. Skill mentions are not proof of proficiency, and entity recognition is not verification. Recruiters must check the original resume.
+- There is no database persistence, authentication, tenant isolation, malware scanning, encrypted object storage, retention/deletion workflow or access audit yet.
+- Do not use extraction outputs as an automated hiring decision or as a sole basis for rejecting a candidate.
