@@ -5,9 +5,11 @@ on:
     branches:
       - main
       - feature/job-intelligence-agent
+      - feature/candidate-intelligence-agent
   push:
     branches:
       - feature/candidate-intelligence-agent
+      - feature/matching-ranking-agent
 
 permissions:
   contents: read
