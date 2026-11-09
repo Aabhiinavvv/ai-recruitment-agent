@@ -21,10 +21,10 @@ from app.interview.schemas import (
 logger = logging.getLogger(__name__)
 
 PROTECTED_CONTEXT = re.compile(
-    r"\\b(?:age|aged|gender|sex|male|female|race|racial|ethnic\\w*|caste|"
-    r"religion|marital|married|pregnan\\w*|disabilit\\w*|medical|health|"
-    r"ulcerative|diagnos\\w*|nationality|citizenship|family status|"
-    r"political|union member|photo|appearance)\\b",
+    r"\b(?:age|aged|gender|sex|male|female|race|racial|ethnic\w*|caste|"
+    r"religion|marital|married|pregnan\w*|disabilit\w*|medical|health|"
+    r"ulcerative|diagnos\w*|nationality|citizenship|family status|"
+    r"political|union member|photo|appearance)\b",
     re.IGNORECASE,
 )
 
@@ -61,7 +61,7 @@ def _clean_job_context(value: str) -> tuple[str, list[str]]:
     """Remove complete sentences containing protected/personal selection context."""
     warnings: list[str] = []
     kept: list[str] = []
-    for sentence in re.split(r"(?<=[.!?])\\s+", value.strip()):
+    for sentence in re.split(r"(?<=[.!?])\s+", value.strip()):
         if not sentence:
             continue
         if PROTECTED_CONTEXT.search(sentence):
@@ -228,6 +228,21 @@ async def create_interview_plan(
     else:
         questions = _fallback_questions(request)
 
+    if generation_mode == "ollama":
+        permitted_questions = [
+            item for item in questions
+            if not PROTECTED_CONTEXT.search(
+                item.question + " " + " ".join(item.follow_up_probes)
+            )
+        ]
+        if len(permitted_questions) < 4:
+            warnings.append(
+                "Model-generated questions included protected or personal topics and were replaced with the deterministic question set."
+            )
+            questions = _fallback_questions(request)
+        else:
+            questions = permitted_questions[:8]
+
     if not questions:
         questions = _fallback_questions(request)
     return InterviewPlanResponse(
@@ -249,10 +264,13 @@ async def evaluate_interview_answer(
     settings = settings or get_settings()
     evaluation_mode = "manual_review_fallback"
     model_name: str | None = None
+    safe_answer, answer_warnings = _clean_job_context(request.answer)
 
     try:
         if not settings.llm_enabled:
             raise RuntimeError("Local model evaluation is disabled.")
+        if not safe_answer:
+            raise RuntimeError("No job-related answer text remained after protected-context filtering.")
         raw = await _ollama_json(
             settings=settings,
             system_prompt=EVALUATION_SYSTEM_PROMPT,
@@ -262,7 +280,7 @@ async def evaluate_interview_answer(
                 "question": request.question,
                 "competency": request.competency,
                 "evidence_to_look_for": request.evidence_to_look_for,
-                "candidate_answer": request.answer,
+                "candidate_answer": safe_answer,
             },
             json_schema=InterviewAnswerEvaluation.model_json_schema(),
         )
@@ -270,13 +288,14 @@ async def evaluate_interview_answer(
         # Guard against fabricated evidence snippets: only verbatim answer excerpts pass.
         verified_quotes = [
             quote for quote in evaluation.evidence_quotes
-            if quote and quote in request.answer
+            if quote and quote in safe_answer
         ][:3]
         if len(verified_quotes) != len(evaluation.evidence_quotes):
             evaluation.review_flags.append(
                 "One or more model-provided evidence excerpts were not found verbatim in the answer and were removed."
             )
         evaluation.evidence_quotes = verified_quotes
+        evaluation.review_flags.extend(answer_warnings)
         evaluation_mode = "ollama"
         model_name = settings.ollama_model
         score: int | None = evaluation.score
@@ -302,7 +321,10 @@ async def evaluate_interview_answer(
             "Could you share a specific example or observable result that demonstrates "
             f"{request.competency}?"
         )
-        review_flags = ["Manual recruiter assessment required; no automated score was produced."]
+        review_flags = [
+            "Manual recruiter assessment required; no automated score was produced.",
+            *answer_warnings,
+        ]
 
     return InterviewAnswerEvaluationResponse(
         session_id=request.session_id,
