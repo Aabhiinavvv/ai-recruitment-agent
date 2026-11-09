@@ -85,7 +85,10 @@ export async function matchCandidates(
     work_experience: profile.work_experience,
     education: profile.education,
     projects: profile.projects,
-    evidence: profile.evidence,
+    evidence: profile.evidence.map((item) => ({
+      ...item,
+      source_file: 'candidate-resume-' + (index + 1),
+    })),
     field_confidence: profile.field_confidence,
     extraction_status: profile.extraction_status,
     review_flags: profile.review_flags,
