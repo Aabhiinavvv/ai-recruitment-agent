@@ -109,9 +109,9 @@ class VerificationReviewRequest(BaseModel):
     def validate_opaque_reference(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        if not re.fullmatch(r"[A-Za-z0-9._:-]{3,120}", value):
+        if not re.fullmatch(r"vault:[A-Za-z0-9._:-]{3,114}", value):
             raise ValueError(
-                "Evidence reference must be an opaque internal reference, not a URL, document number or raw identifier."
+                "Evidence reference must use vault:<internal-reference> format, not a URL, document number or raw identifier."
             )
         return value
 
