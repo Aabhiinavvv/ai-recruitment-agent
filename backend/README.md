@@ -306,3 +306,41 @@ The evaluation request requires a question, competency, answer text and explicit
 This prototype is a recruiter-led, text-only workflow. It does not autonomously interview candidates, record audio/video, analyse face/voice/emotion, proctor, store transcripts, make a pass/reject/hire decision, or dispatch interview invitations. The API is stateless; session data exists only in the client until the recruiter exports it.
 
 Before production, add authenticated recruiter permissions, persistent candidate consent records, encrypted and access-controlled transcript storage (only if necessary), retention/deletion controls, audit logs, and independent validation of interview questions and evaluation reliability across job families and candidate groups.
+
+
+---
+
+# Agent 6 — Background Verification Agent
+
+Agent 6 creates a candidate-authorised verification checklist and validates a human review attestation plus evidence metadata.
+
+## API
+
+- POST /api/v1/verification/cases
+- POST /api/v1/verification/reviews
+
+Supported check types:
+- identity
+- employment
+- education
+- address
+- professional_license
+- reference
+
+A case request requires an approved job, an explicit recruiter advance decision, candidate authorisation, a jurisdiction label and one or more selected check types. The API returns the checks, purpose and evidence guidance. It does not execute any check.
+
+A review request is check-type-specific. A verified or discrepancy outcome requires:
+- Explicit human reviewer attestation.
+- Confirmation that the authorised source was checked.
+- Evidence source type and an opaque internal evidence reference.
+- A non-sensitive evidence summary, where appropriate.
+
+Unable-to-verify outcomes require a brief non-sensitive note. Common personal identifier and document-number patterns are rejected in evidence summary/note fields. Never put Aadhaar, PAN, passport, national identity numbers, dates of birth, bank/account details, phone numbers, email addresses, full addresses, or document images into this prototype.
+
+## Provider and execution boundary
+
+No external provider, employer, university, referee, government database, police/criminal-record database or other source is contacted. The API returns a checklist and a stateless reviewer result only. It does not persist cases or documents, notify candidates, determine eligibility or make an employment decision. No provider credentials or adapters are enabled.
+
+## Production requirements
+
+Before production, implement an approved provider adapter for the applicable jurisdiction and check type, verify provider licensing and data sources, perform jurisdiction-specific legal/privacy review, persist versioned consent and purpose records, authenticate recruiter/reviewer identities, enforce role/tenant access server-side, encrypt any permitted evidence, minimise collected data, and implement immutable audit logs, retention/deletion and dispute/correction workflows. A discrepancy or unavailable source must be resolved by a qualified human reviewer and cannot be used as an automatic rejection.
