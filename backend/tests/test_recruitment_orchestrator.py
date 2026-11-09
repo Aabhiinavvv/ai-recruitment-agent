@@ -90,15 +90,48 @@ def test_interview_requires_recruiter_advancement_and_consent():
     assert task.status == "blocked"
 
 
+def test_interview_waits_for_recruiter_matching_review():
+    state = _request().candidate.model_copy(update={
+        "matching_reviewed": False,
+        "recruiter_decision": "advance",
+        "interview_consent_confirmed": True,
+    })
+    result = build_orchestration_plan(_request(candidate=state))
+    task = next(task for task in result.tasks if task.agent_number == 5)
+    assert task.status == "blocked"
+    assert "matching" in task.blockers[0].lower()
+
+
+def test_verification_waits_for_completed_interview():
+    state = _request().candidate.model_copy(update={
+        "matching_reviewed": True,
+        "recruiter_decision": "advance",
+        "interview_consent_confirmed": True,
+        "interview_status": "scheduled",
+        "verification_consent_confirmed": True,
+    })
+    result = build_orchestration_plan(_request(candidate=state))
+    task = next(task for task in result.tasks if task.agent_number == 6)
+    assert task.status == "blocked"
+    assert "interview" in task.blockers[0].lower()
+
+
 def test_interview_status_is_waiting_for_human_interview_when_scheduled():
-    state = _request().candidate.model_copy(update={"interview_status": "scheduled"})
+    state = _request().candidate.model_copy(update={
+        "matching_reviewed": True,
+        "interview_status": "scheduled",
+    })
     result = build_orchestration_plan(_request(candidate=state))
     task = next(task for task in result.tasks if task.agent_number == 5)
     assert task.status == "waiting_external_action"
 
 
 def test_verification_discrepancy_requires_human_review():
-    state = _request().candidate.model_copy(update={"verification_status": "discrepancy"})
+    state = _request().candidate.model_copy(update={
+        "matching_reviewed": True,
+        "interview_status": "completed",
+        "verification_status": "discrepancy",
+    })
     result = build_orchestration_plan(_request(candidate=state))
     by_agent = {task.agent_number: task for task in result.tasks}
     assert by_agent[6].status == "needs_human_review"
@@ -117,6 +150,8 @@ def test_offer_requires_final_hire_approval_and_verified_background_check():
 
 def test_accepted_offer_enables_onboarding():
     state = _request().candidate.model_copy(update={
+        "matching_reviewed": True,
+        "interview_status": "completed",
         "recruiter_decision": "hire_approved",
         "verification_status": "completed",
         "offer_status": "accepted",
