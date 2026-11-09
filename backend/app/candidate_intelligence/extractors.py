@@ -63,7 +63,7 @@ def _extract_pdf(data: bytes) -> tuple[str, list[str], str, list[str]]:
             warnings.append("Docling is not installed; PyMuPDF was used.")
         except Exception as exc:
             warnings.append(f"Docling PDF enhancement failed; PyMuPDF fallback used ({type(exc).__name__}).")
-    if sum(len(p.strip()) for p in pages) < 80:
+    if sum(len(p.strip()) for p in pages) < 80 and len(text.strip()) < 80:
         ocr_pages = _try_paddle_ocr(data)
         if ocr_pages:
             pages = ocr_pages
@@ -71,9 +71,14 @@ def _extract_pdf(data: bytes) -> tuple[str, list[str], str, list[str]]:
             parser = "pymupdf+paddleocr"
         else:
             warnings.append(
-                "Little selectable text was found. OCR is unavailable or returned no text; "
+                "Little readable text was found. OCR is unavailable or returned no text; "
                 "check the scan or enable PaddleOCR."
             )
+    elif sum(len(p.strip()) for p in pages) < 80 and parser.startswith("docling"):
+        warnings.append(
+            "Docling recovered text from this PDF, but PyMuPDF could not provide selectable page text; "
+            "evidence excerpts may not include page numbers."
+        )
     return text, pages, parser, warnings
 
 
