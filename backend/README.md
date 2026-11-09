@@ -344,3 +344,46 @@ No external provider, employer, university, referee, government database, police
 ## Production requirements
 
 Before production, implement an approved provider adapter for the applicable jurisdiction and check type, verify provider licensing and data sources, perform jurisdiction-specific legal/privacy review, persist versioned consent and purpose records, authenticate recruiter/reviewer identities, enforce role/tenant access server-side, encrypt any permitted evidence, minimise collected data, and implement immutable audit logs, retention/deletion and dispute/correction workflows. A discrepancy or unavailable source must be resolved by a qualified human reviewer and cannot be used as an automatic rejection.
+
+
+---
+
+# Agent 7 — Offer Management & Onboarding Agent
+
+Agent 7 prepares non-binding offer drafts from recruiter-supplied terms, records a controlled offer lifecycle, and creates post-acceptance onboarding task plans.
+
+## API
+
+- POST /api/v1/onboarding/offers/drafts
+- POST /api/v1/onboarding/offers/events
+- POST /api/v1/onboarding/plans
+- POST /api/v1/onboarding/tasks/events
+
+## Offer lifecycle
+
+Offer creation requires an approved job, a recruiter-approved final hire decision, a completed background verification review attestation, zero unresolved verification items, supplied compensation and employment terms, a proposed start date and an offer expiry date. The backend validates dates and currencies and uses only supplied terms. It does not invent compensation, benefits or legal clauses.
+
+The state transitions are:
+- draft_pending_approval → approved_not_sent (approve)
+- approved_not_sent → sent_outside_platform (mark_sent, with an opaque internal reference)
+- sent_outside_platform → accepted / declined (candidate response confirmation and opaque event reference)
+- approved_not_sent / sent_outside_platform → withdrawn
+- sent_outside_platform → expired (only after the expiry date)
+
+The API records a stateless reviewer event response. It does not send the offer, receive candidate responses, or persist the offer. The current-status field is client supplied; production must replace this with server-side stored state and authenticated recruiter permissions.
+
+## Onboarding
+
+An onboarding plan can be created only with offer_status="accepted" and recruiter start approval. The default checklist includes employment document review, role/policy orientation, payroll setup in a secure HR system, equipment and least-privilege access preparation, first-week planning and role-specific training review.
+
+Task transitions require reviewer attestation:
+- pending → in_progress / blocked / completed
+- in_progress → blocked / completed
+- blocked → in_progress
+- completed is terminal
+
+The API returns task update results without persistence. The UI exports the in-session task state. It does not collect contracts, tax IDs, bank details, identity documents or payroll data, and it does not create HRIS records, payroll profiles, IT accounts or equipment orders.
+
+## Human review and production requirements
+
+The offer draft is explicitly non-binding and is not legal advice or a signed agreement. Actual offer issuance and contract execution must remain in approved HR/legal systems. Production requires server-authoritative hire approval, verified background-check record linkage, immutable offer-version history, authorised e-sign/provider integration, authenticated role-based access, audit and retention controls, candidate response verification and persistent onboarding task state.
