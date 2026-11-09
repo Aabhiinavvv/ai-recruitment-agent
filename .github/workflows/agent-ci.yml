@@ -8,6 +8,7 @@ on:
       - feature/candidate-intelligence-agent
       - feature/matching-ranking-agent
       - feature/communication-agent
+      - feature/interview-agent
   push:
     branches:
       - feature/candidate-intelligence-agent
