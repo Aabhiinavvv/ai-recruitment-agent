@@ -361,7 +361,7 @@ Agent 7 prepares non-binding offer drafts from recruiter-supplied terms, records
 
 ## Offer lifecycle
 
-Offer creation requires an approved job, a recruiter-approved final hire decision, a completed background verification review attestation, zero unresolved verification items, supplied compensation and employment terms, a proposed start date and an offer expiry date. The backend validates dates and currencies and uses only supplied terms. It does not invent compensation, benefits or legal clauses.
+Offer creation requires an approved job, a recruiter-approved final hire decision, a completed background verification review attestation, opaque internal references for the final hire approval and completed verification review, zero unresolved verification items, supplied compensation and employment terms, a proposed start date and an offer expiry date. The backend validates dates and currencies and uses only supplied terms. It does not invent compensation, benefits or legal clauses.
 
 The state transitions are:
 - draft_pending_approval → approved_not_sent (approve)
