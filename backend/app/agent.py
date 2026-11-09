@@ -28,6 +28,9 @@ class JobAgentState(TypedDict, total=False):
     review_flags: list[ReviewFlag]
     warnings: list[str]
     content: JobDraftContent
+    rubric: EvaluationRubric
+    required_skills: list[str]
+    preferred_skills: list[str]
     job_description_markdown: str
     generation_mode: str
     model_name: str
