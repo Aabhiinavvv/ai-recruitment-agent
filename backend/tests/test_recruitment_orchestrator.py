@@ -140,6 +140,8 @@ def test_verification_discrepancy_requires_human_review():
 
 def test_offer_requires_final_hire_approval_and_verified_background_check():
     state = _request().candidate.model_copy(update={
+        "matching_reviewed": True,
+        "interview_status": "completed",
         "recruiter_decision": "advance",
         "verification_status": "completed",
     })
