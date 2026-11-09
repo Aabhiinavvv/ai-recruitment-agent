@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent import JobIntelligenceAgent
+from app.communication.router import router as communication_router
 from app.candidate_intelligence.router import router as candidate_intelligence_router
 from app.matching.router import router as matching_router
 from app.config import get_settings
@@ -26,6 +27,7 @@ app.add_middleware(
 job_intelligence_agent = JobIntelligenceAgent(settings)
 app.include_router(candidate_intelligence_router)
 app.include_router(matching_router)
+app.include_router(communication_router)
 
 
 @app.get("/health")
@@ -33,7 +35,7 @@ async def health():
     return {
         "status": "ok",
         "service": "ai-recruitment-backend",
-        "agents": ["job-intelligence", "candidate-intelligence", "matching-ranking"],
+        "agents": ["job-intelligence", "candidate-intelligence", "matching-ranking", "communication"],
     }
 
 
