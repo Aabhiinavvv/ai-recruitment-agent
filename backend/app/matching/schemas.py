@@ -32,7 +32,12 @@ class JobMatchContext(BaseModel):
     def validate_approval_and_rubric(self):
         if not self.approved_for_matching:
             raise ValueError("Only a recruiter-approved job can be used for matching.")
-        if not self.required_skills and not self.responsibilities and not self.education_requirements:
+        if (
+            not self.required_skills
+            and not self.responsibilities
+            and not self.education_requirements
+            and self.minimum_experience_months is None
+        ):
             raise ValueError("Provide job-related skills, responsibilities or education criteria.")
         total = sum(item.weight_percent for item in self.rubric.criteria)
         if total != 100:
