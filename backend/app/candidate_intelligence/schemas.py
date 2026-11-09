@@ -28,6 +28,12 @@ class ExtractedSkill(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
 
 
+class ResumeNamedEntity(BaseModel):
+    text: str
+    label: Literal["ORG", "GPE", "LOC", "DATE"]
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
 class ExperienceEntry(BaseModel):
     raw_entry: str
     title: str | None = None
@@ -74,6 +80,8 @@ class CandidateProfile(BaseModel):
     projects: list[ProjectEntry] = Field(default_factory=list)
     certifications: list[str] = Field(default_factory=list)
     profile_links: list[str] = Field(default_factory=list)
+    named_entities: list[ResumeNamedEntity] = Field(default_factory=list)
+    nlp_engine: str
     evidence: list[EvidenceItem] = Field(default_factory=list)
     field_confidence: dict[str, float] = Field(default_factory=dict)
     extraction_status: Literal["parsed", "needs_review"]
