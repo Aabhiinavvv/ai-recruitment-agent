@@ -232,3 +232,19 @@ Agent 9 forecasts aggregate monthly requisition demand, hiring capacity, backlog
 - Forecasts are planning estimates, not commitments, calibrated confidence intervals or automated personnel decisions.
 
 Limitations: seasonal hiring patterns, department-level skill mix, productivity, budget constraints, internal mobility, role-level scarcity and macroeconomic conditions are not modelled. Historical demand quality and at least 6–12 months of data materially affect interpretation. HR/business owners should validate the assumptions before acting.
+
+
+## Agent 10 — AI Recruitment Orchestrator
+
+Agent 10 is the dependency-aware coordination layer for Agents 1–9.
+
+- API: POST /api/v1/orchestrator/plan
+- Produces a role-level and pseudonymous candidate-specific workflow plan.
+- Tracks job approval, candidate profile extraction, explainable matching review, recruiter-approved communication, candidate-consented interview, candidate-consented background verification, offer/onboarding, recruitment analytics and workforce planning.
+- Evaluates dependencies, approval gates, consent gates, external actions, verification discrepancies and human-review blockers.
+- Returns per-agent status, blockers, dependencies, next recommended actions and an aggregate completion indicator.
+- Candidate identity and resume data are not accepted by the orchestration API; a synthetic candidate reference and explicit workflow facts are used.
+- The planner requires recruiter matching review before interview progression, a completed interview before verification, completed verification plus final recruiter approval before an active offer, and an accepted offer before onboarding.
+- This first version is plan-only. It does not invoke agents, send communications, call providers, update candidate records, persist workflow state or make autonomous hiring decisions.
+
+Production evolution: add a shared authenticated workflow store, server-authoritative events and state transitions, durable consent records, role-based access/tenant isolation, idempotent job dispatch, retries/dead-letter handling, an event bus or workflow engine, distributed tracing, immutable audit logs, and human approval checkpoints before enabling execution.
