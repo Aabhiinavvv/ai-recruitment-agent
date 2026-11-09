@@ -153,6 +153,10 @@ def _candidate_tasks(
         tasks.append(_task(7, "Offer & Onboarding", ref, "not_applicable",
                            "This offer path is closed; a recruiter must decide whether a new process is appropriate.",
                            dependencies=[6]))
+    elif candidate.verification_status in {"discrepancy", "unable_to_verify"}:
+        tasks.append(_task(7, "Offer & Onboarding", ref, "needs_human_review",
+                           "Resolve the verification discrepancy or unavailable source with an authorised reviewer before any offer.",
+                           ["Background verification requires a documented human resolution."], [6]))
     elif candidate.recruiter_decision != "hire_approved":
         tasks.append(_task(7, "Offer & Onboarding", ref, "blocked",
                            "Obtain an explicit final hire approval from an authorised recruiter.",
@@ -162,10 +166,8 @@ def _candidate_tasks(
                            "Complete and review the recruiter-led interview before preparing an offer.",
                            ["Interview is not marked completed and reviewed."], [5]))
     elif candidate.verification_status != "completed":
-        review_block = candidate.verification_status in {"discrepancy", "unable_to_verify"}
-        tasks.append(_task(7, "Offer & Onboarding", ref,
-                           "needs_human_review" if review_block else "blocked",
-                           "Resolve and review all verification outcomes before preparing an offer.",
+        tasks.append(_task(7, "Offer & Onboarding", ref, "blocked",
+                           "Complete the background verification review before preparing an offer.",
                            ["Background verification is not marked complete."], [6]))
     elif candidate.offer_status == "accepted":
         if candidate.onboarding_status == "completed":
