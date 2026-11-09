@@ -45,10 +45,10 @@ def retrieve_evidence(
     chunks: list[dict[str, Any]],
     top_k: int = 5,
 ) -> tuple[list[dict[str, Any]], str, float]:
-    """Retrieve evidence with BM25; optionally blend BGE-M3 retrieval and reranking.
+    """Retrieve source evidence with BM25 and optional BGE semantic retrieval.
 
-    The returned lexical coverage (0..1) is used for scoring; semantic similarity
-    only helps find relevant evidence and never independently establishes a skill.
+    Lexical coverage is reported separately from semantic ranking. A semantic match
+    can surface a relevant excerpt, but it never proves a skill by itself.
     """
     query_tokens = tokenize(query)
     usable = [chunk for chunk in chunks if tokenize(chunk.get("text", ""))]
@@ -58,12 +58,19 @@ def retrieve_evidence(
     corpus_tokens = [tokenize(chunk["text"]) for chunk in usable]
     bm25 = BM25Okapi(corpus_tokens)
     bm25_scores = bm25.get_scores(query_tokens)
-    bm25_order = sorted(
-        range(len(usable)),
-        key=lambda index: (float(bm25_scores[index]), -index),
-        reverse=True,
-    )
-    selected_indices = [index for index in bm25_order[:top_k] if bm25_scores[index] > 0]
+
+    # BM25's IDF may be negative in tiny corpora (e.g. one resume chunk).
+    # Use token overlap as a relevance floor rather than dropping every result.
+    query_set = set(query_tokens)
+    lexical_order = [
+        index for index in sorted(
+            range(len(usable)),
+            key=lambda index: (float(bm25_scores[index]), -index),
+            reverse=True,
+        )
+        if query_set.intersection(corpus_tokens[index])
+    ]
+    selected_indices = lexical_order[:top_k]
     retrieval_method = "bm25"
 
     try:
@@ -83,9 +90,17 @@ def retrieve_evidence(
                 key=lambda index: (float(similarities[index]), -index),
                 reverse=True,
             )
-            for index in semantic_order[:top_k]:
-                if index not in selected_indices:
-                    selected_indices.append(index)
+            # Reciprocal Rank Fusion merges lexical and semantic orders.
+            rrf_scores: dict[int, float] = {}
+            for rank, index in enumerate(lexical_order, start=1):
+                rrf_scores[index] = rrf_scores.get(index, 0.0) + 1 / (60 + rank)
+            for rank, index in enumerate(semantic_order[:top_k], start=1):
+                rrf_scores[index] = rrf_scores.get(index, 0.0) + 1 / (60 + rank)
+            selected_indices = [
+                index for index, _ in sorted(
+                    rrf_scores.items(), key=lambda item: item[1], reverse=True
+                )
+            ][:top_k]
             retrieval_method = "bm25+rrf+bge-m3"
         except Exception:
             retrieval_method = "bm25"
@@ -110,9 +125,8 @@ def retrieve_evidence(
         except Exception:
             pass
 
-    query_terms = set(query_tokens)
     observed_terms = {
         token for item in selected for token in tokenize(item.get("text", ""))
     }
-    lexical_coverage = len(query_terms & observed_terms) / len(query_terms)
+    lexical_coverage = len(query_set & observed_terms) / len(query_set)
     return selected[:top_k], retrieval_method, lexical_coverage
