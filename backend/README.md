@@ -468,3 +468,37 @@ The API rejects extra fields. It does not accept names, employee IDs, candidate 
 This first version does not model seasonal demand, role/skill mix, budget constraints, internal mobility, productivity, macroeconomic indicators, hiring-stage conversion or department-specific recruiter capacity. The forecast is a directional planning estimate, not a guarantee, calibrated probabilistic forecast or automated staffing decision. Use at least 6–12 months of clean aggregate history where possible and validate assumptions with HR and business leaders.
 
 The endpoint is stateless, returns only aggregate projections, and does not persist historical workforce snapshots or employee-level data.
+
+
+---
+
+# Agent 10 — AI Recruitment Orchestrator
+
+Agent 10 builds a dependency-aware plan across Agents 1–9 from role-level and pseudonymous candidate workflow facts.
+
+## API
+
+- POST /api/v1/orchestrator/plan
+
+## Responsibilities and dependencies
+
+- Check whether the job description and evaluation rubric are approved.
+- Gate candidate extraction and matching on approved role inputs and profile readiness.
+- Require recruiter review of explainable matching before interview planning.
+- Require an explicit recruiter decision and separate candidate consent for communication, interview processing and background verification.
+- Require a completed and reviewed recruiter-led interview before background verification.
+- Route verification discrepancies or unavailable sources to human review rather than automatic rejection.
+- Require final recruiter hire approval and completed verification before active offer progression.
+- Require recorded offer acceptance before onboarding progression.
+- Plan aggregate recruitment analytics and workforce forecasts based on data availability.
+- Return per-agent status, dependencies, blockers, next actions and completion summary.
+
+The request schema rejects unknown fields and does not accept candidate names, contact details, resumes, employee identities or document identifiers. Candidate workflow references are synthetic and pseudonymous.
+
+## Current execution boundary
+
+This implementation is a stateless plan generator. It does not call Agents 1–9, send emails/messages, schedule interviews, execute verification checks, issue offers, create onboarding accounts, mutate candidate decisions or persist workflow state. The client supplies workflow facts and consent/approval attestations. They are planning inputs, not durable legal consent records or server-authoritative approvals.
+
+## Production architecture requirements
+
+Before enabling agent dispatch, use a persistent workflow state store and append-only event history, authenticated identities and server-side RBAC/tenant isolation, durable consent and purpose records, idempotency keys, queue-based dispatch with retry and dead-letter policies, timeout/cancellation handling, per-agent result contracts, human approval checkpoints, distributed tracing, observability, and immutable audit records. Agent failure must not silently advance downstream tasks.
