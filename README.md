@@ -167,3 +167,18 @@ Agent 5 prepares a structured question plan from the recruiter-approved job desc
 - The frontend supports recruiter-led text interviews, answer capture, per-answer review and JSON export.
 
 Prototype limits: no autonomous candidate-facing voice agent, audio/video recording, facial/emotion analysis, automated proctoring, database persistence, transcript storage, calendar integration or interview dispatch. The API processes requests statelessly; the export is generated in the browser. Use an authenticated, access-controlled, audited persistence layer and validated candidate consent records before production.
+
+
+## Agent 6 — Background Verification Agent
+
+Agent 6 prepares a consent-gated verification checklist for a recruiter-advanced candidate and validates reviewer-entered evidence metadata.
+
+- Create a verification case: POST /api/v1/verification/cases
+- Record a reviewed check: POST /api/v1/verification/reviews
+- Supported checks: identity, employment, education, address (only when necessary and lawful), professional licence, and candidate-authorised professional reference.
+- Requires a recruiter-approved job, an explicit recruiter decision to advance, and candidate authorisation before a case can be created.
+- Verified or discrepancy outcomes require a human reviewer attestation, a source-checked flag, an authorised source type and an opaque evidence reference.
+- The API rejects common raw personal identifiers and document numbers in evidence summaries/notes; it does not accept uploaded identity documents or identity-number fields.
+- All outcomes remain subject to recruiter review. A discrepancy or inability to verify is not an automatic rejection.
+
+Prototype limits: no identity-document upload, Aadhaar/PAN/passport number processing, employer/institution/government database lookup, criminal-record check, provider API call, candidate notification, database persistence or final hiring decision. No provider has been contacted. Provider integrations require an authorised licensed provider, candidate-specific consent, jurisdiction-specific legal review, secure credentials, access controls, retention policy and auditable results.
