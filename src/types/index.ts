@@ -175,6 +175,7 @@ export interface CandidatePersona {
 export interface JobRubricCriterion {
   criterion: string;
   weight_percent: number;
+  evidence_to_look_for?: string[];
 }
 
 export interface EvaluationRubric {
@@ -184,6 +185,7 @@ export interface EvaluationRubric {
 }
 
 export interface HiringBrief {
+  job_id?: string;
   company_name: string;
   job_title: string;
   location: string;
@@ -191,6 +193,11 @@ export interface HiringBrief {
   salary_budget: string;
   timeline: string;
   requirements: string;
+  required_skills?: string[];
+  preferred_skills?: string[];
+  responsibilities?: string[];
+  education_requirements?: string[];
+  minimum_experience_months?: number | null;
   jd: string;
   status: 'Draft — recruiter review required' | 'Approved by recruiter — publishing integration required';
   evaluation_rubric?: EvaluationRubric;
