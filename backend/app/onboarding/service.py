@@ -48,6 +48,8 @@ def create_offer_draft(request: OfferDraftRequest) -> OfferDraftResponse:
         candidate_id=request.candidate_id,
         job_title=request.job_title,
         company_name=request.company_name,
+        hire_approval_reference=request.hire_approval_reference,
+        verification_review_reference=request.verification_review_reference,
         employment_type=request.employment_type,
         currency=request.currency,
         compensation_amount=request.compensation_amount,
