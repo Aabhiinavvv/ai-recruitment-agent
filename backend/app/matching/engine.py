@@ -30,8 +30,7 @@ SKILL_ALIASES = {
 
 
 def normalize_skill(value: str) -> str:
-    key = re.sub(r"\s+", " ", value.casefold().strip())
-    key = key.replace("_", " ")
+    key = re.sub(r"\s+", " ", value.casefold().strip()).replace("_", " ")
     return SKILL_ALIASES.get(key, key)
 
 
@@ -39,62 +38,47 @@ def _evidence_lookup(profile: CandidateProfile) -> dict[str, EvidenceItem]:
     return {item.evidence_id: item for item in profile.evidence}
 
 
-def _skill_matches(
-    profile: CandidateProfile,
-    required: list[str],
-) -> list[SkillMatch]:
+def _skill_matches(profile: CandidateProfile, required: list[str]) -> list[SkillMatch]:
     detected = {normalize_skill(item.name): item for item in profile.skills}
     evidence = _evidence_lookup(profile)
     results: list[SkillMatch] = []
     for skill in required:
-        normalized = normalize_skill(skill)
-        match = detected.get(normalized)
+        match = detected.get(normalize_skill(skill))
         evidence_ids = [
-            evidence_id
-            for evidence_id in (match.evidence_ids if match else [])
+            evidence_id for evidence_id in (match.evidence_ids if match else [])
             if evidence_id in evidence
         ]
-        results.append(
-            SkillMatch(
-                skill=skill,
-                status="matched" if match and evidence_ids else "not_detected",
-                evidence_ids=evidence_ids,
-            )
-        )
+        results.append(SkillMatch(
+            skill=skill,
+            status="matched" if match and evidence_ids else "not_detected",
+            evidence_ids=evidence_ids,
+        ))
     return results
 
 
 def _profile_chunks(profile: CandidateProfile) -> list[dict[str, Any]]:
-    """Build a scoring corpus from job-related evidence fields only.
-
-    Names, email addresses, phone numbers, locations, profile URLs and NER labels
-    are intentionally excluded from matching and ranking.
-    """
-    permitted_fields = {
-        "skills", "work_experience", "education", "projects",
-    }
+    """Only job-related text is searchable; identifiers and demographic signals are excluded."""
+    permitted_fields = {"skills", "work_experience", "education", "projects"}
     evidence = _evidence_lookup(profile)
     chunks: list[dict[str, Any]] = []
     for item in profile.evidence:
-        if item.field not in permitted_fields:
-            continue
-        chunks.append({
-            "evidence_id": item.evidence_id,
-            "field": item.field,
-            "text": item.quote,
-        })
+        if item.field in permitted_fields:
+            chunks.append({
+                "evidence_id": item.evidence_id,
+                "field": item.field,
+                "text": item.quote,
+            })
 
     for skill in profile.skills:
-        chunks.append({
-            "evidence_id": skill.evidence_ids[0] if skill.evidence_ids else "",
-            "field": "skills",
-            "text": skill.name,
-        })
-    # Add the structured section line only when it is connected to a source evidence ID.
+        if skill.evidence_ids and any(eid in evidence for eid in skill.evidence_ids):
+            chunks.append({
+                "evidence_id": next(eid for eid in skill.evidence_ids if eid in evidence),
+                "field": "skills",
+                "text": skill.name,
+            })
     for entry in profile.work_experience:
         for evidence_id in entry.evidence_ids:
-            item = evidence.get(evidence_id)
-            if item:
+            if evidence_id in evidence:
                 chunks.append({
                     "evidence_id": evidence_id,
                     "field": "work_experience",
@@ -102,8 +86,7 @@ def _profile_chunks(profile: CandidateProfile) -> list[dict[str, Any]]:
                 })
     for entry in profile.education:
         for evidence_id in entry.evidence_ids:
-            item = evidence.get(evidence_id)
-            if item:
+            if evidence_id in evidence:
                 chunks.append({
                     "evidence_id": evidence_id,
                     "field": "education",
@@ -111,8 +94,7 @@ def _profile_chunks(profile: CandidateProfile) -> list[dict[str, Any]]:
                 })
     for entry in profile.projects:
         for evidence_id in entry.evidence_ids:
-            item = evidence.get(evidence_id)
-            if item:
+            if evidence_id in evidence:
                 chunks.append({
                     "evidence_id": evidence_id,
                     "field": "projects",
@@ -145,13 +127,13 @@ def _parse_date_range(value: str) -> tuple[int, int] | None:
             end = _month_index(int(match.group(5)), months[match.group(4).lower()[:3]])
         return (start, max(start, end))
 
-    year_pattern = re.search(r"\b(19|20)\d{2}\s*(?:-|–|to)\s*((?:19|20)\d{2}|present|current)\b", value or "", re.I)
+    year_pattern = re.search(
+        r"\b((?:19|20)\d{2})\s*(?:-|–|to)\s*((?:19|20)\d{2}|present|current)\b",
+        value or "", re.I
+    )
     if year_pattern:
-        start_year = int(year_pattern.group(1) + year_pattern.group(0)[2:4]) if False else None
-        token = year_pattern.group(0)
-        pieces = re.split(r"-|–|\bto\b", token, flags=re.I)
-        start_year = int(pieces[0].strip())
-        end_token = pieces[-1].strip()
+        start_year = int(year_pattern.group(1))
+        end_token = year_pattern.group(2)
         end_year = date.today().year if end_token.lower() in {"present", "current"} else int(end_token)
         return (_month_index(start_year, 1), _month_index(max(start_year, end_year), 12))
     return None
@@ -159,8 +141,7 @@ def _parse_date_range(value: str) -> tuple[int, int] | None:
 
 def estimate_experience_months(profile: CandidateProfile) -> int | None:
     intervals = [
-        interval
-        for entry in profile.work_experience
+        interval for entry in profile.work_experience
         if entry.date_range
         for interval in [_parse_date_range(entry.date_range)]
         if interval is not None
@@ -206,146 +187,129 @@ def _score_criterion(
     evidence_to_look_for: list[str],
     job: Any,
     chunks: list[dict[str, Any]],
-) -> CriterionMatch:
+) -> tuple[CriterionMatch, str]:
     kind = _criterion_kind(criterion)
     evidence_lookup = _evidence_lookup(profile)
-
     if kind == "skills":
-        skills = _skill_matches(profile, job.required_skills)
-        if not job.required_skills:
+        target_skills = job.required_skills or job.preferred_skills
+        if not target_skills:
             return CriterionMatch(
-                criterion=criterion, weight_percent=weight_percent,
-                status="not_evaluable",
-                rationale="The approved job brief contains no required skills for this criterion.",
-            )
+                criterion=criterion, weight_percent=weight_percent, status="not_evaluable",
+                rationale="The approved job brief contains no skill requirements for this criterion.",
+            ), "not_applicable"
         if not profile.skills:
             return CriterionMatch(
-                criterion=criterion, weight_percent=weight_percent,
-                status="not_evaluable",
+                criterion=criterion, weight_percent=weight_percent, status="not_evaluable",
                 rationale="No skills were extracted reliably; this is an extraction uncertainty, not evidence of absence.",
-            )
-        matched = [item for item in skills if item.status == "matched"]
-        all_evidence = _evidence_for_ids(
-            evidence_lookup, [evidence_id for item in matched for evidence_id in item.evidence_ids]
+            ), "not_applicable"
+        matched = [item for item in _skill_matches(profile, target_skills) if item.status == "matched"]
+        ids = _evidence_for_ids(
+            evidence_lookup, [eid for item in matched for eid in item.evidence_ids]
         )
-        score = round(100 * len(matched) / len(job.required_skills), 2)
+        score = round(100 * len(matched) / len(target_skills), 2)
         return CriterionMatch(
-            criterion=criterion,
-            weight_percent=weight_percent,
-            score=score,
-            status="scored",
-            rationale=f"Evidence for {len(matched)} of {len(job.required_skills)} required skills was detected in the parsed resume.",
-            evidence_ids=all_evidence,
-        )
+            criterion=criterion, weight_percent=weight_percent, score=score, status="scored",
+            rationale=f"Resume evidence for {len(matched)} of {len(target_skills)} target skills was detected.",
+            evidence_ids=ids,
+        ), "structured-skill-evidence"
 
     if kind == "experience":
         if job.minimum_experience_months is None:
             return CriterionMatch(
-                criterion=criterion, weight_percent=weight_percent,
-                status="not_evaluable",
+                criterion=criterion, weight_percent=weight_percent, status="not_evaluable",
                 rationale="The approved job brief does not specify a minimum experience duration.",
-            )
+            ), "not_applicable"
         months = estimate_experience_months(profile)
         if months is None:
             return CriterionMatch(
-                criterion=criterion, weight_percent=weight_percent,
-                status="not_evaluable",
+                criterion=criterion, weight_percent=weight_percent, status="not_evaluable",
                 rationale="Explicit work date ranges were not available; experience duration cannot be reliably calculated.",
-            )
+            ), "not_applicable"
         score = 100.0 if months >= job.minimum_experience_months else round(
             100 * months / max(1, job.minimum_experience_months), 2
         )
         ids = _evidence_for_ids(
             evidence_lookup,
-            [evidence_id for entry in profile.work_experience for evidence_id in entry.evidence_ids],
+            [eid for entry in profile.work_experience for eid in entry.evidence_ids],
         )
         return CriterionMatch(
-            criterion=criterion, weight_percent=weight_percent,
-            score=score, status="scored",
-            rationale=f"Approximately {months} months of non-overlapping dated experience was identified; the brief specifies {job.minimum_experience_months} months.",
+            criterion=criterion, weight_percent=weight_percent, score=score, status="scored",
+            rationale=f"Approximately {months} months of non-overlapping dated experience was identified; the job specifies {job.minimum_experience_months} months.",
             evidence_ids=ids,
-        )
+        ), "dated-experience-evidence"
 
     if kind == "education":
         if not job.education_requirements:
             return CriterionMatch(
-                criterion=criterion, weight_percent=weight_percent,
-                status="not_evaluable",
+                criterion=criterion, weight_percent=weight_percent, status="not_evaluable",
                 rationale="No education requirements were specified in the approved job brief.",
-            )
+            ), "not_applicable"
         if not profile.education or profile.field_confidence.get("education", 0) <= 0:
             return CriterionMatch(
-                criterion=criterion, weight_percent=weight_percent,
-                status="not_evaluable",
+                criterion=criterion, weight_percent=weight_percent, status="not_evaluable",
                 rationale="Education information was not extracted reliably; verify the original resume.",
-            )
+            ), "not_applicable"
         query = " ".join([*job.education_requirements, *evidence_to_look_for, criterion])
-        chunks_for_education = [item for item in chunks if item["field"] == "education"]
-        retrieved, _, coverage = retrieve_evidence(query, chunks_for_education)
+        education_chunks = [item for item in chunks if item["field"] == "education"]
+        retrieved, method, coverage = retrieve_evidence(query, education_chunks)
         ids = _evidence_for_ids(evidence_lookup, [item["evidence_id"] for item in retrieved])
+        if not retrieved:
+            return CriterionMatch(
+                criterion=criterion, weight_percent=weight_percent, status="not_evaluable",
+                rationale="Education text exists but no matching source evidence was retrieved.",
+            ), method
         return CriterionMatch(
-            criterion=criterion, weight_percent=weight_percent,
-            score=round(coverage * 100, 2), status="scored",
-            rationale="Education evidence was compared with the job's stated education criteria using keyword coverage; recruiter verification is required.",
+            criterion=criterion, weight_percent=weight_percent, score=round(coverage * 100, 2),
+            status="scored",
+            rationale="This advisory score reflects keyword coverage between the stated education criteria and retrieved education excerpts; verify the credential.",
             evidence_ids=ids,
-        )
+        ), method
 
-    if kind == "projects":
-        chunks_for_projects = [
-            item for item in chunks if item["field"] in {"projects", "work_experience"}
-        ]
-    else:
-        chunks_for_projects = chunks
-
-    query_parts = [criterion, *evidence_to_look_for]
-    if kind == "projects":
-        query_parts.extend(job.responsibilities)
-    else:
-        query_parts.extend(job.responsibilities)
-    query = " ".join(query_parts).strip()
-    retrieved, _, coverage = retrieve_evidence(query, chunks_for_projects)
+    allowed_fields = {"projects", "work_experience"} if kind == "projects" else {
+        "skills", "work_experience", "education", "projects"
+    }
+    eligible_chunks = [item for item in chunks if item["field"] in allowed_fields]
+    query = " ".join([criterion, *evidence_to_look_for, *job.responsibilities]).strip()
+    retrieved, method, coverage = retrieve_evidence(query, eligible_chunks)
     if not retrieved:
         return CriterionMatch(
-            criterion=criterion, weight_percent=weight_percent,
-            status="not_evaluable",
+            criterion=criterion, weight_percent=weight_percent, status="not_evaluable",
             rationale="No relevant supporting evidence could be retrieved from the parsed resume.",
-        )
+        ), method
     ids = _evidence_for_ids(evidence_lookup, [item["evidence_id"] for item in retrieved])
+    if not ids:
+        return CriterionMatch(
+            criterion=criterion, weight_percent=weight_percent, status="not_evaluable",
+            rationale="Retrieved text could not be connected to source evidence IDs.",
+        ), method
     return CriterionMatch(
-        criterion=criterion, weight_percent=weight_percent,
-        score=round(coverage * 100, 2), status="scored",
+        criterion=criterion, weight_percent=weight_percent, score=round(coverage * 100, 2),
+        status="scored",
         rationale="This advisory score reflects lexical coverage of the rubric's evidence prompts in retrieved resume excerpts; review the cited excerpts.",
         evidence_ids=ids,
-    )
+    ), method
 
 
-def _build_match(
-    profile: CandidateProfile,
-    job: Any,
-) -> tuple[CandidateMatchResult, float | None]:
+def _build_match(profile: CandidateProfile, job: Any) -> tuple[CandidateMatchResult, float | None]:
     chunks = _profile_chunks(profile)
-    evidence_lookup = _evidence_lookup(profile)
     criteria: list[CriterionMatch] = []
+    retrieval_methods: set[str] = set()
     for item in job.rubric.criteria:
-        criteria.append(_score_criterion(
-            profile=profile,
-            criterion=item.criterion,
-            weight_percent=item.weight_percent,
-            evidence_to_look_for=item.evidence_to_look_for,
-            job=job,
-            chunks=chunks,
-        ))
+        criterion_result, method = _score_criterion(
+            profile, item.criterion, item.weight_percent,
+            item.evidence_to_look_for, job, chunks
+        )
+        criteria.append(criterion_result)
+        if method != "not_applicable":
+            retrieval_methods.add(method)
 
     evaluated = [item for item in criteria if item.status == "scored" and item.score is not None]
     total_weight = sum(item.weight_percent for item in job.rubric.criteria)
     scored_weight = sum(item.weight_percent for item in evaluated)
-    if scored_weight:
-        match_index = round(
-            sum((item.score or 0) * item.weight_percent for item in evaluated) / scored_weight,
-            2,
-        )
-    else:
-        match_index = None
+    match_index = (
+        round(sum((item.score or 0) * item.weight_percent for item in evaluated) / scored_weight, 2)
+        if scored_weight else None
+    )
     coverage_percent = round(100 * scored_weight / max(1, total_weight), 2)
 
     required_matches = _skill_matches(profile, job.required_skills)
@@ -377,20 +341,17 @@ def _build_match(
     if not job.education_requirements:
         not_detected.append("Education was not scored because the job brief supplied no education requirement.")
 
-    review_flags = [
-        f"{flag.code}: {flag.message}" for flag in profile.review_flags
-    ]
+    review_flags = [f"{flag.code}: {flag.message}" for flag in profile.review_flags]
     if profile.extraction_status == "needs_review":
         review_flags.append("Candidate profile extraction itself is marked needs_review.")
     if coverage_percent < 60:
-        review_flags.append("Less than 60% of the approved rubric weight was evaluable; do not compare this index without reviewing missing information.")
+        review_flags.append(
+            "Less than 60% of the approved rubric weight was evaluable; review missing information before comparing indices."
+        )
     if match_index is None:
         review_flags.append("No rubric criteria could be scored from the available evidence.")
 
-    retrieval_methods = ["bm25"]
-    if any("bge" in method for method in retrieval_methods):
-        pass
-
+    retrieval_method = "+".join(sorted(retrieval_methods)) if retrieval_methods else "no-retrievable-evidence"
     result = CandidateMatchResult(
         rank=0,
         candidate_id=profile.candidate_id,
@@ -404,15 +365,14 @@ def _build_match(
         strengths_supported_by_evidence=list(dict.fromkeys(strengths)),
         not_detected_or_unverified=list(dict.fromkeys(not_detected)),
         review_flags=list(dict.fromkeys(review_flags)),
-        retrieval_method="bm25",
+        retrieval_method=retrieval_method,
     )
     return result, match_index
 
 
 def match_candidate_batch(request: CandidateMatchBatchRequest) -> CandidateMatchBatchResponse:
     results_with_scores = [
-        _build_match(profile, request.job)
-        for profile in request.candidates
+        _build_match(profile, request.job) for profile in request.candidates
     ]
     results_with_scores.sort(
         key=lambda pair: (
