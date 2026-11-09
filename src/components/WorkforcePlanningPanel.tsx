@@ -263,7 +263,7 @@ export const WorkforcePlanningPanel: React.FC<WorkforcePlanningPanelProps> = ({ 
             <div>
               <h3 className="text-sm font-bold text-slate-900">Workforce projection — {forecast.planning_unit}</h3>
               <p className="mt-1 text-[11px] text-slate-500">
-                {forecast.forecast_months}-month horizon · {forecast.scenario} scenario · {forecast.forecast_method.replaceAll('_', ' ')}
+                {forecast.forecast_months}-month horizon · {forecast.scenario} scenario · {forecast.forecast_method.replace(/_/g, ' ')}
               </p>
             </div>
             <button type="button" onClick={exportReport} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
