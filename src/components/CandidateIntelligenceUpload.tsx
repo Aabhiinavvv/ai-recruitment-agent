@@ -1,9 +1,9 @@
 import React, { useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, FileText, Loader2, ShieldCheck, UploadCloud, XCircle } from 'lucide-react';
-import {
+import { uploadResumeBatch } from '../services/candidateIntelligenceApi';
+import type {
   CandidateIntelligenceBatchResponse,
   CandidateProfile,
-  uploadResumeBatch,
 } from '../services/candidateIntelligenceApi';
 
 const MAX_FILES = 15;
@@ -253,7 +253,7 @@ export function CandidateIntelligenceUpload() {
             <div key={item.file_name + '-' + index} className="space-y-2">
               {item.success && item.candidate_profile ? (
                 <>
-                  <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700"><CheckCircle2 className="h-4 w-4" />{item.file_name}</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-emerald-700"><CheckCircle2 className="h-4 w-4" />{item.file_name}<span className="font-normal text-slate-500">Parser: {item.parser_used || 'unknown'}</span></div>
                   {item.warnings.map((warning, warningIndex) => <p key={warningIndex} className="rounded-lg bg-amber-50 p-2 text-xs text-amber-800">{warning}</p>)}
                   <ProfileCard profile={item.candidate_profile} />
                 </>
