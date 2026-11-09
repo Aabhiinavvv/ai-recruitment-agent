@@ -21,9 +21,7 @@ import {
   Download,
   FileSignature,
   Loader2,
-  MailCheck,
   ShieldCheck,
-  UserCheck,
 } from 'lucide-react';
 
 interface OfferOnboardingPanelProps {
@@ -199,6 +197,7 @@ export const OfferOnboardingPanel: React.FC<OfferOnboardingPanelProps> = ({
         reviewer_note: offerEventNote.trim(),
       });
       setOfferStatus(response.current_status);
+      setOfferEventReference('');
       setOfferEventNote('');
       setCandidateResponseConfirmed(false);
       onAudit?.(
@@ -240,8 +239,8 @@ export const OfferOnboardingPanel: React.FC<OfferOnboardingPanelProps> = ({
     }
   };
 
-  const updateTask = async (task: OnboardingTask, target: OnboardingTaskStatus) => {
-    if (!onboarding || target === task.status) return;
+  const updateTask = async (task: OnboardingTask, currentStatus: OnboardingTaskStatus, target: OnboardingTaskStatus) => {
+    if (!onboarding || target === currentStatus) return;
     const note = taskNotes[task.task_id] ?? '';
     if (target === 'blocked' && !note.trim()) {
       setError('Add a non-sensitive note explaining why the task is blocked.');
@@ -255,7 +254,7 @@ export const OfferOnboardingPanel: React.FC<OfferOnboardingPanelProps> = ({
         offer_id: onboarding.offer_id,
         candidate_id: onboarding.candidate_id,
         task_id: task.task_id,
-        current_status: task.status,
+        current_status: currentStatus,
         target_status: target,
         reviewer_attested: true,
         reviewer_note: note.trim(),
@@ -501,7 +500,7 @@ export const OfferOnboardingPanel: React.FC<OfferOnboardingPanelProps> = ({
                   <p className="text-xs leading-5 text-slate-600">{task.description}</p>
                   <p className="text-[11px] text-slate-500">Owner: {task.owner} · {task.evidence_required ? 'Evidence handled in secure HR system' : 'No document upload required here'}</p>
                   <div className="flex flex-wrap items-end gap-2">
-                    <label className="min-w-44 flex-1 space-y-1"><span className="text-[11px] font-semibold text-slate-600">Update status</span><select value={status} onChange={(event) => updateTask(task, event.target.value as OnboardingTaskStatus)} disabled={taskSavingId === task.task_id || NEXT_TASK_STATUSES[status].length === 0} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs disabled:opacity-60"><option value={status}>{TASK_STATUS_LABELS[status]}</option>{NEXT_TASK_STATUSES[status].map((next) => <option key={next} value={next}>{TASK_STATUS_LABELS[next]}</option>)}</select></label>
+                    <label className="min-w-44 flex-1 space-y-1"><span className="text-[11px] font-semibold text-slate-600">Update status</span><select value={status} onChange={(event) => updateTask(task, status, event.target.value as OnboardingTaskStatus)} disabled={taskSavingId === task.task_id || NEXT_TASK_STATUSES[status].length === 0} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs disabled:opacity-60"><option value={status}>{TASK_STATUS_LABELS[status]}</option>{NEXT_TASK_STATUSES[status].map((next) => <option key={next} value={next}>{TASK_STATUS_LABELS[next]}</option>)}</select></label>
                     <label className="min-w-44 flex-1 space-y-1"><span className="text-[11px] font-semibold text-slate-600">Non-sensitive note</span><input value={taskNotes[task.task_id] ?? ''} onChange={(event) => setTaskNotes((current) => ({ ...current, [task.task_id]: event.target.value }))} maxLength={400} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs" placeholder="Reason required if blocked" /></label>
                   </div>
                   {taskSavingId === task.task_id && <p className="text-[11px] text-violet-700">Recording update…</p>}
