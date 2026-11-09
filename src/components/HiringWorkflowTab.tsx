@@ -577,6 +577,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       }
 
       const newBrief: HiringBrief = {
+        job_id: 'JOB-' + Date.now().toString(),
         company_name: companyName,
         job_title: jobTitle,
         location,
@@ -584,6 +585,11 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         salary_budget: salaryBudget,
         timeline,
         requirements: requirementsText,
+        required_skills: result.structured_job?.required_skills ?? result.required_skills,
+        preferred_skills: result.structured_job?.preferred_skills ?? result.preferred_skills,
+        responsibilities: result.structured_job?.responsibilities ?? [],
+        education_requirements: [],
+        minimum_experience_months: null,
         jd: result.job_description_markdown,
         status: 'Draft — recruiter review required',
         evaluation_rubric: {
@@ -591,6 +597,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
           criteria: result.rubric.criteria.map(item => ({
             criterion: item.criterion,
             weight_percent: item.weight_percent,
+            evidence_to_look_for: item.evidence_to_look_for ?? [],
           })),
           decision_boundary: result.rubric.decision_boundary,
         },

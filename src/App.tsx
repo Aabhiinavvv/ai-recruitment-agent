@@ -107,7 +107,7 @@ export function App() {
         <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
           {activeTab === 'workflow' && (
             <>
-            <CandidateIntelligenceUpload />
+            <CandidateIntelligenceUpload brief={brief} />
             <HiringWorkflowTab
               brief={brief}
               setBrief={setBrief}

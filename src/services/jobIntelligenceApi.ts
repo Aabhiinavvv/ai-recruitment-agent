@@ -20,6 +20,16 @@ export interface JobRubricCriterion {
 export interface JobIntelligenceResponse {
   status: 'draft_ready' | 'needs_clarification';
   job_description_markdown: string | null;
+  structured_job: {
+    role_summary: string;
+    responsibilities: string[];
+    required_qualifications: string[];
+    required_skills: string[];
+    preferred_skills: string[];
+    experience_expectation: string;
+    education_expectation: string;
+    success_criteria: string[];
+  } | null;
   rubric: {
     scoring_scale: string;
     criteria: JobRubricCriterion[];

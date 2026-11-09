@@ -122,3 +122,17 @@ The Agent 2 panel is available at the top of the Hiring Workflow screen. Upload 
 - Profiles are extraction-only. Agent 2 does not rank, shortlist, reject or make hiring decisions.
 
 Core dependencies: PyMuPDF, python-docx and python-multipart. Optional engines (Docling, spaCy, Presidio and PaddleOCR) are configured separately. See backend/README.md for setup, privacy and production limitations.
+
+
+## Agent 3 — Matching & Ranking
+
+Agent 3 compares Agent 2's structured profiles with an Agent 1 job rubric that the recruiter has approved. It produces a ranked evidence-alignment index, criterion-level explanations, required/preferred skill evidence, evidence coverage and review flags.
+
+- API: POST /api/v1/matching/candidates
+- The browser only enables matching after the recruiter approves the job brief.
+- Agent 3 receives only job-related candidate fields: skills, work/education/project entries, evidence snippets and extraction flags. Candidate names, contact details, location and profile URLs are not sent to the matching API.
+- BM25 evidence retrieval is enabled in the core install. BGE-M3 semantic retrieval and BGE reranking are optional extras.
+- Criteria with insufficient information are marked not evaluable and excluded from the score denominator. Evidence coverage is shown separately.
+- The index is an advisory evidence summary, not a hiring probability or autonomous decision. Recruiters must review the original resume and source evidence.
+
+The approval gate in this prototype is enforced by the browser workflow and a client-supplied API field; it is not yet backed by authenticated user permissions or a persistent approval record. Production deployment must enforce approval server-side.
