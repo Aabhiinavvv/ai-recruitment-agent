@@ -1,10 +1,17 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, FileText, Loader2, ShieldCheck, UploadCloud, XCircle } from 'lucide-react';
 import { uploadResumeBatch } from '../services/candidateIntelligenceApi';
 import type {
   CandidateIntelligenceBatchResponse,
   CandidateProfile,
 } from '../services/candidateIntelligenceApi';
+import { matchCandidates } from '../services/candidateMatchingApi';
+import type {
+  CandidateMatchBatchResponse,
+  CandidateMatchResult,
+  MatchJobContext,
+} from '../services/candidateMatchingApi';
+import type { HiringBrief } from '../types';
 
 const MAX_FILES = 15;
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -120,13 +127,147 @@ function ProfileCard({ profile }: { profile: CandidateProfile }) {
   );
 }
 
-export function CandidateIntelligenceUpload() {
+function MatchResultCard({
+  match,
+  profile,
+}: {
+  match: CandidateMatchResult;
+  profile: CandidateProfile | undefined;
+}) {
+  const evidenceById = new Map((profile?.evidence ?? []).map((item) => [item.evidence_id, item]));
+  return (
+    <article className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs text-slate-500">Rank #{match.rank} · {match.candidate_id}</p>
+          <h3 className="mt-1 text-sm font-semibold text-slate-900">{profile?.full_name || 'Name not detected'}</h3>
+          <p className="text-xs text-slate-500">{match.source_file}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-xl font-bold tabular-nums text-slate-900">
+            {match.evidence_alignment_index === null ? 'N/A' : match.evidence_alignment_index.toFixed(1)}
+          </p>
+          <p className="text-[11px] text-slate-500">Evidence alignment index</p>
+          <p className="mt-1 text-xs text-slate-600">Coverage: {match.evidence_coverage_percent.toFixed(1)}%</p>
+        </div>
+      </div>
+
+      {match.review_flags.length > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1">
+          <p className="text-xs font-semibold text-amber-900">Review required</p>
+          {match.review_flags.map((flag, index) => <p key={index} className="text-xs text-amber-900">{flag}</p>)}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="rounded-lg bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-700">Required skills</p>
+          <div className="mt-2 space-y-1.5">
+            {match.required_skill_matches.map((skill) => (
+              <div key={skill.skill} className="flex items-start justify-between gap-2 text-xs">
+                <span className="text-slate-700">{skill.skill}</span>
+                <span className={skill.status === 'matched' ? 'text-emerald-700 font-semibold' : 'text-amber-700'}>
+                  {skill.status === 'matched' ? 'Evidence found' : 'Not detected'}
+                </span>
+              </div>
+            ))}
+            {!match.required_skill_matches.length && <p className="text-xs text-slate-500">No required skills were specified.</p>}
+          </div>
+        </div>
+        <div className="rounded-lg bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-700">Preferred skills</p>
+          <div className="mt-2 space-y-1.5">
+            {match.preferred_skill_matches.map((skill) => (
+              <div key={skill.skill} className="flex items-start justify-between gap-2 text-xs">
+                <span className="text-slate-700">{skill.skill}</span>
+                <span className={skill.status === 'matched' ? 'text-emerald-700 font-semibold' : 'text-slate-500'}>
+                  {skill.status === 'matched' ? 'Evidence found' : 'Not detected'}
+                </span>
+              </div>
+            ))}
+            {!match.preferred_skill_matches.length && <p className="text-xs text-slate-500">No preferred skills were specified.</p>}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <p className="text-xs font-semibold text-slate-700 mb-2">Approved rubric breakdown</p>
+        <div className="space-y-2">
+          {match.criteria.map((criterion, index) => (
+            <div key={criterion.criterion + '-' + index} className="rounded-lg border border-slate-200 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <p className="text-xs font-semibold text-slate-800">{criterion.criterion}</p>
+                <span className="text-xs font-semibold tabular-nums text-slate-700">
+                  {criterion.status === 'scored' && criterion.score !== null ? criterion.score.toFixed(1) + '/100' : 'Not evaluable'}
+                </span>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-slate-600">{criterion.rationale}</p>
+              {criterion.evidence_ids.length > 0 && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[11px] font-semibold text-indigo-700">
+                    Supporting evidence ({criterion.evidence_ids.length})
+                  </summary>
+                  <div className="mt-2 space-y-2">
+                    {criterion.evidence_ids.map((evidenceId) => {
+                      const evidence = evidenceById.get(evidenceId);
+                      return evidence ? (
+                        <div key={evidenceId} className="rounded bg-slate-50 p-2">
+                          <p className="text-[10px] text-slate-500">{evidence.evidence_id} · {evidence.field.replace(/_/g, ' ')}{evidence.page_number ? ' · Page ' + evidence.page_number : ''}</p>
+                          <p className="mt-1 text-xs text-slate-700">{evidence.quote}</p>
+                        </div>
+                      ) : null;
+                    })}
+                  </div>
+                </details>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {match.strengths_supported_by_evidence.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-slate-700">Evidence-supported observations</p>
+          <ul className="mt-1 list-disc pl-5 space-y-1 text-xs text-slate-600">
+            {match.strengths_supported_by_evidence.map((item, index) => <li key={index}>{item}</li>)}
+          </ul>
+        </div>
+      )}
+      {match.not_detected_or_unverified.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-slate-700">Not detected / needs verification</p>
+          <ul className="mt-1 list-disc pl-5 space-y-1 text-xs text-slate-600">
+            {match.not_detected_or_unverified.map((item, index) => <li key={index}>{item}</li>)}
+          </ul>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2 text-[11px] text-slate-500">
+        <span>Method: {match.retrieval_method}</span>
+        <span>Recruiter decision: pending review</span>
+      </div>
+    </article>
+  );
+}
+
+export function CandidateIntelligenceUpload({ brief }: { brief: HiringBrief | null }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CandidateIntelligenceBatchResponse | null>(null);
+  const [isMatching, setIsMatching] = useState(false);
+  const [matchingError, setMatchingError] = useState<string | null>(null);
+  const [matchingResult, setMatchingResult] = useState<CandidateMatchBatchResponse | null>(null);
+  const parsedProfiles = (result?.results ?? []).flatMap((item) =>
+    item.success && item.candidate_profile ? [item.candidate_profile] : []
+  );
+  const jobIsApproved = brief?.status === 'Approved by recruiter — publishing integration required';
+
+  useEffect(() => {
+    setMatchingResult(null);
+    setMatchingError(null);
+  }, [brief?.job_id, brief?.status]);
 
   const addFiles = (incoming: FileList | File[]) => {
     setError(null);
@@ -145,6 +286,8 @@ export function CandidateIntelligenceUpload() {
     }
     setFiles(unique);
     setResult(null);
+    setMatchingResult(null);
+    setMatchingError(null);
   };
 
   const handleUpload = async () => {
@@ -152,10 +295,58 @@ export function CandidateIntelligenceUpload() {
     setIsProcessing(true);
     try {
       setResult(await uploadResumeBatch(files, consentConfirmed));
+      setMatchingResult(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Resume processing failed.');
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleMatchCandidates = async () => {
+    setMatchingError(null);
+    setMatchingResult(null);
+    if (!brief || !jobIsApproved || !brief.evaluation_rubric) {
+      setMatchingError('Generate and approve a job description with its evaluation rubric before matching candidates.');
+      return;
+    }
+    if (!parsedProfiles.length) {
+      setMatchingError('Process at least one resume successfully before running Agent 3.');
+      return;
+    }
+
+    const fallbackRequiredSkills = brief.requirements
+      .split(/[\\n,;•]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const job: MatchJobContext = {
+      job_id: brief.job_id || 'JOB-' + brief.job_title.replace(/[^a-z0-9]+/gi, '-').toUpperCase(),
+      job_title: brief.job_title,
+      approved_for_matching: true,
+      required_skills: brief.required_skills?.length ? brief.required_skills : fallbackRequiredSkills,
+      preferred_skills: brief.preferred_skills ?? [],
+      responsibilities: brief.responsibilities ?? [],
+      education_requirements: brief.education_requirements ?? [],
+      minimum_experience_months: brief.minimum_experience_months ?? null,
+      rubric: {
+        scoring_scale: brief.evaluation_rubric.scoring_scale,
+        criteria: brief.evaluation_rubric.criteria.map((item) => ({
+          criterion: item.criterion,
+          weight_percent: item.weight_percent,
+          evidence_to_look_for: item.evidence_to_look_for ?? [],
+        })),
+        decision_boundary: brief.evaluation_rubric.decision_boundary,
+      },
+    };
+
+    setIsMatching(true);
+    try {
+      const response = await matchCandidates(job, parsedProfiles);
+      setMatchingResult(response);
+    } catch (err) {
+      setMatchingError(err instanceof Error ? err.message : 'Candidate matching failed.');
+    } finally {
+      setIsMatching(false);
     }
   };
 
@@ -265,7 +456,81 @@ export function CandidateIntelligenceUpload() {
               )}
             </div>
           ))}
-          <p className="text-[11px] text-slate-500">Profiles are extraction results only. No eligibility score, ranking, shortlist or employment decision is generated by Agent 2.</p>
+          <p className="text-[11px] text-slate-500">Agent 2 profiles are extraction results. Verify important fields against the original resumes before using them in a matching review.</p>
+
+          <section className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Agent 3 — Matching & Ranking</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-600">
+                  Compare successfully parsed profiles with the approved job rubric. Every result is advisory and must be reviewed by a recruiter.
+                </p>
+                {brief && <p className="mt-1 text-xs font-semibold text-slate-700">Role: {brief.job_title}</p>}
+              </div>
+              <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">Evidence-based · Human review</span>
+            </div>
+
+            {!jobIsApproved && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                Matching is locked until the job description and rubric have been approved by the recruiter in Agent 1.
+              </p>
+            )}
+            {jobIsApproved && !brief?.evaluation_rubric && (
+              <p className="text-xs text-amber-800">The approved job brief has no saved evaluation rubric. Generate a new Agent 1 job brief before matching.</p>
+            )}
+
+            {matchingError && <p className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{matchingError}</p>}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={!jobIsApproved || !brief?.evaluation_rubric || !parsedProfiles.length || isMatching}
+                onClick={handleMatchCandidates}
+                className="inline-flex items-center gap-2 rounded-lg bg-indigo-700 px-4 py-2.5 text-xs font-semibold text-white hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isMatching ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                {isMatching ? 'Comparing resume evidence…' : 'Run candidate matching'}
+              </button>
+              <span className="text-[11px] text-slate-500">{parsedProfiles.length} successfully parsed profile(s)</span>
+            </div>
+
+            {matchingResult && (
+              <div className="space-y-3 border-t border-indigo-200 pt-3">
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Matching review — {matchingResult.job_title}</h4>
+                  <p className="mt-1 text-xs text-slate-600">
+                    {matchingResult.processed_candidates} profiles processed. Ranking is an ordering for recruiter review, not a shortlist or rejection decision.
+                  </p>
+                </div>
+                <p className="rounded-lg bg-white p-3 text-[11px] leading-5 text-slate-600">{matchingResult.methodology}</p>
+                {matchingResult.results.map((match) => (
+                  <MatchResultCard
+                    key={match.candidate_id}
+                    match={match}
+                    profile={parsedProfiles.find((item) => item.candidate_id === match.candidate_id)}
+                  />
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const blob = new Blob([JSON.stringify(matchingResult, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const anchor = document.createElement('a');
+                    anchor.href = url;
+                    anchor.download = 'candidate-matching-review.json';
+                    anchor.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Export matching report (JSON)
+                </button>
+              </div>
+            )}
+            <p className="text-[11px] leading-5 text-slate-500">
+              The index uses only observable, job-related evidence. Unavailable information is marked “not evaluable” and excluded from the scored-weight denominator; coverage shows how much of the approved rubric could be assessed. No automatic pass, rejection, shortlist or hiring decision is made.
+            </p>
+          </section>
         </div>
       )}
     </section>
