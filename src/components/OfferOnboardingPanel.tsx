@@ -92,7 +92,9 @@ export const OfferOnboardingPanel: React.FC<OfferOnboardingPanelProps> = ({
   const [benefitsText, setBenefitsText] = useState('');
   const [termsText, setTermsText] = useState('');
   const [hireApprovalConfirmed, setHireApprovalConfirmed] = useState(false);
+  const [hireApprovalReference, setHireApprovalReference] = useState('');
   const [verificationReviewConfirmed, setVerificationReviewConfirmed] = useState(false);
+  const [verificationReviewReference, setVerificationReviewReference] = useState('');
   const [unresolvedItems, setUnresolvedItems] = useState('0');
 
   const [offer, setOffer] = useState<OfferDraftResponse | null>(null);
@@ -131,6 +133,10 @@ export const OfferOnboardingPanel: React.FC<OfferOnboardingPanelProps> = ({
       setError('Confirm the final recruiter hire approval.');
       return;
     }
+    if (!hireApprovalReference.trim() || !verificationReviewReference.trim()) {
+      setError('Enter the secure internal references for the final hire approval and completed verification review.');
+      return;
+    }
     if (!verificationReviewConfirmed || Number(unresolvedItems) !== 0) {
       setError('Confirm that the background verification review is complete and there are no unresolved items.');
       return;
@@ -151,7 +157,9 @@ export const OfferOnboardingPanel: React.FC<OfferOnboardingPanelProps> = ({
         job_title: brief.job_title,
         company_name: brief.company_name,
         recruiter_hire_approved: true,
+        hire_approval_reference: hireApprovalReference.trim(),
         verification_review_completed: true,
+        verification_review_reference: verificationReviewReference.trim(),
         unresolved_verification_items: 0,
         employment_type: employmentType,
         currency: currency.toUpperCase(),
@@ -304,7 +312,7 @@ export const OfferOnboardingPanel: React.FC<OfferOnboardingPanelProps> = ({
   const canMarkSent = offerStatus === 'approved_not_sent';
   const canRecordResponse = offerStatus === 'sent_outside_platform';
   const canWithdraw = offerStatus === 'approved_not_sent' || offerStatus === 'sent_outside_platform';
-  const canExpire = offerStatus === 'sent_outside_platform' && todayIso() >= offerExpiry;
+  const canExpire = offerStatus === 'sent_outside_platform' && todayIso() > offerExpiry;
 
   return (
     <section className="space-y-5 rounded-2xl border border-violet-200 bg-white p-5 shadow-sm sm:p-6">
@@ -342,7 +350,9 @@ export const OfferOnboardingPanel: React.FC<OfferOnboardingPanelProps> = ({
               setOffer(null);
               setOnboarding(null);
               setHireApprovalConfirmed(false);
+              setHireApprovalReference('');
               setVerificationReviewConfirmed(false);
+              setVerificationReviewReference('');
             }}
             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-violet-500"
           >
@@ -410,6 +420,16 @@ export const OfferOnboardingPanel: React.FC<OfferOnboardingPanelProps> = ({
           <textarea rows={2} value={termsText} onChange={(event) => setTermsText(event.target.value)} maxLength={2400} placeholder="Do not generate or invent legal clauses." className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
         </label>
 
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block space-y-1">
+            <span className="text-xs font-semibold text-slate-700">Final hire approval reference</span>
+            <input value={hireApprovalReference} onChange={(event) => setHireApprovalReference(event.target.value)} maxLength={120} placeholder="vault:hire:approval123" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs" />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-xs font-semibold text-slate-700">Completed verification review reference</span>
+            <input value={verificationReviewReference} onChange={(event) => setVerificationReviewReference(event.target.value)} maxLength={120} placeholder="vault:bgc:review123" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs" />
+          </label>
+        </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
             <input type="checkbox" checked={hireApprovalConfirmed} onChange={(event) => setHireApprovalConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 accent-violet-600" />
@@ -428,7 +448,7 @@ export const OfferOnboardingPanel: React.FC<OfferOnboardingPanelProps> = ({
         <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
           Offer terms are supplied by the recruiter. This module does not create legal clauses, calculate taxes, issue contracts, send emails, collect signatures or persist the offer. The verification confirmation is a recruiter attestation; Agent 6 review results are not automatically linked to this stateless prototype.
         </p>
-        <button type="button" disabled={!jobApproved || !candidateId || !hireApprovalConfirmed || !verificationReviewConfirmed || isCreatingOffer} onClick={createDraft} className="inline-flex items-center gap-2 rounded-lg bg-violet-700 px-4 py-2.5 text-xs font-semibold text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-50">
+        <button type="button" disabled={!jobApproved || !candidateId || !hireApprovalConfirmed || !hireApprovalReference.trim() || !verificationReviewConfirmed || !verificationReviewReference.trim() || isCreatingOffer} onClick={createDraft} className="inline-flex items-center gap-2 rounded-lg bg-violet-700 px-4 py-2.5 text-xs font-semibold text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-50">
           {isCreatingOffer ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSignature className="h-4 w-4" />}
           {isCreatingOffer ? 'Preparing offer…' : 'Generate non-binding offer draft'}
         </button>
