@@ -109,12 +109,10 @@ export const RecruitmentAnalyticsPanel: React.FC<RecruitmentAnalyticsPanelProps>
     setAttribution((current) => ({
       ...current,
       [candidateId]: {
-        source_channel: '',
-        recruiter_label: '',
-        applied_at: '',
-        hired_at: '',
-        ...(current[candidateId] ?? {}),
-        ...patch,
+        source_channel: patch.source_channel ?? current[candidateId]?.source_channel ?? '',
+        recruiter_label: patch.recruiter_label ?? current[candidateId]?.recruiter_label ?? '',
+        applied_at: patch.applied_at ?? current[candidateId]?.applied_at ?? '',
+        hired_at: patch.hired_at ?? current[candidateId]?.hired_at ?? '',
       },
     }));
   };
