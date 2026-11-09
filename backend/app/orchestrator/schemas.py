@@ -53,8 +53,14 @@ class CandidateOrchestrationState(BaseModel):
 
     @model_validator(mode="after")
     def validate_state_dependencies(self):
+        if self.interview_status != "not_started" and not self.matching_reviewed:
+            raise ValueError("Interview status requires recruiter-reviewed matching evidence.")
+        if self.verification_status != "not_started" and self.interview_status != "completed":
+            raise ValueError("Verification status requires a completed and reviewed interview.")
         if self.offer_status in {"draft", "approved", "sent", "accepted"} and self.recruiter_decision != "hire_approved":
             raise ValueError("An offer state requires a recruiter-approved hire decision.")
+        if self.offer_status in {"draft", "approved", "sent", "accepted"} and self.interview_status != "completed":
+            raise ValueError("An offer state requires a completed and reviewed interview.")
         if self.offer_status in {"draft", "approved", "sent", "accepted"} and self.verification_status != "completed":
             raise ValueError("An offer state requires completed background verification.")
         if self.onboarding_status != "not_started" and self.offer_status != "accepted":
