@@ -100,3 +100,12 @@ def test_contact_authorization_is_mandatory():
 def test_invalid_email_is_rejected():
     with pytest.raises(ValidationError, match="valid candidate email"):
         _request(recipient_email="not-an-email")
+
+
+
+def test_follow_up_uses_safe_recruiter_context():
+    result = build_communication_draft(_request(
+        communication_type="follow_up",
+        recruiter_context="The hiring team expects to share an update next week.",
+    ))
+    assert "expects to share an update next week" in result.body
