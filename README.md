@@ -1,110 +1,56 @@
 # AI Recruitment Workflow Platform (React + TypeScript + Vite)
 
-A modern, recruiter-supervised recruitment workflow and intelligence platform rewritten in **React 19**, **TypeScript**, and **Tailwind CSS**, preserving all original business logic, multi-dimensional scoring frameworks, fairness policies, proctored AI interview tooling, and organizational architecture.
+A recruiter-supervised recruitment workflow and intelligence platform built with React, TypeScript, Tailwind CSS and a Python FastAPI backend.
 
----
+## Agent modules
 
-## 🌟 Core Features & Modules
+### Agent 1 — Job Intelligence
 
-### 1. Recruiter-Supervised Hiring Workflow
-- **Hiring Brief & Role Templates:** Preloaded presets for AI/ML Engineer, Frontend Engineer, Backend Engineer, DevOps Engineer, Full Stack Engineer, Product Manager, and Data Scientist.
-- **AI Job Intelligence Agent:** Drafts inclusive, unbiased job descriptions and multi-dimensional evaluation rubrics.
-- **Recruiter Review & Approval Gate:** Recruiter oversees and approves the JD before distribution checklists are generated.
-- **Resume Screening & Multi-Dimensional Scoring:** Evaluates candidate resumes across 6 weighted dimensions:
-  - Technical Skills (30%)
-  - Experience (20%)
-  - Education (10%)
-  - Projects (15%)
-  - Domain Knowledge (15%)
-  - Communication (10%)
-- **Adaptive Assessment Rounds:**
-  - **Coding Round:** Adaptive prompt generation, code submission testing, and multi-factor evaluation (Correctness, Approach, Complexity, Strengths).
-  - **Technical Interview:** Dynamic role-specific questions, evidence evaluation, and recruiter pass/reject decisions.
-  - **HR Round:** Structured phone guide, alignment notes, and human review.
-- **Outreach & Communication Queue:** Auto-drafts personalized interview invitations and respectful update messages with full editing and plain-text export.
-- **Workforce & Talent Relationship Graph:** Descriptive node-link entity network linking roles, candidates, verified skills, and interview outcomes.
+Drafts job descriptions, asks clarifying questions, creates a structured evaluation rubric and flags potentially sensitive criteria for recruiter review. Job publication remains a separate authorised action requiring company approval.
 
-### 2. AI Online Video & Voice Interview
-- **Real-Time Proctor & Motion Detection:** WebRTC/getUserMedia video stream with optical frame-difference analysis, detecting abnormal movement spikes and logging snapshots for recruiter review.
-- **Live Voice Interaction:** In-browser Speech Recognition (`SpeechRecognition` / `webkitSpeechRecognition`) and Text-to-Speech playback (`speechSynthesis`).
-- **Real-Time AI Evaluation:** Scored responses out of 10 with actionable improvement feedback and session summaries.
+### Agent 2 — Candidate Intelligence
 
-### 3. Agent Platform Architecture
-- Visual representation of the **Four-Layer Platform**:
-  1. *Layer 1:* Agent Workforce (planning, task routing)
-  2. *Layer 2:* Company Memory (opt-in candidate history & workforce graph)
-  3. *Layer 3:* Reasoning Engine (evidence reflection, prompt generation)
-  4. *Human Approval Gate:* Recruiter authorization for high-impact decisions
-  5. *Layer 4:* Execution Engine (workflow transitions, dispatch drafts)
+Uploads multiple resumes (PDF, DOCX, TXT) and creates validated, evidence-backed candidate profiles. It extracts contact fields, skills, experience, education, projects, certifications and profile links; produces source evidence IDs/snippets; adds confidence values and review flags; and redacts detected PII in the returned resume text.
 
-### 4. Fairness & Bias Auditing (EEOC §60-3.4)
-- **AttributeMasker:** Automatic redaction of protected demographic tokens (Name, Gender, DOB/Age, Nationality, Marital Status, Religion) prior to AI evaluation.
-- **A/B Experiment Benchmark:** Disparate Impact (DI), Demographic Parity Difference (DPD), and EEOC 4/5ths rule compliance monitor.
+Agent 2 does not rank or reject candidates. Its profiles are extraction results and must be checked against the source documents.
 
-### 5. Candidate Intelligence & HR Policy Agent
-- **Grounded Resume Q&A:** Direct evidentiary answers based on candidate resume profiles.
-- **Actionable Resume Enhancements & Generator:** Metric-driven improvement suggestions and one-click formatted resume download.
-- **Employee HR Policy Agent:** Grounded answering of organizational policies (leave, PTO, remote work, expenses).
-
----
-
-## Python Backend — Agent 1: Job Intelligence
-
-The existing React + Vite frontend now calls a separate FastAPI backend for the first agent.
-
-### Run the backend
+## Run the backend
 
 ~~~powershell
 cd backend
 python -m venv .venv
-.venv\\Scripts\\Activate.ps1
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ~~~
 
-The backend API documentation is available at http://127.0.0.1:8000/docs.
+API docs: http://127.0.0.1:8000/docs
 
-### Enable local LLM generation
+Core dependencies include PyMuPDF, python-docx and python-multipart. Optional document engines are listed in backend/requirements-extraction-extras.txt. See backend/README.md for Docling, spaCy, Presidio and PaddleOCR configuration, plus privacy and production limitations.
 
-Install Ollama, start its local service, then pull the configured model:
+## Agent 2 upload endpoint
 
-~~~powershell
-ollama pull qwen3:4b
-~~~
+POST /api/v1/candidate-intelligence/resumes/batch
 
-The backend can still run without Ollama. In that case it returns a clearly labelled deterministic template draft rather than pretending the output was generated by an LLM.
+Use multipart/form-data with repeated files fields and consent_confirmed=true. Maximum 15 files per batch; 10 MB per file. Files are processed in memory and not persisted. Each file gets an independent success/error result.
 
-### Agent 1 API
+## Agent 1 endpoint
 
-- GET /health
-- POST /api/v1/job-intelligence/draft
+POST /api/v1/job-intelligence/draft
 
-The Job Intelligence Agent is built with LangGraph, FastAPI, Pydantic and a local Ollama adapter. It generates a structured job description and evaluation rubric, asks clarifying questions when essential requirements are missing, and flags potentially sensitive selection criteria for human review. Every draft requires company approval before it can be published.
-
-### Run backend tests
+## Run tests
 
 ~~~powershell
 cd backend
 pytest -q
 ~~~
 
-## 🚀 Getting Started
+## Run the frontend
 
-### Development
-```bash
+~~~bash
 npm install
 npm run dev
-```
-The application will start on `http://0.0.0.0:3000`.
+~~~
 
-### Production Build
-```bash
-npm run build
-npm run preview
-```
-
-### Type Checking & Linting
-```bash
-npm run lint
-```
+The frontend dev server runs on port 3000.
