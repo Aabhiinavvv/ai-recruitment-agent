@@ -1,5 +1,3 @@
-import type { Candidate } from '../types';
-
 export type CommunicationType =
   | 'application_acknowledgement'
   | 'interview_invitation'
@@ -72,7 +70,7 @@ export async function createCommunicationDraft(
   return response.json() as Promise<CommunicationDraftResponse>;
 }
 
-export function mapCommunicationType(type: CommunicationType): Candidate['current_round'] extends never ? never : 'round' | 'rejection' | 'progress' | 'outreach' {
+export function mapCommunicationType(type: CommunicationType): 'round' | 'rejection' | 'progress' | 'outreach' {
   if (type === 'not_selected') return 'rejection';
   if (
     type === 'interview_invitation'
