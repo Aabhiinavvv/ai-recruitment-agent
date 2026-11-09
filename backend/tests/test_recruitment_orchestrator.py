@@ -200,6 +200,33 @@ def test_rejects_invalid_offer_and_onboarding_state_dependencies():
             "onboarding_status": "in_progress",
         })
 
+    with pytest.raises(ValidationError, match="recruiter-reviewed matching evidence"):
+        _request(candidate={
+            "candidate_ref": "candidate-001",
+            "interview_consent_confirmed": True,
+            "interview_status": "scheduled",
+        })
+
+    with pytest.raises(ValidationError, match="completed and reviewed interview"):
+        _request(candidate={
+            "candidate_ref": "candidate-001",
+            "matching_reviewed": True,
+            "interview_consent_confirmed": True,
+            "interview_status": "scheduled",
+            "verification_consent_confirmed": True,
+            "verification_status": "in_progress",
+        })
+
+    with pytest.raises(ValidationError, match="completed background verification"):
+        _request(candidate={
+            "candidate_ref": "candidate-001",
+            "matching_reviewed": True,
+            "interview_consent_confirmed": True,
+            "interview_status": "completed",
+            "recruiter_decision": "hire_approved",
+            "offer_status": "draft",
+        })
+
 
 def test_api_endpoint_returns_plan_only_mode():
     response = client.post("/api/v1/orchestrator/plan", json=_request().model_dump(mode="json"))
