@@ -26,7 +26,9 @@ export interface OfferDraftRequest {
   job_title: string;
   company_name: string;
   recruiter_hire_approved: boolean;
+  hire_approval_reference: string;
   verification_review_completed: boolean;
+  verification_review_reference: string;
   unresolved_verification_items: number;
   employment_type: EmploymentType;
   currency: string;
@@ -46,6 +48,8 @@ export interface OfferDraftResponse {
   candidate_id: string;
   job_title: string;
   company_name: string;
+  hire_approval_reference: string;
+  verification_review_reference: string;
   employment_type: EmploymentType;
   currency: string;
   compensation_amount: string;
