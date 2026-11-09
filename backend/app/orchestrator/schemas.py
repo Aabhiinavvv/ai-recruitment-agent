@@ -55,6 +55,8 @@ class CandidateOrchestrationState(BaseModel):
     def validate_state_dependencies(self):
         if self.offer_status in {"draft", "approved", "sent", "accepted"} and self.recruiter_decision != "hire_approved":
             raise ValueError("An offer state requires a recruiter-approved hire decision.")
+        if self.offer_status in {"draft", "approved", "sent", "accepted"} and self.verification_status != "completed":
+            raise ValueError("An offer state requires completed background verification.")
         if self.onboarding_status != "not_started" and self.offer_status != "accepted":
             raise ValueError("Onboarding can only progress after an accepted offer.")
         if self.verification_status != "not_started" and not self.verification_consent_confirmed:
