@@ -121,10 +121,10 @@ def build_communication_draft(
         subject = f"Following up on your application — {role}"
         body = (
             f"{greeting}\n\n"
-            f"We are following up regarding your application for the {role} position. "
-            f"Please let us know if you have any questions or if there is anything you would "
-            f"like the recruitment team to know.\n\n"
-            f"Thank you,\n{company}"
+            f"We are following up regarding your application for the {role} position."
+            + (f"\n\n{context}" if context else
+               " Please let us know if you have any questions or if there is anything you would like the recruitment team to know.")
+            + f"\n\nThank you,\n{company}"
         )
 
     # Keep permitted recruiter-provided context out of rejection/scheduling templates by
