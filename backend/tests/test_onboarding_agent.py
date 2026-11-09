@@ -30,7 +30,9 @@ def _offer_request(**overrides):
         "job_title": "Data Engineer",
         "company_name": "Example Systems",
         "recruiter_hire_approved": True,
+        "hire_approval_reference": "vault:hire:approval001",
         "verification_review_completed": True,
+        "verification_review_reference": "vault:bgc:review001",
         "unresolved_verification_items": 0,
         "employment_type": "full_time",
         "currency": "INR",
@@ -53,6 +55,8 @@ def test_offer_draft_uses_only_supplied_terms():
     assert "INR 1200000.00 (annual)" in result.draft_text
     assert "Health cover as supplied by HR" in result.draft_text
     assert result.legally_binding is False
+    assert result.hire_approval_reference == "vault:hire:approval001"
+    assert result.verification_review_reference == "vault:bgc:review001"
     assert result.offer_dispatch_enabled is False
     assert result.signature_enabled is False
     assert result.persistence_enabled is False
@@ -62,6 +66,13 @@ def test_offer_draft_uses_only_supplied_terms():
 def test_offer_requires_recruiter_hire_approval():
     with pytest.raises(ValidationError, match="explicitly approve the hire"):
         _offer_request(recruiter_hire_approved=False)
+
+
+def test_offer_requires_opaque_hire_and_verification_references():
+    with pytest.raises(ValidationError):
+        _offer_request(hire_approval_reference="approval-record-123")
+    with pytest.raises(ValidationError):
+        _offer_request(verification_review_reference="https://example.com/report")
 
 
 def test_offer_requires_verification_review_and_no_open_items():
@@ -96,6 +107,16 @@ def test_offer_approval_and_manual_dispatch_are_separate_events():
     assert sent.current_status == "sent_outside_platform"
     assert sent.dispatch_performed is False
     assert sent.persisted is False
+
+
+def test_offer_expiry_cannot_be_marked_before_expiry_date():
+    draft = create_offer_draft(_offer_request())
+    with pytest.raises(ValidationError, match="only be marked expired after"):
+        OfferEventRequest(
+            offer_id=draft.offer_id, candidate_id=draft.candidate_id,
+            current_status="sent_outside_platform", event="mark_expired",
+            recruiter_attested=True, offer_expiry_date=draft.offer_expiry_date,
+        )
 
 
 def test_offer_acceptance_requires_candidate_response_reference():
