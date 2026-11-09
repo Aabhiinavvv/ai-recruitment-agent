@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -17,6 +18,7 @@ from app.candidate_intelligence.schemas import (
     ExtractedSkill,
     PrivacyMetadata,
     ProjectEntry,
+    ResumeNamedEntity,
     ReviewFlag,
 )
 
@@ -86,19 +88,18 @@ def _try_paddle_ocr(pdf_bytes: bytes) -> list[str]:
                 )
                 page_text: list[str] = []
                 try:
-                    # PaddleOCR 3.x
                     prediction = engine.predict(input=image)
                     for item in prediction or []:
                         payload: Any = getattr(item, "json", item)
                         if callable(payload):
                             payload = payload()
+                        if isinstance(payload, str):
+                            import json
+                            payload = json.loads(payload)
                         if isinstance(payload, dict):
                             payload = payload.get("res", payload)
-                            page_text.extend(
-                                str(value) for value in payload.get("rec_texts", [])
-                            )
+                            page_text.extend(str(value) for value in payload.get("rec_texts", []))
                 except (AttributeError, TypeError, ValueError):
-                    # PaddleOCR 2.x
                     result = engine.ocr(image, cls=True)
                     for block in result or []:
                         for line in block or []:
@@ -121,10 +122,8 @@ def _extract_docx(data: bytes) -> tuple[str, list[str], str, list[str]]:
     text = "\n".join(parts)
     warnings: list[str] = []
     parser = "python-docx"
-    # Docling is a best-effort enhancement; standard extraction remains available.
-    try:
-        import os
-        if os.getenv("DOCLING_ENABLED", "false").lower() == "true":
+    if os.getenv("DOCLING_ENABLED", "false").lower() == "true":
+        try:
             from docling.document_converter import DocumentConverter
             with tempfile.NamedTemporaryFile(suffix=".docx") as tmp:
                 tmp.write(data)
@@ -134,10 +133,10 @@ def _extract_docx(data: bytes) -> tuple[str, list[str], str, list[str]]:
                 if docling_text:
                     text = docling_text
                     parser = "docling"
-    except ImportError:
-        warnings.append("Docling is not installed; python-docx was used.")
-    except Exception as exc:
-        warnings.append(f"Docling enhancement failed; python-docx fallback used ({type(exc).__name__}).")
+        except ImportError:
+            warnings.append("Docling is not installed; python-docx was used.")
+        except Exception as exc:
+            warnings.append(f"Docling enhancement failed; python-docx fallback used ({type(exc).__name__}).")
     return text, [text], parser, warnings
 
 
@@ -154,10 +153,9 @@ def extract_document(data: bytes, filename: str) -> tuple[str, list[str], str, l
 
 
 def _redact_pii(text: str) -> tuple[str, list[str], str]:
-    """Prefer Presidio when configured; otherwise use conservative regex redaction."""
-    try:
-        import os
-        if os.getenv("PRESIDIO_ENABLED", "false").lower() == "true":
+    """Prefer Presidio when enabled; always retain a regex safety fallback."""
+    if os.getenv("PRESIDIO_ENABLED", "false").lower() == "true":
+        try:
             from presidio_analyzer import AnalyzerEngine
             from presidio_anonymizer import AnonymizerEngine
             analyzer = AnalyzerEngine()
@@ -165,15 +163,14 @@ def _redact_pii(text: str) -> tuple[str, list[str], str]:
             redacted = AnonymizerEngine().anonymize(text=text, analyzer_results=results)
             entities = sorted({item.entity_type for item in results})
             return redacted.text, entities, "presidio"
-    except ImportError:
-        pass
-    except Exception:
-        # A failed optional redactor must not crash parsing. Regex still runs below.
-        pass
+        except ImportError:
+            pass
+        except Exception:
+            pass
 
     rules = [
         ("EMAIL_ADDRESS", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)),
-        ("PHONE_NUMBER", re.compile(r"(?<!\w)(?:\+\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?)?\d{3,5}[\s.-]?\d{4}(?!\w)")),
+        ("PHONE_NUMBER", re.compile(r"(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(?\d{2,5}\)?[\s.-]?)?\d{3,5}[\s.-]?\d{4,5}(?!\d)")),
     ]
     redacted = text
     detected: list[str] = []
@@ -182,6 +179,30 @@ def _redact_pii(text: str) -> tuple[str, list[str], str]:
             detected.append(entity)
             redacted = pattern.sub(f"[{entity}]", redacted)
     return redacted, detected, "regex-fallback"
+
+
+def _spacy_entities(text: str) -> tuple[list[tuple[str, str]], str, str | None]:
+    """Optional spaCy NER. No model download happens automatically."""
+    model_name = os.getenv("SPACY_MODEL", "en_core_web_sm")
+    try:
+        import spacy
+        nlp = spacy.load(model_name, disable=["parser", "tagger", "lemmatizer"])
+        doc = nlp(text[:100000])
+        found: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for entity in doc.ents:
+            if entity.label_ in {"ORG", "GPE", "LOC", "DATE"}:
+                key = (entity.text.strip(), entity.label_)
+                if key[0] and key not in seen:
+                    seen.add(key)
+                    found.append(key)
+        return found[:60], f"spacy:{model_name}", None
+    except ImportError:
+        return [], "regex-rules", "spaCy is not installed; deterministic extraction rules were used."
+    except OSError:
+        return [], "regex-rules", f"spaCy model '{model_name}' is not installed; deterministic rules were used."
+    except Exception as exc:
+        return [], "regex-rules", f"spaCy was unavailable ({type(exc).__name__}); deterministic rules were used."
 
 
 def _normalise_text(value: str) -> str:
@@ -231,15 +252,10 @@ def build_candidate_profile(
         if len(clean_quote) < 2:
             return ""
         evidence_id = f"EV-{len(evidence) + 1:04d}"
-        evidence.append(
-            EvidenceItem(
-                evidence_id=evidence_id,
-                field=field,
-                quote=clean_quote,
-                source_file=filename,
-                page_number=page_number,
-            )
-        )
+        evidence.append(EvidenceItem(
+            evidence_id=evidence_id, field=field, quote=clean_quote,
+            source_file=filename, page_number=page_number,
+        ))
         return evidence_id
 
     def evidence_for(field: str, value: str) -> list[str]:
@@ -261,7 +277,7 @@ def build_candidate_profile(
     email_match = re.search(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", text, re.I)
     email = email_match.group(0).lower() if email_match else None
     phone_pattern = re.compile(
-        r"(?<!\w)(?:\+\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?)?\d{3,5}[\s.-]?\d{4}(?!\w)"
+        r"(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(?\d{2,5}\)?[\s.-]?)?\d{3,5}[\s.-]?\d{4,5}(?!\d)"
     )
     phones = list(dict.fromkeys(
         re.sub(r"\s+", " ", m.group(0)).strip()
@@ -273,14 +289,11 @@ def build_candidate_profile(
     for phone in phones:
         evidence_for("phone_numbers", phone)
 
-    # Name extraction is intentionally conservative: only accept a short top-line candidate
-    # that looks like a person's name, not an inferred name from an email address.
     full_name: str | None = None
     for line in lines[:6]:
         candidate = re.sub(r"\s+", " ", line).strip(" |•")
         if (
-            2 <= len(candidate.split()) <= 4
-            and len(candidate) <= 60
+            2 <= len(candidate.split()) <= 4 and len(candidate) <= 60
             and not re.search(r"@|https?://|\d|resume|curriculum vitae|phone|email", candidate, re.I)
             and all(re.fullmatch(r"[A-Za-z][A-Za-z.'-]*", part) for part in candidate.split())
         ):
@@ -307,22 +320,18 @@ def build_candidate_profile(
         add_evidence("summary", " ".join(summary_lines[:3]))
 
     skills: list[ExtractedSkill] = []
-    lower_text = text.lower()
     for term in SKILL_TERMS:
         pattern = re.compile(r"(?<![a-z0-9+#])" + re.escape(term.lower()) + r"(?![a-z0-9+#])", re.I)
-        matches = list(pattern.finditer(text))
-        if matches:
+        match = pattern.search(text)
+        if match:
             canonical = SKILL_ALIASES.get(term, term)
             if any(item.name.lower() == canonical for item in skills):
                 continue
-            match = matches[0]
             quote = text[max(0, match.start() - 65):min(len(text), match.end() + 65)]
             ev_id = add_evidence("skills", quote)
             skills.append(ExtractedSkill(name=canonical, confidence=0.88, evidence_ids=[ev_id] if ev_id else []))
 
-    experience_lines = _section_lines(
-        text, ["experience", "work experience", "professional experience", "employment"]
-    )
+    experience_lines = _section_lines(text, ["experience", "work experience", "professional experience", "employment"])
     experience: list[ExperienceEntry] = []
     for item in experience_lines[:30]:
         compact = _normalise_text(item)
@@ -333,11 +342,7 @@ def build_candidate_profile(
             compact, re.I
         )
         ev = add_evidence("work_experience", compact)
-        experience.append(ExperienceEntry(
-            raw_entry=compact[:500],
-            date_range=dates.group(0) if dates else None,
-            evidence_ids=[ev] if ev else [],
-        ))
+        experience.append(ExperienceEntry(raw_entry=compact[:500], date_range=dates.group(0) if dates else None, evidence_ids=[ev] if ev else []))
 
     education_lines = _section_lines(text, ["education", "academic background"])
     education: list[EducationEntry] = []
@@ -363,8 +368,17 @@ def build_candidate_profile(
         if len(_normalise_text(item)) > 3
     ))
 
+    named_entities_raw, nlp_engine, nlp_warning = _spacy_entities(text)
+    named_entities: list[ResumeNamedEntity] = []
+    for entity_text, label in named_entities_raw:
+        ev = evidence_for("named_entity", entity_text)
+        named_entities.append(ResumeNamedEntity(text=entity_text, label=label, evidence_ids=ev))
+
     redacted_text, entities, redaction_engine = _redact_pii(text)
     warnings = list(parser_warnings)
+    if nlp_warning:
+        warnings.append(nlp_warning)
+
     flags: list[ReviewFlag] = []
     if not full_name:
         flags.append(ReviewFlag(code="NAME_NOT_DETECTED", message="Name could not be confidently identified.", severity="warning"))
@@ -390,29 +404,17 @@ def build_candidate_profile(
         "projects": 0.75 if projects else 0.0,
     }
     profile = CandidateProfile(
-        candidate_id=candidate_id,
-        source_file=filename,
-        full_name=full_name,
-        email=email,
-        phone_numbers=phones,
-        location=location,
+        candidate_id=candidate_id, source_file=filename, full_name=full_name, email=email,
+        phone_numbers=phones, location=location,
         headline=lines[1][:160] if len(lines) > 1 and not re.search(r"@|https?://", lines[1]) else None,
-        summary=summary,
-        skills=skills,
-        work_experience=experience,
-        education=education,
-        projects=projects,
-        certifications=certifications,
-        profile_links=profile_links,
-        evidence=evidence,
+        summary=summary, skills=skills, work_experience=experience, education=education,
+        projects=projects, certifications=certifications, profile_links=profile_links,
+        named_entities=named_entities, nlp_engine=nlp_engine, evidence=evidence,
         field_confidence=field_confidence,
-        extraction_status="needs_review" if flags else "parsed",
-        review_flags=flags,
+        extraction_status="needs_review" if flags else "parsed", review_flags=flags,
         privacy=PrivacyMetadata(
-            redaction_applied=bool(entities),
-            redacted_entities=entities,
-            redaction_engine=redaction_engine,
-            redacted_resume_text=redacted_text[:30000],
+            redaction_applied=bool(entities), redacted_entities=entities,
+            redaction_engine=redaction_engine, redacted_resume_text=redacted_text[:30000],
         ),
     )
     if len(text) > 30000:
