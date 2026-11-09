@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from starlette.concurrency import run_in_threadpool
 
 from app.matching.engine import match_candidate_batch
 from app.matching.schemas import CandidateMatchBatchRequest, CandidateMatchBatchResponse
@@ -15,6 +16,6 @@ async def match_candidates(
     request: CandidateMatchBatchRequest,
 ) -> CandidateMatchBatchResponse:
     try:
-        return match_candidate_batch(request)
+        return await run_in_threadpool(match_candidate_batch, request)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
