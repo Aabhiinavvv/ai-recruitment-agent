@@ -108,3 +108,17 @@ npm run preview
 ```bash
 npm run lint
 ```
+
+
+## Python Backend — Agent 2: Candidate Intelligence
+
+The Agent 2 panel is available at the top of the Hiring Workflow screen. Upload up to 15 PDF, DOCX or TXT resumes in one batch. It returns structured profiles with extracted contact fields, skills, experience, education, projects, source evidence IDs/snippets, confidence values and review flags.
+
+- API: POST /api/v1/candidate-intelligence/resumes/batch
+- Multipart fields: repeated files and consent_confirmed=true
+- Limits: 10 MB per file; 15 files per batch
+- Each resume is processed independently; a failure for one file does not stop the batch.
+- Files are processed in memory and are not persisted by this endpoint.
+- Profiles are extraction-only. Agent 2 does not rank, shortlist, reject or make hiring decisions.
+
+Core dependencies: PyMuPDF, python-docx and python-multipart. Optional engines (Docling, spaCy, Presidio and PaddleOCR) are configured separately. See backend/README.md for setup, privacy and production limitations.

@@ -99,7 +99,7 @@ The response includes status, job_description_markdown, structured_job, rubric, 
 ## Tests
 
 ~~~bash
-pytest -q
+python -m pytest -q
 ~~~
 
 ## Frontend connection
@@ -112,3 +112,78 @@ The existing React + Vite application calls http://localhost:8000 by default. Ov
 - Potentially sensitive criteria are flagged for human review.
 - Rubrics support consistent assessment; they do not make an autonomous hiring decision.
 - This service does not send emails or publish vacancies.
+
+
+---
+
+# Agent 2 — Candidate Intelligence Agent
+
+Agent 2 provides batch resume upload and evidence-backed candidate profile extraction.
+
+## Responsibilities
+
+- Accept PDF, DOCX and TXT resumes in one upload batch.
+- Extract text with PyMuPDF and python-docx.
+- Optionally use Docling for layout-aware PDF/DOCX extraction.
+- Use PaddleOCR for scanned PDF pages when installed and selectable text is insufficient.
+- Use spaCy for optional named-entity annotations (ORG, GPE, LOC and DATE).
+- Use Presidio for optional PII redaction, with a basic email/phone regex fallback.
+- Produce Pydantic-validated candidate profiles, confidence values, evidence references and review flags.
+- Continue processing the remaining files if one file is corrupt or unsupported.
+
+It does not score role fit, rank candidates, make shortlisting decisions, or persist the uploaded documents.
+
+## Agent 2 API
+
+POST /api/v1/candidate-intelligence/resumes/batch
+
+Send multipart/form-data with:
+- files: one or more PDF, DOCX or TXT files.
+- consent_confirmed: true.
+
+Limits: maximum 15 files per batch, 10 MB per file. Files are processed in memory and then released.
+
+## Extraction engine setup
+
+Core setup uses:
+
+~~~powershell
+pip install -r requirements.txt
+~~~
+
+Optional engines:
+
+~~~powershell
+pip install -r requirements-extraction-extras.txt
+python -m spacy download en_core_web_sm
+~~~
+
+Configure .env as needed:
+
+~~~dotenv
+DOCLING_ENABLED=false
+SPACY_MODEL=en_core_web_sm
+PRESIDIO_ENABLED=false
+~~~
+
+PaddleOCR additionally requires a PaddlePaddle package matching the local Python, OS and CPU/CUDA setup. Install paddlepaddle or paddlepaddle-gpu separately. Do not install OCR extras unless you need scanned-resume support.
+
+## Profile output
+
+Each successful file contains:
+- Contact fields detected from the source resume.
+- Skill mentions from a built-in keyword vocabulary.
+- Raw experience, education and project entries.
+- Profile URLs and certification mentions.
+- Evidence IDs and source excerpts; PDF text evidence includes page numbers where available.
+- Extraction confidence markers and review flags.
+- Redacted resume text and information about the redaction engine.
+
+## Privacy, accuracy and production limitations
+
+- The frontend requires a consent confirmation. This is an application gate, not proof of candidate consent. A production system must persist the consent notice/version, timestamp, purpose and actor.
+- The regex redaction fallback masks email and phone-like values only. Enable and configure Presidio for broader entity detection; validate language-specific recognisers before production.
+- The original extracted resume text is not returned; the response includes a redacted text representation. The structured contact fields remain visible to authorised workflow users and require access control.
+- Extraction is heuristic. Skill mentions are not proof of proficiency, and entity recognition is not verification. Recruiters must check the original resume.
+- There is no database persistence, authentication, tenant isolation, malware scanning, encrypted object storage, retention/deletion workflow or access audit yet.
+- Do not use extraction outputs as an automated hiring decision or as a sole basis for rejecting a candidate.
