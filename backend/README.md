@@ -187,3 +187,57 @@ Each successful file contains:
 - Extraction is heuristic. Skill mentions are not proof of proficiency, and entity recognition is not verification. Recruiters must check the original resume.
 - There is no database persistence, authentication, tenant isolation, malware scanning, encrypted object storage, retention/deletion workflow or access audit yet.
 - Do not use extraction outputs as an automated hiring decision or as a sole basis for rejecting a candidate.
+
+
+---
+
+# Agent 3 — Matching & Ranking Agent
+
+Agent 3 compares structured Candidate Intelligence profiles with a recruiter-approved Job Intelligence rubric.
+
+## API
+
+POST /api/v1/matching/candidates
+
+JSON body:
+- job: job ID/title, approved flag, required/preferred skills, responsibilities, education criteria, optional minimum experience duration, and an evaluation rubric.
+- candidates: job-related structured fields only (candidate ID, source alias, skills, experience, education, projects, evidence snippets, extraction confidence/status and review flags).
+
+The API schema deliberately rejects direct identifying fields such as name, email, phone, location and profile links. The React client also strips these before sending the request.
+
+## Methodology
+
+- Required/preferred skill mentions are checked against extracted skill records and their evidence IDs.
+- Rubric criterion type is inferred from the recruiter-approved criterion label (skills, experience, education, projects or general evidence).
+- BM25 retrieves resume excerpts relevant to each criterion.
+- Optional BGE-M3 dense retrieval may be enabled to surface paraphrased evidence. Optional BGE reranking can re-order retrieved passages. Semantic retrieval does not by itself establish a claimed skill; the evidence excerpt remains visible to the recruiter.
+- Experience months are estimated only from explicit, parseable date ranges. Overlapping date periods are unioned to avoid double counting.
+- Only evaluable rubric weights contribute to the Evidence Alignment Index. Evidence coverage shows the proportion of the total rubric weight that was evaluable.
+- Missing or unparseable data is shown as not detected / not evaluable, not silently assumed to be zero.
+- Results are sorted for review. There is no automatic pass, rejection, shortlist or hire decision.
+
+## Dependencies
+
+Core keyword retrieval adds rank-bm25 to requirements.txt.
+
+Optional semantic retrieval/reranking:
+~~~powershell
+pip install -r requirements-extraction-extras.txt
+~~~
+
+Configure .env:
+~~~dotenv
+MATCHING_SEMANTIC_ENABLED=false
+MATCHING_EMBEDDING_MODEL=BAAI/bge-m3
+MATCHING_RERANKER_ENABLED=false
+MATCHING_RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+~~~
+
+Enable semantic retrieval or reranking only after installing sentence-transformers and validating model licensing, local RAM/VRAM use, latency and quality on representative resumes. Model downloads may be large.
+
+## Important limitations
+
+- The current job approval gate is UI-assisted and based on a client-supplied flag. It is not a server-authoritative approval record; authenticated recruiter identity and server-side approval persistence are production requirements.
+- Ranking quality depends on extraction quality, the skill vocabulary, rubric wording and lexical coverage. BM25 is not a full semantic understanding of every resume.
+- No calibrated prediction or hiring probability is produced. Validate the method against labelled, job-related evaluation data before considering operational use.
+- Protected attributes and direct identifiers are not used as ranking inputs. This does not replace a full independent bias, legal and privacy assessment.
