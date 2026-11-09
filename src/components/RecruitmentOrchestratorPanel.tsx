@@ -18,7 +18,6 @@ import {
   CheckCircle2,
   Circle,
   Clock3,
-  GitBranch,
   Loader2,
   LockKeyhole,
   RefreshCw,
@@ -153,8 +152,20 @@ export const RecruitmentOrchestratorPanel: React.FC<RecruitmentOrchestratorPanel
       setError('Select a candidate to create a candidate-specific orchestration plan.');
       return;
     }
+    if (interviewStatus !== 'not_started' && !matchingReviewed) {
+      setError('Interview status requires recruiter-reviewed matching evidence.');
+      return;
+    }
+    if (verificationStatus !== 'not_started' && interviewStatus !== 'completed') {
+      setError('Background verification requires a completed and reviewed interview.');
+      return;
+    }
     if (offerStatus !== 'not_started' && candidateState?.recruiter_decision !== 'hire_approved') {
       setError('Offer states require a recruiter-recorded final hire approval.');
+      return;
+    }
+    if (['draft', 'approved', 'sent', 'accepted'].includes(offerStatus) && interviewStatus !== 'completed') {
+      setError('Offer workflow requires a completed and reviewed interview.');
       return;
     }
     if (['draft', 'approved', 'sent', 'accepted'].includes(offerStatus) && verificationStatus !== 'completed') {
