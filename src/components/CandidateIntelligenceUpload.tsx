@@ -141,7 +141,7 @@ function MatchResultCard({
         <div>
           <p className="text-xs text-slate-500">Rank #{match.rank} · {match.candidate_id}</p>
           <h3 className="mt-1 text-sm font-semibold text-slate-900">{profile?.full_name || 'Name not detected'}</h3>
-          <p className="text-xs text-slate-500">{match.source_file}</p>
+          <p className="text-xs text-slate-500">{profile?.source_file || match.source_file}</p>
         </div>
         <div className="text-right">
           <p className="text-xl font-bold tabular-nums text-slate-900">
