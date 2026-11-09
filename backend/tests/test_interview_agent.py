@@ -118,7 +118,8 @@ async def test_answer_fallback_does_not_fabricate_a_score():
 
 
 def test_plan_endpoint_rejects_unapproved_candidate():
-    payload = _plan_request(recruiter_decision="hold").model_dump()
+    payload = _plan_request().model_dump()
+    payload["recruiter_decision"] = "hold"
     response = client.post("/api/v1/interviews/plan", json=payload)
     assert response.status_code == 422
 
