@@ -206,6 +206,7 @@ export interface HiringBrief {
 export interface OutreachDraft {
   id: string;
   type: 'round' | 'rejection' | 'progress' | 'outreach';
+  communication_type?: 'application_acknowledgement' | 'interview_invitation' | 'scheduling_request' | 'schedule_confirmation' | 'status_update' | 'not_selected' | 'follow_up';
   candidate_id: string;
   candidate_name: string;
   candidate_email: string;
