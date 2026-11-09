@@ -78,9 +78,9 @@ export async function matchCandidates(
 
   // Do not send contact details, location, portfolio URLs, or named entities to the
   // matching service. Only job-related structured fields and linked evidence are needed.
-  const jobRelatedCandidates = candidates.map((profile) => ({
+  const jobRelatedCandidates = candidates.map((profile, index) => ({
     candidate_id: profile.candidate_id,
-    source_file: profile.source_file,
+    source_file: 'candidate-resume-' + (index + 1),
     skills: profile.skills,
     work_experience: profile.work_experience,
     education: profile.education,
