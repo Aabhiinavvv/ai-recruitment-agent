@@ -12,6 +12,7 @@ on:
       - feature/background-verification-agent
       - feature/offer-onboarding-agent
       - feature/recruitment-analytics-agent
+      - feature/workforce-planning-agent
   push:
     branches:
       - feature/candidate-intelligence-agent
@@ -22,6 +23,7 @@ on:
       - feature/offer-onboarding-agent
       - feature/recruitment-analytics-agent
       - feature/workforce-planning-agent
+      - feature/recruitment-orchestrator-agent
 
 permissions:
   contents: read
