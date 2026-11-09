@@ -129,7 +129,7 @@ export function CommunicationAgentPanel({ brief, candidates, onQueueDraft }: Pro
   };
 
   const addToQueue = () => {
-    if (!draft || !candidate) return;
+    if (!draft || !candidate || !contactAuthorized) return;
     const queueDraft: OutreachDraft = {
       id: draft.draft_id,
       type: mapCommunicationType(communicationType),
@@ -239,7 +239,7 @@ export function CommunicationAgentPanel({ brief, candidates, onQueueDraft }: Pro
           {draft.call_script && <details className="rounded-lg border border-slate-200 bg-white p-3"><summary className="cursor-pointer text-xs font-semibold text-slate-700">Human call script</summary><p className="mt-2 text-xs leading-5 text-slate-600">{draft.call_script}</p></details>}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-[11px] text-slate-500">Delivery is disabled. Approval does not send.</p>
-            <button type="button" disabled={!subject.trim() || !body.trim()} onClick={addToQueue} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"><PlusCircle className="h-4 w-4" />Add to recruiter queue</button>
+            <button type="button" disabled={!contactAuthorized || !subject.trim() || !body.trim()} onClick={addToQueue} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"><PlusCircle className="h-4 w-4" />Add to recruiter queue</button>
           </div>
         </div>
       )}
