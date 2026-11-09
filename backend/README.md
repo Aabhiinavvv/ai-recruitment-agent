@@ -241,3 +241,33 @@ Enable semantic retrieval or reranking only after installing sentence-transforme
 - Ranking quality depends on extraction quality, the skill vocabulary, rubric wording and lexical coverage. BM25 is not a full semantic understanding of every resume.
 - No calibrated prediction or hiring probability is produced. Validate the method against labelled, job-related evaluation data before considering operational use.
 - Protected attributes and direct identifiers are not used as ranking inputs. This does not replace a full independent bias, legal and privacy assessment.
+
+
+---
+
+# Agent 4 — Communication Agent
+
+Agent 4 prepares candidate-facing communication drafts based on recruiter-authorised workflow state.
+
+## API
+
+POST /api/v1/communication/drafts
+
+Supported `communication_type` values:
+- `application_acknowledgement`
+- `interview_invitation`
+- `scheduling_request`
+- `schedule_confirmation`
+- `status_update`
+- `not_selected`
+- `follow_up`
+
+The request must confirm candidate contact authorisation. Interview invitations, scheduling requests and schedule confirmations require `recruiter_decision="advanced"`. A `not_selected` draft requires `recruiter_decision="not_proceeding"`. Schedule confirmations require a date and time; only supplied schedule details are placed in the draft.
+
+## Human-review and delivery boundary
+
+The API returns a draft ID, recipient, subject, body, optional call script and warnings. Every result has `requires_recruiter_approval=true` and `delivery_enabled=false`. It does not send email, SMS, WhatsApp messages, calendar events or phone calls. The frontend adds drafts to the existing recruiter review queue; the queue's approve action marks them approved for a future delivery integration only.
+
+Sensitive personal/health information or references to automated scores/ranks in recruiter-provided context are omitted and surfaced as warnings. Non-progression text is neutral and does not invent a reason.
+
+No provider credentials or outbound delivery integrations are configured. Production still requires authenticated recruiter identity, auditable consent and approval records, secure provider integrations, delivery logs, bounce/error handling, rate limits, template versioning and retention controls.
