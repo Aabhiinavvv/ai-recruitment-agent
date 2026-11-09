@@ -76,10 +76,25 @@ export async function matchCandidates(
   }
   if (!candidates.length) throw new Error('Upload and extract at least one candidate resume.');
 
+  // Do not send contact details, location, portfolio URLs, or named entities to the
+  // matching service. Only job-related structured fields and linked evidence are needed.
+  const jobRelatedCandidates = candidates.map((profile) => ({
+    candidate_id: profile.candidate_id,
+    source_file: profile.source_file,
+    skills: profile.skills,
+    work_experience: profile.work_experience,
+    education: profile.education,
+    projects: profile.projects,
+    evidence: profile.evidence,
+    field_confidence: profile.field_confidence,
+    extraction_status: profile.extraction_status,
+    review_flags: profile.review_flags,
+  }));
+
   const response = await fetch(API_BASE_URL + '/api/v1/matching/candidates', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ job, candidates }),
+    body: JSON.stringify({ job, candidates: jobRelatedCandidates }),
   });
 
   if (!response.ok) {
