@@ -31,7 +31,7 @@ jobs:
         working-directory: backend
         env:
           LLM_ENABLED: "false"
-        run: pytest -q
+        run: python -m pytest -q
 
   frontend-build:
     runs-on: ubuntu-latest
