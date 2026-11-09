@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { HiringWorkflowTab } from './components/HiringWorkflowTab';
+import { CandidateIntelligenceUpload } from './components/CandidateIntelligenceUpload';
 import { AIInterviewTab } from './components/AIInterviewTab';
 import { ArchitectureTab } from './components/ArchitectureTab';
 import { FairnessModal } from './components/FairnessModal';
@@ -105,6 +106,8 @@ export function App() {
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
           {activeTab === 'workflow' && (
+            <>
+            <CandidateIntelligenceUpload />
             <HiringWorkflowTab
               brief={brief}
               setBrief={setBrief}
@@ -116,6 +119,7 @@ export function App() {
               setEvents={setEvents}
               cutoffScore={cutoffScore}
             />
+            </>
           )}
 
           {activeTab === 'interview' && (
