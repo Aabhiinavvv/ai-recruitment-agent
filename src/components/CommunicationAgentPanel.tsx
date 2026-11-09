@@ -69,6 +69,10 @@ export function CommunicationAgentPanel({ brief, candidates, onQueueDraft }: Pro
     setQueued(false);
   }, [candidateId, communicationType]);
 
+  useEffect(() => {
+    setContactAuthorized(false);
+  }, [candidateId]);
+
   const requiresAdvance = ['interview_invitation', 'scheduling_request', 'schedule_confirmation'].includes(communicationType);
   const requiresNotProceeding = communicationType === 'not_selected';
   const decisionAllowed = (!requiresAdvance || decision === 'advanced')
