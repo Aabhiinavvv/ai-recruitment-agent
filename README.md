@@ -216,3 +216,19 @@ Agent 8 calculates a privacy-minimised recruitment analytics snapshot from pseud
 - The API returns aggregate metrics only and does not persist analytics snapshots.
 
 Methodology note: funnel counts represent the current submitted pipeline snapshot, not historical stage transitions. Historical conversion, cohort analysis, source attribution and recruiter performance over time require persisted event-level data with timestamps and audit history. This prototype does not infer missing data or claim causal recruiter/source performance.
+
+
+## Agent 9 — Workforce Planning & Predictive Hiring Agent
+
+Agent 9 forecasts aggregate monthly requisition demand, hiring capacity, backlog, expected attrition and projected headcount under three capacity scenarios.
+
+- API: POST /api/v1/workforce-planning/forecast
+- Inputs: 3–36 consecutive months of aggregate new requisitions, hires and employee exits; current and target headcount; open requisition backlog; monthly recruiting capacity; annual attrition assumption; and a 1–18 month horizon.
+- Scenarios: conservative (75% of baseline capacity), base (100%), accelerated (125%).
+- Demand forecast: ordinary least-squares linear trend on supplied monthly requisition counts.
+- Outputs: monthly demand range, planned hires, capacity utilisation, backlog carry-forward, expected attrition, projected headcount and headcount gap to target.
+- Requires actual aggregate historical inputs; no sample workforce numbers are silently inserted.
+- Employee names, candidate identifiers, salaries and individual employee records are not accepted.
+- Forecasts are planning estimates, not commitments, calibrated confidence intervals or automated personnel decisions.
+
+Limitations: seasonal hiring patterns, department-level skill mix, productivity, budget constraints, internal mobility, role-level scarcity and macroeconomic conditions are not modelled. Historical demand quality and at least 6–12 months of data materially affect interpretation. HR/business owners should validate the assumptions before acting.
