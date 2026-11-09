@@ -151,3 +151,19 @@ Supported draft types: application acknowledgement, interview invitation, schedu
 - Sensitive personal/health information and score/rank references in free-text context are omitted with a warning.
 - Outputs remain drafts and join the existing recruiter approval queue.
 - No SMTP, email, SMS, WhatsApp, calendar dispatch or telephony integration is enabled. Approval does not mean the message was sent.
+
+
+## Agent 5 — AI Interview Agent
+
+Agent 5 prepares a structured question plan from the recruiter-approved job description and evaluation rubric, then provides evidence-focused review of individual, consented interview answers.
+
+- Prepare questions: POST /api/v1/interviews/plan
+- Review an answer: POST /api/v1/interviews/evaluate
+- Uses the configured local Ollama model when available. A deterministic, clearly labelled question fallback is used if generation is disabled or unavailable.
+- Answer evaluation produces an advisory 1–5 rubric score only when the local model returns valid structured output. If the model is unavailable, the system returns a manual-review checklist and no score.
+- Interview inputs are restricted to candidate ID, approved job context, rubric criteria and consented answer text. The API does not accept a candidate resume, contact details or profile attributes.
+- Candidates must have an explicit recruiter decision to advance; the job must be recruiter-approved; and candidate consent must be confirmed.
+- Every evaluation remains pending human review. The agent cannot pass, reject, shortlist or hire a candidate.
+- The frontend supports recruiter-led text interviews, answer capture, per-answer review and JSON export.
+
+Prototype limits: no autonomous candidate-facing voice agent, audio/video recording, facial/emotion analysis, automated proctoring, database persistence, transcript storage, calendar integration or interview dispatch. The API processes requests statelessly; the export is generated in the browser. Use an authenticated, access-controlled, audited persistence layer and validated candidate consent records before production.
