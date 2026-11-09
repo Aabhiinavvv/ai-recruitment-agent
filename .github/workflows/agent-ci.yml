@@ -1,0 +1,48 @@
+name: Agent backend and frontend checks
+
+on:
+  pull_request:
+    branches:
+      - main
+      - feature/job-intelligence-agent
+  push:
+    branches:
+      - feature/candidate-intelligence-agent
+
+permissions:
+  contents: read
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+      - name: Run backend tests
+        working-directory: backend
+        env:
+          LLM_ENABLED: "false"
+        run: pytest -q
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install frontend dependencies
+        run: npm install
+      - name: Build frontend
+        run: npm run build
