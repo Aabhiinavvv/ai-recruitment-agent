@@ -25,6 +25,7 @@ import { CandidatePersonaCard } from './CandidatePersonaCard';
 import { CandidatePersonaModal } from './CandidatePersonaModal';
 import { generateCandidatePersona } from '../services/personaGenerator';
 import { InterviewSchedulerModal } from './InterviewSchedulerModal';
+import { CommunicationAgentPanel } from './CommunicationAgentPanel';
 import { ScheduledInterviewsSection } from './ScheduledInterviewsSection';
 import { generateInterviewEmailConfirmation } from '../services/interviewSchedulerService';
 import { generateJobDraft, type JobIntelligenceResponse } from '../services/jobIntelligenceApi';
@@ -1068,7 +1069,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         status: 'Recruiter approved — integration required; not sent or called'
       };
     }));
-    appendAudit("Recruiter", "Approved communication draft", draftId);
+    appendAudit("Recruiter", "Approved communication draft for future delivery integration; not sent", draftId);
   };
 
   const handleDownloadDraft = (draft: OutreachDraft) => {
@@ -3353,7 +3354,14 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     </section>
   )}
 
-      {/* 5. Outreach & Scheduling Draft Queue */}
+      {/* Agent 4 — Communication Drafting */}
+      <CommunicationAgentPanel
+        brief={brief}
+        candidates={candidates}
+        onQueueDraft={handleQueueEmailDraft}
+      />
+
+      {/* 5. Recruiter Communication Review Queue */}
       {outreachQueue.length > 0 && (
         <section className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-4">
           <div className="flex items-center gap-2.5 pb-2 border-b border-slate-100">
@@ -3391,7 +3399,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                     value={draft.subject}
                     onChange={(e) => {
                       const val = e.target.value;
-                      setOutreachQueue(prev => prev.map(d => d.id === draft.id ? { ...d, subject: val } : d));
+                      setOutreachQueue(prev => prev.map(d => d.id === draft.id ? { ...d, subject: val, status: 'Draft — not sent or scheduled' } : d));
                     }}
                     className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800"
                   />
@@ -3403,7 +3411,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                     value={draft.body}
                     onChange={(e) => {
                       const val = e.target.value;
-                      setOutreachQueue(prev => prev.map(d => d.id === draft.id ? { ...d, body: val } : d));
+                      setOutreachQueue(prev => prev.map(d => d.id === draft.id ? { ...d, body: val, status: 'Draft — not sent or scheduled' } : d));
                     }}
                     rows={4}
                     className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800"
@@ -3416,7 +3424,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                       onClick={() => handleApproveDraft(draft.id)}
                       className="px-3 py-1.5 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-semibold rounded-lg"
                     >
-                      Approve Draft
+                      Approve Draft (not sent)
                     </button>
                   )}
                   <button
