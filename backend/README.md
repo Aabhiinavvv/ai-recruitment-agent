@@ -99,7 +99,7 @@ The response includes status, job_description_markdown, structured_job, rubric, 
 ## Tests
 
 ~~~bash
-pytest -q
+python -m pytest -q
 ~~~
 
 ## Frontend connection
