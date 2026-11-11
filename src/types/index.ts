@@ -133,6 +133,10 @@ export interface Candidate {
     }>;
   };
   persona?: CandidatePersona;
+  stage_dwell_times?: Partial<Record<HiringStage, number>>;
+  interview_feedback_reports?: InterviewRoundFeedback[];
+  custom_tags?: string[];
+  processed_at?: string;
 }
 
 export interface PersonaHighlight {
@@ -198,7 +202,7 @@ export interface HiringBrief {
 
 export interface OutreachDraft {
   id: string;
-  type: 'round' | 'rejection' | 'progress' | 'outreach';
+  type: 'round' | 'rejection' | 'progress' | 'outreach' | 'follow_up_reminder';
   candidate_id: string;
   candidate_name: string;
   candidate_email: string;
@@ -209,7 +213,14 @@ export interface OutreachDraft {
   body: string;
   call_script: string;
   availability: string;
-  status: 'Draft — not sent or scheduled' | 'Recruiter approved — integration required; not sent or called';
+  status: 'Draft — not sent or scheduled' | 'Recruiter approved — integration required; not sent or called' | 'Sent / Dispatched' | string;
+  sent_at?: string;
+  reminder_days?: number;
+  response_status?: 'waiting' | 'responded';
+  responded_at?: string;
+  follow_up_sent_count?: number;
+  last_follow_up_at?: string;
+  notes?: string;
 }
 
 export type EmailDraftType = 'progress' | 'rejection';
@@ -319,4 +330,165 @@ export interface ScheduledInterview {
   status: 'Scheduled' | 'Confirmed' | 'Completed' | 'Cancelled';
   notes?: string;
   createdAt: string;
+}
+
+export type StageIntensityLevel = 'optimal' | 'moderate' | 'elevated' | 'bottleneck' | 'unreached';
+
+export interface StageSlaConfig {
+  stage: HiringStage;
+  targetDays: number;
+  warningDays: number;
+  bottleneckDays: number;
+  label: string;
+}
+
+export interface CandidateStageDwellInfo {
+  stage: HiringStage;
+  days: number;
+  intensityLevel: StageIntensityLevel;
+  slaTarget: number;
+  isCurrent: boolean;
+  isOverdue: boolean;
+  overdueDays: number;
+  blockerReason?: string;
+}
+
+export interface CandidateHeatmapRow {
+  candidate: Candidate;
+  currentStage: HiringStage;
+  stageDwells: Record<HiringStage, CandidateStageDwellInfo>;
+  totalPipelineDays: number;
+  worstIntensityLevel: StageIntensityLevel;
+  hasBottleneck: boolean;
+  primaryBottleneckStage?: HiringStage;
+}
+
+export interface PipelineBottleneckAnalytics {
+  primaryBottleneckStage: HiringStage;
+  stageAverages: Record<HiringStage, {
+    avgDays: number;
+    activeCount: number;
+    stalledCount: number;
+    slaTarget: number;
+    bottleneckRatePercent: number;
+  }>;
+  overallAvgCycleDays: number;
+  totalCandidatesAtRisk: number;
+  slaHealthIndexPercent: number;
+  recommendedActions: string[];
+}
+
+export type InterviewRecommendationType = 
+  | 'Strong Hire'
+  | 'Hire'
+  | 'Lean Hire'
+  | 'Lean No Hire'
+  | 'No Hire';
+
+export interface InterviewCompetencyScores {
+  technicalDepth: number;         // 1-10
+  problemSolvingSpeed: number;    // 1-10
+  systemArchitecture: number;     // 1-10
+  communicationClarity: number;   // 1-10
+  cultureAndLeadership: number;   // 1-10
+}
+
+export interface StandardizedCompetencyEvaluation {
+  competency: string;
+  score: number;             // e.g. 8.5
+  benchmark: string;         // e.g. "Senior L5: 7.5+"
+  verdict: 'Exceeds Bar' | 'Meets Bar' | 'Below Bar';
+  observations: string;
+}
+
+export interface StandardizedStrengthItem {
+  title: string;
+  evidence: string;
+  signalStrength: 'Exceptional' | 'Strong' | 'Solid';
+}
+
+export interface StandardizedRiskItem {
+  concern: string;
+  context: string;
+  severity: 'High' | 'Medium' | 'Low';
+  mitigation: string;
+}
+
+export interface StandardizedQuestionDeepDive {
+  topic: string;
+  candidateResponseSummary: string;
+  technicalTradeoffsNoted: string;
+  verdict: string;
+}
+
+export interface StandardizedEvaluationReport {
+  executiveSummary: string;
+  calibratedLevel: string;
+  hiringVerdict: InterviewRecommendationType;
+  compositeScore: number;
+  confidenceScorePercent: number;
+  coreStrengths: StandardizedStrengthItem[];
+  riskFactorsOrGaps: StandardizedRiskItem[];
+  competencyEvaluations: StandardizedCompetencyEvaluation[];
+  questionDeepDives: StandardizedQuestionDeepDive[];
+  onboardingFocusAreas: string[];
+  recommendedNextSteps: string;
+  generatedAt: string;
+  engineVersion: string;
+}
+
+export interface InterviewRoundFeedback {
+  id: string;
+  candidateId: string;
+  candidateName: string;
+  interviewerName: string;
+  interviewerRole: string;
+  roundName: string;
+  roundType: 'screening' | 'technical' | 'coding' | 'system_design' | 'behavioral' | 'hiring_manager';
+  interviewDate: string;
+  durationMinutes: number;
+  rawNotes: string;
+  ratings: InterviewCompetencyScores;
+  overallRecommendation: InterviewRecommendationType;
+  evaluationReport?: StandardizedEvaluationReport;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SkillCoverageStatus = 'covered' | 'thin' | 'missing';
+
+export interface CompetencyHolderInfo {
+  candidateId: string;
+  candidateName: string;
+  overallScore: number;
+  skillScore: number; // 1-10
+}
+
+export interface CompetencyGapItem {
+  skill: string;
+  status: SkillCoverageStatus;
+  coveredCount: number;
+  cohortSize: number;
+  coveragePercent: number;
+  avgProficiency: number; // 0-10
+  holders: CompetencyHolderInfo[];
+  nearCutoffHolders: CompetencyHolderInfo[];
+}
+
+export interface TeamSkillsGapReport {
+  roleTitle: string;
+  scoreThreshold: number;
+  cohortCandidates: Candidate[];
+  totalRequiredSkills: number;
+  coveredSkillsCount: number;
+  thinSkillsCount: number;
+  missingSkillsCount: number;
+  overallCoveragePercent: number;
+  cohortAvgScore: number;
+  competencies: CompetencyGapItem[];
+  surplusSkills: Array<{
+    skill: string;
+    holderCount: number;
+    avgProficiency: number;
+  }>;
 }

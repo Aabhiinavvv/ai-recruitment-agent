@@ -135,17 +135,14 @@ export const CandidateStageDropdown: React.FC<CandidateStageDropdownProps> = ({
         aria-haspopup="true"
         aria-expanded={isOpen}
         title={`Current stage: ${currentConfig.label}. Click to update stage.`}
-        className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-2 transition-all shadow-2xs ${currentConfig.badgeClass} ${
+        className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${currentConfig.badgeClass} ${
           disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
         }`}
       >
-        <span className={`w-2 h-2 rounded-full ${currentConfig.dotClass} shrink-0 animate-pulse`} />
         <CurrentIcon className="w-3.5 h-3.5 shrink-0 opacity-80" />
-        <span className="font-bold tracking-tight">
-          Stage: <span className="underline decoration-dotted underline-offset-2">{currentConfig.label}</span>
-        </span>
+        <span>{currentConfig.label}</span>
         <ChevronDown 
-          className={`w-3.5 h-3.5 shrink-0 text-slate-500 transition-transform duration-200 ${
+          className={`w-3.5 h-3.5 shrink-0 text-slate-500 transition-transform duration-150 ${
             isOpen ? 'rotate-180' : ''
           }`} 
         />

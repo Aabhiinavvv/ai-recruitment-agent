@@ -229,71 +229,64 @@ export const BulkActionToolbar: React.FC<BulkActionToolbarProps> = ({
 
   return (
     <>
-      {/* Sticky Header Toolbar: Docked at the top of candidate list */}
-      <header 
+      {/* Selection & Bulk Action Bar */}
+      <div
         aria-label="Candidate Bulk Action Toolbar"
-        className="sticky top-2 sm:top-3 z-30 my-2.5 transition-all duration-200"
+        className="my-2 transition-all duration-150"
       >
+        {!hasSelection ? (
+          <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onSelectAll}
+                className="flex items-center gap-1.5 font-medium text-slate-700 hover:text-indigo-600 transition-colors cursor-pointer"
+              >
+                <Square className="w-3.5 h-3.5 text-slate-400" />
+                <span>Select all ({allFilteredCandidates.length})</span>
+              </button>
+              <span className="text-slate-300" aria-hidden="true">·</span>
+              <button
+                type="button"
+                onClick={onSelectAboveCutoff}
+                className="font-medium text-indigo-600 hover:text-indigo-700 transition-colors cursor-pointer"
+              >
+                Select above {cutoffScore}% cutoff
+              </button>
+            </div>
+            <span className="text-[11px] text-slate-400">
+              Check candidates to bulk move, email, compare, or export
+            </span>
+          </div>
+        ) : (
         <div 
-          className={`px-3.5 py-2.5 rounded-2xl border shadow-md backdrop-blur-md transition-all flex flex-wrap items-center justify-between gap-2.5 ${
-            hasSelection 
-              ? 'bg-slate-900/95 text-white border-slate-700 ring-2 ring-[#6743ee]/30' 
-              : 'bg-white/95 text-slate-700 border-slate-200/90'
-          }`}
+          className="px-4 py-2.5 rounded-xl border shadow-sm bg-slate-900 text-white border-slate-800 flex flex-wrap items-center justify-between gap-2.5"
         >
-          {/* Left section: Master Checkbox, Selection Counter & Quick Helpers */}
+          {/* Left section: Master Checkbox & Selection Counter */}
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={isAllFilteredSelected ? onDeselectAll : onSelectAll}
-              className={`flex items-center gap-2 font-bold text-xs transition-colors cursor-pointer ${
-                hasSelection ? 'text-white hover:text-purple-200' : 'text-slate-800 hover:text-[#6743ee]'
-              }`}
+              className="flex items-center gap-2 font-semibold text-xs text-white hover:text-indigo-200 transition-colors cursor-pointer"
               title={isAllFilteredSelected ? "Deselect all candidates" : "Select all filtered candidates"}
             >
               {isAllFilteredSelected ? (
-                <CheckSquare className="w-4 h-4 text-[#8a72ff]" />
-              ) : isPartiallySelected ? (
-                <MinusSquare className="w-4 h-4 text-[#8a72ff]" />
+                <CheckSquare className="w-4 h-4 text-indigo-400" />
               ) : (
-                <Square className="w-4 h-4 text-slate-400" />
+                <MinusSquare className="w-4 h-4 text-indigo-400" />
               )}
-              <span>
-                {hasSelection 
-                  ? `${selectedCount} of ${allFilteredCandidates.length} Selected` 
-                  : `Select All Candidates (${allFilteredCandidates.length})`}
+              <span className="tabular-nums">
+                {selectedCount} of {allFilteredCandidates.length} selected
               </span>
             </button>
 
-            {hasSelection ? (
-              <div className="flex items-center gap-2 border-l border-slate-700 pl-3">
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#6743ee] text-white shadow-2xs">
-                  {selectedCount} Active
-                </span>
-                <button
-                  type="button"
-                  onClick={onDeselectAll}
-                  className="text-[11px] text-slate-400 hover:text-white underline transition-colors"
-                >
-                  Clear Selection
-                </button>
-              </div>
-            ) : (
-              <div className="hidden md:flex items-center gap-2 border-l border-slate-200 pl-3">
-                <button
-                  type="button"
-                  onClick={onSelectAboveCutoff}
-                  className="px-2 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-[#5b43d6] text-[11px] font-semibold transition-colors flex items-center gap-1 border border-purple-200/70"
-                  title={`Select candidates with AI evaluation score >= ${cutoffScore}%`}
-                >
-                  <Award className="w-3 h-3 text-[#6743ee]" />
-                  <span>Select Qualified (≥{cutoffScore}%)</span>
-                </button>
-                <span className="text-[11px] text-slate-400">
-                  Select candidates below to perform bulk actions
-                </span>
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={onDeselectAll}
+              className="text-xs text-slate-400 hover:text-white underline transition-colors cursor-pointer"
+            >
+              Clear
+            </button>
           </div>
 
           {/* Right section: Dedicated Bulk Action Buttons */}
@@ -304,13 +297,8 @@ export const BulkActionToolbar: React.FC<BulkActionToolbarProps> = ({
               <button
                 type="button"
                 onClick={() => setShowStageDropdown(prev => !prev)}
-                disabled={!hasSelection}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs ${
-                  hasSelection
-                    ? 'bg-purple-600 hover:bg-purple-500 text-white cursor-pointer ring-1 ring-purple-400/40'
-                    : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60'
-                }`}
-                title={hasSelection ? "Bulk update hiring stage for all selected candidates" : "Select candidates to enable"}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer transition-colors"
+                title="Bulk update hiring stage for all selected candidates"
               >
                 <Layers className="w-3.5 h-3.5" />
                 <span>Update Stage</span>
@@ -425,36 +413,35 @@ export const BulkActionToolbar: React.FC<BulkActionToolbarProps> = ({
               <button
                 type="button"
                 onClick={() => onLaunchCompare(selectedCandidateIds[0], selectedCandidateIds[1])}
-                className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 animate-pulse"
-                title="Launch head-to-head radar comparison for the 2 selected candidates"
+                className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
+                title="Launch head-to-head comparison for the 2 selected candidates"
               >
                 <Scale className="w-3.5 h-3.5" />
-                <span>Compare Radars</span>
+                <span>Compare</span>
               </button>
             )}
 
             {/* Close / Deselect button */}
-            {hasSelection && (
-              <button
-                type="button"
-                onClick={onDeselectAll}
-                className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-xl transition-colors ml-0.5"
-                title="Clear candidate selection"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={onDeselectAll}
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors ml-0.5 cursor-pointer"
+              title="Clear candidate selection"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
+        )}
 
         {/* Temporary Feedback Notification Toast */}
         {feedbackMessage && (
-          <div className="mt-1.5 mx-auto max-w-md bg-emerald-600 text-white text-xs font-semibold px-4 py-2 rounded-xl text-center shadow-lg border border-emerald-500 flex items-center justify-center gap-2 animate-in fade-in">
+          <div className="mt-1.5 mx-auto max-w-md bg-emerald-600 text-white text-xs font-semibold px-4 py-2 rounded-lg text-center shadow-sm flex items-center justify-center gap-2">
             <Check className="w-4 h-4" />
             <span>{feedbackMessage}</span>
           </div>
         )}
-      </header>
+      </div>
 
       {/* Batch AI Email Generator Modal */}
       {showBatchEmailModal && (

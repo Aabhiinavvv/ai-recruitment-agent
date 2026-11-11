@@ -74,6 +74,127 @@ Projects: Open-source RAG benchmark toolkit (2.1k stars on GitHub).`,
     resume_profile: "Senior AI Engineer with 5+ years in production ML systems, PyTorch, MLOps, LLMs, and distributed inference.",
     overall_score: 88,
     stage: 'Technical',
+    stage_dwell_times: {
+      Screening: 1.4,
+      Technical: 6.8,
+      Interview: 0,
+      Offered: 0,
+    },
+    interview_feedback_reports: [
+      {
+        id: "fb-alex-tech-1",
+        candidateId: "CAN-9821",
+        candidateName: "Alex Rivera",
+        interviewerName: "David Chen",
+        interviewerRole: "Principal AI Systems Engineer",
+        roundName: "Technical Live Coding & RAG Architecture",
+        roundType: "system_design",
+        interviewDate: "2026-11-01",
+        durationMinutes: 60,
+        rawNotes: "Superb discussion on production LLM inference optimization and multi-agent coordination. Addressed prompt injection attacks by proposing input sandboxing, schema-constrained decoding, and dual-model validation guards. Implemented an asynchronous token-streaming generator in Python/FastAPI with proper cancellation hooks.",
+        ratings: {
+          technicalDepth: 9,
+          problemSolvingSpeed: 9,
+          systemArchitecture: 9,
+          communicationClarity: 9,
+          cultureAndLeadership: 8
+        },
+        overallRecommendation: "Strong Hire",
+        createdAt: "2026-11-01T15:30:00Z",
+        updatedAt: "2026-11-01T15:30:00Z",
+        evaluationReport: {
+          executiveSummary: "Alex delivered an exemplary interview during the Technical Live Coding & RAG Architecture round with David Chen. Demonstrating a composite evaluation score of 91/100, the candidate calibrated at L6 / Staff / Principal Engineer Track. The technical assessment highlighted mastery over high-scale architectural design, robust error recovery, and exceptional clarity of thought.",
+          calibratedLevel: "L6 / Staff / Principal Engineer Track",
+          hiringVerdict: "Strong Hire",
+          compositeScore: 91,
+          confidenceScorePercent: 94,
+          coreStrengths: [
+            {
+              title: "Deep Technical & Foundational Competence",
+              evidence: "Demonstrated high-rigor mastery in AI/ML Engineer domain with score of 9/10.",
+              signalStrength: "Exceptional"
+            },
+            {
+              title: "Architectural Trade-Off & Scalability Intuition",
+              evidence: "Proactively factored high-throughput constraints, failure modes, and operational telemetry into system blueprints.",
+              signalStrength: "Exceptional"
+            },
+            {
+              title: "Methodical Problem-Solving & Edge Case Coverage",
+              evidence: "Deconstructed complex requirements systematically, validating assumptions before committing to code or topology.",
+              signalStrength: "Strong"
+            }
+          ],
+          riskFactorsOrGaps: [
+            {
+              concern: "High Domain Caliber — Flight Risk / Comp Expectations",
+              context: "Candidate performance is at top quartile of interview pool. Likely considering multiple competitive offers.",
+              severity: "Low",
+              mitigation: "Expedite scheduling of final executive sync and calibrate offer package near 75th percentile."
+            }
+          ],
+          competencyEvaluations: [
+            {
+              competency: "Technical Depth & Domain Core",
+              score: 9,
+              benchmark: "Senior Bar: 7.5+",
+              verdict: "Exceeds Bar",
+              observations: "Exhibited authoritative mastery of AI/ML Engineer fundamentals, internals, and execution standards."
+            },
+            {
+              competency: "System Architecture & Scale",
+              score: 9,
+              benchmark: "Senior Bar: 7.0+",
+              verdict: "Exceeds Bar",
+              observations: "Deep understanding of partitioning, backpressure, state stores, and latency SLAs under load."
+            },
+            {
+              competency: "Problem-Solving & Agility",
+              score: 9,
+              benchmark: "Target Bar: 7.0+",
+              verdict: "Exceeds Bar",
+              observations: "Rapidly mapped ambiguities to structured engineering steps and edge-case boundaries."
+            },
+            {
+              competency: "Communication & Team Synergy",
+              score: 9,
+              benchmark: "Target Bar: 7.0+",
+              verdict: "Exceeds Bar",
+              observations: "Articulate, empathetic, and highly collaborative. Takes feedback seamlessly."
+            },
+            {
+              competency: "Culture, Ownership & Leadership",
+              score: 8,
+              benchmark: "Target Bar: 7.0+",
+              verdict: "Exceeds Bar",
+              observations: "Demonstrated strong bias for action, incident empathy, and mentorship orientation."
+            }
+          ],
+          questionDeepDives: [
+            {
+              topic: "Live Coding: Vector Cosine Similarity & Heap Sort",
+              candidateResponseSummary: "Candidate implemented clean, idiomatic Python with zero-norm guarding and optimal complexity.",
+              technicalTradeoffsNoted: "Discussed min-heap optimization vs full sorting for top-K extraction.",
+              verdict: "Flawless execution"
+            },
+            {
+              topic: "RAG Pipeline Hallucination Mitigation",
+              candidateResponseSummary: "Applied hybrid sparse-dense retrieval (BM25 + Contriever) along with cross-encoder rerankers and citation grounding.",
+              technicalTradeoffsNoted: "Analyzed latency overhead of rerankers vs retrieval precision.",
+              verdict: "Exceeds Senior Bar"
+            }
+          ],
+          onboardingFocusAreas: [
+            "Complete deep-dive into internal AI/ML Engineer architectural blueprints and RFC repo within Week 1.",
+            "Shadow senior team members during production deployments and weekly on-call rotation syncs.",
+            "Establish initial milestone deliverable targeting end of Month 1 to validate end-to-end service delivery velocity."
+          ],
+          recommendedNextSteps: "Fast-track candidate to Final Executive Alignment with Engineering Leadership. Recommend extending offer at L6 / Staff / Principal Engineer Track with compensation benchmarked at top quartile.",
+          generatedAt: "Nov 1, 2026, 03:30 PM",
+          engineVersion: "AI Recruitment Intelligence v3.8"
+        }
+      }
+    ],
     recruiter_decision: 'advance',
     decision_status: 'Advanced by recruiter',
     recommendation: 'Advance',
@@ -212,6 +333,7 @@ def top_k_cosine(query: list[float], matrix: list[list[float]], k: int) -> list[
     },
     memory_consent: true,
     memory_email: "alex.rivera@example.com",
+    custom_tags: ["High Priority", "Referred"],
     persona: {
       candidateId: "CAN-9821",
       archetype: "The Production AI & LLM Systems Architect",
@@ -280,7 +402,8 @@ def top_k_cosine(query: list[float], matrix: list[list[float]], k: int) -> list[
       idealEnvironment: "High-autonomy culture with direct ownership of ML infrastructure roadmaps, modern GPU clusters, and minimal bureaucratic gatekeeping.",
       fitSignal: "Immediate High-Impact Lead",
       generatedAt: "Verified Baseline"
-    }
+    },
+    processed_at: "2026-11-08T09:30:00.000Z"
   },
   {
     candidate_id: "CAN-4150",
@@ -298,6 +421,12 @@ Projects: End-to-end sales forecasting app hosted on Streamlit.`,
     resume_profile: "ML practitioner with 3 years focusing on predictive modeling, tabular data, and feature engineering.",
     overall_score: 74,
     stage: 'Screening',
+    stage_dwell_times: {
+      Screening: 4.6,
+      Technical: 0,
+      Interview: 0,
+      Offered: 0,
+    },
     recruiter_decision: 'hold',
     decision_status: 'Pending recruiter review',
     recommendation: 'Hold',
@@ -355,6 +484,156 @@ Projects: End-to-end sales forecasting app hosted on Streamlit.`,
     document_validation: {
       resume: { label: "Redacted Resume Profile", status: 'verified' }
     },
-    memory_consent: false
+    memory_consent: false,
+    custom_tags: ["Domain Specialist"],
+    processed_at: "2026-11-09T11:15:00.000Z"
+  },
+  {
+    candidate_id: "CAN-8291",
+    name: "Marcus Vance",
+    email: "marcus.vance@example.com",
+    phone: "+1-555-018-9921",
+    role: "AI/ML Engineer",
+    resume_text: `Marcus Vance - Lead Research & Systems Engineer
+Summary: 6+ years specializing in distributed model architectures, reinforcement learning from human feedback (RLHF), and GPU scaling.
+Experience:
+- Lead AI Engineer at HyperScale ML (2020-Present): Scaled 70B parameter LLM fine-tuning across 128x H100 GPUs using Megatron-DeepSpeed.
+- Senior Software Engineer at DataWave (2018-2020): Architected multi-node distributed streaming clusters in C++ and Python.
+Education: M.S. in Computer Engineering, Stanford University (2018)`,
+    resume_profile: "Lead AI Engineer specializing in distributed training, Megatron-DeepSpeed, RLHF, and GPU cluster infrastructure.",
+    overall_score: 93,
+    stage: 'Interview',
+    stage_dwell_times: {
+      Screening: 1.2,
+      Technical: 3.5,
+      Interview: 8.4, // Bottleneck in panel scheduling!
+      Offered: 0,
+    },
+    recruiter_decision: 'advance',
+    decision_status: 'Advanced by recruiter',
+    recommendation: 'Advance',
+    safety_warnings: [],
+    review_flags: [],
+    dimension_scores: {
+      technical: 96,
+      experience: 94,
+      education: 90,
+      projects: 95,
+      domain: 92,
+      communication: 88
+    },
+    dimension_evidence: {
+      technical: "Exceptional mastery of distributed Megatron-DeepSpeed, PyTorch, and multi-node clusters.",
+      experience: "6+ years with direct ownership of 128x GPU cluster deployments.",
+      education: "Master's degree from Stanford University.",
+      projects: "70B parameter distributed training pipeline.",
+      domain: "Deep systems and RLHF architectural alignment.",
+      communication: "Structured communication with crisp trade-off reasoning."
+    },
+    skill_scores: {
+      "Python": 10,
+      "Deep Learning": 10,
+      "Machine Learning": 9,
+      "Model Deployment": 10,
+      "MLOPS": 9,
+      "Cloud Computing": 9,
+      "Reinforcement Learning": 9,
+      "Hugging Face": 9
+    },
+    strengths: [
+      "Deep multi-node distributed training and Megatron-DeepSpeed expertise",
+      "Hands-on RLHF alignment at 70B model scale"
+    ],
+    missing_skills: [],
+    detailed_weaknesses: [],
+    digital_profile_sources: [],
+    current_round: 'technical',
+    rounds: {},
+    verification_checks: {
+      identity: 'verified',
+      employment: 'verified',
+      education: 'verified',
+      criminal: 'pending',
+      reference: 'verified'
+    },
+    document_validation: {
+      resume: { label: "Redacted Resume Profile", status: 'verified' }
+    },
+    memory_consent: true,
+    custom_tags: ["High Priority"],
+    processed_at: "2026-11-10T14:40:00.000Z"
+  },
+  {
+    candidate_id: "CAN-5502",
+    name: "Jordan Blake",
+    email: "jordan.blake@example.com",
+    phone: "+1-555-017-3342",
+    role: "AI/ML Engineer",
+    resume_text: `Jordan Blake - Senior MLOps Engineer
+Summary: 4 years focused on ML deployment pipelines, Triton inference server, Docker, Kubernetes, and model monitoring.
+Experience:
+- Senior MLOps at CloudAI (2021-Present): Reduced deployment turnaround from 3 days to 15 minutes with automated CI/CD.
+Education: B.S. in Computer Science, UIUC (2020)`,
+    resume_profile: "Senior MLOps engineer with 4 years specializing in Triton Inference Server, CI/CD, and Kubernetes serving.",
+    overall_score: 86,
+    stage: 'Offered',
+    stage_dwell_times: {
+      Screening: 1.5,
+      Technical: 2.8,
+      Interview: 4.2,
+      Offered: 1.8, // Optimal flow!
+    },
+    recruiter_decision: 'advance',
+    decision_status: 'Hired by recruiter',
+    recommendation: 'Advance',
+    safety_warnings: [],
+    review_flags: [],
+    dimension_scores: {
+      technical: 88,
+      experience: 84,
+      education: 82,
+      projects: 86,
+      domain: 85,
+      communication: 90
+    },
+    dimension_evidence: {
+      technical: "Excellent production MLOps, Triton inference, and automated containerization.",
+      experience: "4 years production deployment in cloud Kubernetes environments.",
+      education: "Bachelor's in Computer Science from UIUC.",
+      projects: "Automated ML CI/CD pipeline reducing turnaround time.",
+      domain: "Serving pipelines, drift monitoring, and latency tuning.",
+      communication: "Articulate and collaborative."
+    },
+    skill_scores: {
+      "Python": 9,
+      "MLOPS": 10,
+      "Model Deployment": 9,
+      "Cloud Computing": 9,
+      "Machine Learning": 8,
+      "Docker": 9,
+      "Kubernetes": 9
+    },
+    strengths: [
+      "Production CI/CD automation for model deployment",
+      "High proficiency with Triton Inference Server and latency SLAs"
+    ],
+    missing_skills: ["Reinforcement Learning"],
+    detailed_weaknesses: [],
+    digital_profile_sources: [],
+    current_round: 'hr',
+    rounds: {},
+    verification_checks: {
+      identity: 'verified',
+      employment: 'verified',
+      education: 'verified',
+      criminal: 'verified',
+      reference: 'verified'
+    },
+    document_validation: {
+      resume: { label: "Redacted Resume Profile", status: 'verified' }
+    },
+    memory_consent: true,
+    custom_tags: ["Internal"],
+    processed_at: "2026-11-11T08:20:00.000Z"
   }
 ];

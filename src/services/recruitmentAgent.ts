@@ -7,10 +7,32 @@ import {
   RoundEvaluation,
   RoundType,
   FollowUpEmailOptions,
-  FollowUpEmailResult
+  FollowUpEmailResult,
+  OutreachDraft
 } from '../types';
 import { computeMultidimScore } from './scoringEngine';
 import { maskSensitiveAttributes } from './fairnessEngine';
+import { parseResumeText, resumeContainsSkill } from './resumeParser';
+import { generateCandidatePersona } from './personaGenerator';
+
+const EXTRA_TECH_SKILLS = [
+  'Python',
+  'PyTorch',
+  'TensorFlow',
+  'Docker',
+  'Kubernetes',
+  'AWS',
+  'GCP',
+  'React',
+  'TypeScript',
+  'Node.js',
+  'PostgreSQL',
+  'SQL',
+  'FastAPI',
+  'LangChain',
+  'CI/CD',
+  'Git'
+];
 
 export class RecruitmentAgentService {
   private apiKey: string | null = null;
@@ -98,12 +120,57 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
     requiredSkills: string[],
     digitalProfileSources: any[] = [],
     memoryConsent: boolean = false,
-    candidatePhone?: string
+    candidatePhone?: string,
+    brief?: HiringBrief | null,
+    sourceFileName?: string
   ): Candidate {
     const candidateId = `CAN-${Math.floor(1000 + Math.random() * 9000)}`;
-    const { maskedText, redactedCount, labelsFound } = maskSensitiveAttributes(resumeText);
+    const { redactedCount, labelsFound } = maskSensitiveAttributes(resumeText);
+    const parsed = parseResumeText(resumeText, requiredSkills);
 
-    // Score individual skills based on keyword and contextual mentions
+    const resolvedName = candidateName.trim() || parsed.candidateName || `Candidate ${candidateId}`;
+    const resolvedEmail =
+      candidateEmail.trim() ||
+      parsed.candidateEmail ||
+      `${resolvedName.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@applicant.example.com`;
+    const resolvedPhone = candidatePhone?.trim() || parsed.candidatePhone || `+1-555-019-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    // Build digital profile sources including extracted links if not already provided
+    const mergedSources = [...digitalProfileSources];
+    if (parsed.githubUrl && !mergedSources.some(s => s.source_type === 'GitHub')) {
+      mergedSources.push({
+        source_type: 'GitHub',
+        source_ref: 'github',
+        source_location: parsed.githubUrl,
+        content: 'Extracted from uploaded resume.'
+      });
+    }
+    if (parsed.linkedinUrl && !mergedSources.some(s => s.source_type === 'LinkedIn')) {
+      mergedSources.push({
+        source_type: 'LinkedIn',
+        source_ref: 'linkedin',
+        source_location: parsed.linkedinUrl,
+        content: 'Extracted from uploaded resume.'
+      });
+    }
+    if (parsed.portfolioUrl && !mergedSources.some(s => s.source_type === 'Portfolio')) {
+      mergedSources.push({
+        source_type: 'Portfolio',
+        source_ref: 'portfolio',
+        source_location: parsed.portfolioUrl,
+        content: 'Extracted from uploaded resume.'
+      });
+    }
+    if (parsed.workHighlights && !mergedSources.some(s => s.source_ref === 'work_highlights')) {
+      mergedSources.push({
+        source_type: 'Candidate-submitted work highlights',
+        source_ref: 'work_highlights',
+        source_location: '',
+        content: parsed.workHighlights
+      });
+    }
+
+    // Score required skills (with synonym support) + additional resume technical skills
     const skillScores: Record<string, number> = {};
     const strengths: string[] = [];
     const missingSkills: string[] = [];
@@ -113,35 +180,94 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
 
     for (const skill of requiredSkills) {
       const lowerSkill = skill.toLowerCase();
-      if (lowerResume.includes(lowerSkill)) {
-        // High score if mentioned with strong verbs
+      if (resumeContainsSkill(lowerResume, skill)) {
         let score = 8;
-        if (lowerResume.includes(`expert in ${lowerSkill}`) || lowerResume.includes(`senior ${lowerSkill}`) || lowerResume.includes(`5+ years ${lowerSkill}`)) {
+        if (
+          lowerResume.includes(`expert in ${lowerSkill}`) ||
+          lowerResume.includes(`senior ${lowerSkill}`) ||
+          lowerResume.includes(`lead ${lowerSkill}`) ||
+          lowerResume.includes(`5+ years`)
+        ) {
           score = 10;
-        } else if (lowerResume.includes(`advanced ${lowerSkill}`) || lowerResume.includes(`production ${lowerSkill}`)) {
+        } else if (
+          lowerResume.includes(`production`) ||
+          lowerResume.includes(`architected`) ||
+          lowerResume.includes(`deployed`)
+        ) {
           score = 9;
         }
         skillScores[skill] = score;
         strengths.push(`Demonstrated proficiency in ${skill} (${score}/10)`);
       } else {
-        // Partial or missing
-        const score = Math.floor(2 + Math.random() * 3);
+        const score = 4;
         skillScores[skill] = score;
         missingSkills.push(skill);
         detailedWeaknesses.push({
           skill,
           score,
-          details: `Limited or indirect evidence of hands-on ${skill} in current resume text.`,
+          details: `Limited or indirect evidence of hands-on ${skill} in uploaded resume.`,
           suggestions: [
-            `Add specific project bullet points highlighting where ${skill} was applied in production.`,
-            `Quantify scale, performance gains, or libraries utilized with ${skill}.`
+            `Probe practical depth and production projects involving ${skill} during technical interview.`,
+            `Verify adjacent tooling or transferable architecture experience.`
           ],
-          example: `Built and deployed high-throughput services utilizing ${skill} with 99.9% uptime.`
+          example: `Built and deployed production services utilizing ${skill} with measurable reliability.`
         });
       }
     }
 
-    const multiDim = computeMultidimScore(resumeText, "", requiredSkills, skillScores, this.cutoffScore);
+    // Detect additional technical skills present on the resume (up to 4 bonus skills)
+    let bonusAdded = 0;
+    for (const extra of EXTRA_TECH_SKILLS) {
+      if (bonusAdded >= 4) break;
+      const alreadyPresent = Object.keys(skillScores).some(
+        existing => existing.toLowerCase() === extra.toLowerCase()
+      );
+      if (!alreadyPresent && resumeContainsSkill(lowerResume, extra)) {
+        skillScores[extra] = 9;
+        bonusAdded++;
+      }
+    }
+
+    const multiDim = computeMultidimScore(resumeText, brief?.jd || '', requiredSkills, skillScores, this.cutoffScore);
+
+    // Enrich dimension evidence with concrete details from resume
+    const topMatched = Object.entries(skillScores)
+      .filter(([, s]) => s >= 7)
+      .map(([k]) => k)
+      .slice(0, 4);
+
+    const enrichedEvidence: Record<string, string> = {
+      technical: topMatched.length > 0
+        ? `Demonstrated proficiency across ${topMatched.join(', ')} (${multiDim.dimension_scores.technical}% technical score).`
+        : multiDim.dimension_evidence.technical,
+      experience: parsed.detectedExperienceYears
+        ? `${parsed.detectedExperienceYears} of relevant engineering experience${parsed.detectedTitle ? ` including ${parsed.detectedTitle}` : ''}.`
+        : multiDim.dimension_evidence.experience,
+      education: parsed.detectedDegree
+        ? `Academic credential identified: ${parsed.detectedDegree}.`
+        : multiDim.dimension_evidence.education,
+      projects: parsed.workHighlights
+        ? `Highlighted outcome: "${parsed.workHighlights.slice(0, 120)}${parsed.workHighlights.length > 120 ? '...' : ''}"`
+        : multiDim.dimension_evidence.projects,
+      domain: `${parsed.matchedSkills.length} of ${requiredSkills.length} target role competencies verified in resume.`,
+      communication: multiDim.dimension_evidence.communication,
+    };
+
+    // Synthesize crisp executive summary matching Alex/Marcus/Jordan style
+    const headline = parsed.detectedTitle || roleTitle;
+    const expPhrase = parsed.detectedExperienceYears ? ` with ${parsed.detectedExperienceYears}` : '';
+    const eduPhrase = parsed.detectedDegree ? ` (${parsed.detectedDegree})` : '';
+    const skillsPhrase = topMatched.length > 0
+      ? `, specializing in ${topMatched.slice(0, 4).join(', ')}`
+      : '';
+    const executiveProfile = `${headline}${expPhrase}${eduPhrase}${skillsPhrase}.${parsed.workHighlights ? ` ${parsed.workHighlights}` : ''}`;
+
+    if (parsed.workHighlights && strengths.length < 4) {
+      strengths.unshift(parsed.workHighlights);
+    }
+    if (strengths.length === 0) {
+      strengths.push(`Structured background aligned with ${roleTitle} responsibilities`);
+    }
 
     const reviewFlags = [];
     if (redactedCount > 0) {
@@ -152,44 +278,59 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
       });
     }
 
-    return {
+    const isRecommended = multiDim.final_score >= this.cutoffScore;
+
+    const candidate: Candidate = {
       candidate_id: candidateId,
-      name: candidateName || "Candidate " + candidateId,
-      email: candidateEmail || `${candidateId.toLowerCase()}@applicant.example.com`,
-      phone: candidatePhone || "+1-555-019-" + Math.floor(1000 + Math.random() * 9000),
+      name: resolvedName,
+      email: resolvedEmail,
+      phone: resolvedPhone,
       role: roleTitle,
       resume_text: resumeText,
-      resume_profile: maskedText.slice(0, 300) + (maskedText.length > 300 ? "..." : ""),
+      resume_profile: executiveProfile,
       overall_score: multiDim.final_score,
       stage: 'Screening',
-      recruiter_decision: multiDim.final_score >= this.cutoffScore ? 'advance' : 'hold',
-      decision_status: 'Pending recruiter review',
+      stage_dwell_times: {
+        Screening: 0.2,
+      },
+      recruiter_decision: isRecommended ? 'advance' : 'hold',
+      decision_status: isRecommended ? 'Advanced by recruiter' : 'Pending recruiter review',
       recommendation: multiDim.recommendation,
       safety_warnings: [],
       review_flags: reviewFlags,
       review_note: "Review flags are prompts for recruiter supervision, never automated hiring decisions.",
       dimension_scores: multiDim.dimension_scores,
-      dimension_evidence: multiDim.dimension_evidence,
+      dimension_evidence: enrichedEvidence,
       skill_scores: skillScores,
       strengths: strengths.slice(0, 4),
       missing_skills: missingSkills.slice(0, 4),
       detailed_weaknesses: detailedWeaknesses.slice(0, 3),
-      digital_profile_sources: digitalProfileSources,
+      digital_profile_sources: mergedSources,
       current_round: 'coding',
       rounds: {},
       verification_checks: {
         identity: 'verified',
         employment: 'pending',
-        education: 'pending',
+        education: parsed.detectedDegree ? 'verified' : 'pending',
         criminal: 'pending',
         reference: 'pending'
       },
       document_validation: {
-        resume: { label: "Redacted Resume Profile", status: 'verified' }
+        resume: {
+          label: sourceFileName ? `Uploaded Resume (${sourceFileName})` : 'Uploaded Resume Profile',
+          status: 'verified'
+        }
       },
       memory_consent: memoryConsent,
-      memory_email: memoryConsent ? candidateEmail : undefined
+      memory_email: memoryConsent ? resolvedEmail : undefined,
+      custom_tags: sourceFileName ? ['Uploaded Resume'] : undefined,
+      processed_at: new Date().toISOString(),
     };
+
+    // Generate AI Candidate Persona immediately so uploaded candidate has full Persona reel like Alex/Marcus/Jordan
+    candidate.persona = generateCandidatePersona(candidate, brief || null);
+
+    return candidate;
   }
 
   // 3. Generate Coding Challenge
@@ -675,6 +816,37 @@ Results-driven **${targetRole || 'Software Engineer'}** with proven expertise in
         suggested_subjects: suggestedSubjects
       };
     }
+  }
+
+  // 14. Automated Follow-Up Reminder Generator
+  public generateFollowUpReminderEmail(
+    draft: OutreachDraft,
+    daysSinceSent: number,
+    jobTitle: string = 'Software Engineer',
+    companyName: string = 'Anthropic Tech'
+  ): { subject: string; body: string; call_script: string } {
+    const firstName = draft.candidate_name ? draft.candidate_name.split(' ')[0] : 'there';
+    const cleanSubject = draft.subject.replace(/^(Gentle Follow-Up:\s*|Follow-Up:\s*|Reminder:\s*)+/gi, '').trim();
+
+    const subject = `Gentle Follow-Up: ${cleanSubject || `Your application for ${jobTitle} at ${companyName}`}`;
+    const body = `Hi ${firstName},
+
+I hope you're having a productive week!
+
+I wanted to quickly follow up on our previous note sent ${daysSinceSent} days ago regarding your candidacy for the ${jobTitle} position at ${companyName}.
+
+Our engineering team was impressed by your profile, and we are actively finalizing our interview schedule. If you are still interested in discussing the opportunity, please let us know your availability or reply directly to this message.
+
+If the timing doesn't work right now or you have any questions before connecting, feel free to drop a line anytime.
+
+Looking forward to hearing from you!
+
+Warm regards,
+Recruitment Team at ${companyName}`;
+
+    const call_script = `Hi ${firstName}, this is the recruitment team from ${companyName} following up on our email sent ${daysSinceSent} days ago regarding the ${jobTitle} position. We wanted to confirm you received our invitation and check if you have any questions or are available to connect!`;
+
+    return { subject, body, call_script };
   }
 }
 

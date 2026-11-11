@@ -1,32 +1,57 @@
 import React from 'react';
-import { Sparkles, ShieldCheck } from 'lucide-react';
+import { HiringBrief } from '../types';
 
-export const Header: React.FC = () => {
+interface HeaderProps {
+  brief?: HiringBrief | null;
+  candidateCount?: number;
+  onLoadSamples?: () => void;
+}
+
+export const Header: React.FC<HeaderProps> = ({
+  brief,
+  candidateCount = 0,
+  onLoadSamples,
+}) => {
   return (
-    <header className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-30 shadow-xs">
-      <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#6743ee] to-[#8a72ff] flex items-center justify-center text-white shadow-sm">
-            <Sparkles className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-              AI Recruitment Workflow
-            </h1>
-            <p className="text-sm text-slate-500">
-              From hiring brief to recruiter-reviewed shortlist.
-            </p>
-          </div>
+    <header className="bg-white border-b border-slate-200 px-6 h-14 flex items-center sticky top-0 z-30">
+      <div className="max-w-7xl w-full mx-auto flex items-center justify-between gap-8">
+        {/* Zone 1: Single-line Breadcrumb / Workspace Title */}
+        <div className="flex items-center gap-2 text-sm whitespace-nowrap shrink-0">
+          <span className="font-bold tracking-tight text-slate-900">TalentFlow</span>
+          {brief && (
+            <>
+              <span className="text-slate-300" aria-hidden="true">/</span>
+              <span className="text-slate-600 font-medium truncate max-w-[260px] sm:max-w-md">
+                {brief.job_title} · {brief.company_name}
+              </span>
+            </>
+          )}
         </div>
-        <div className="flex items-center gap-2 self-start sm:self-auto">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#f0ebff] text-[#5b43d6] border border-[#d8ccfd]">
-            <span className="w-2 h-2 rounded-full bg-[#5b43d6] animate-pulse"></span>
-            Recruiter-supervised hiring
-          </span>
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <ShieldCheck className="w-3.5 h-3.5" />
-            Fairness Safeguards Active
-          </span>
+
+        {/* Zone 2: Quiet Workspace Metadata */}
+        <div className="hidden md:flex items-center gap-2 text-xs text-slate-500 tabular-nums whitespace-nowrap shrink-0">
+          <span>{candidateCount} candidates in pipeline</span>
+          {brief && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>
+                {brief.status.includes('Approved') ? 'Brief approved' : 'Brief draft'}
+              </span>
+            </>
+          )}
+        </div>
+
+        {/* Zone 3: Single Primary Utility Action */}
+        <div className="flex items-center gap-3 shrink-0">
+          {onLoadSamples && (
+            <button
+              type="button"
+              onClick={onLoadSamples}
+              className="px-3.5 py-1.5 text-xs font-medium text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200/80 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Reset Demo Data
+            </button>
+          )}
         </div>
       </div>
     </header>

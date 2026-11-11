@@ -1,3 +1,5 @@
+import { getAliasesForSkill } from './skillsGapService';
+
 export interface ParsedResumeData {
   candidateName: string;
   candidateEmail: string;
@@ -13,6 +15,17 @@ export interface ParsedResumeData {
   missingSkills: string[];
   matchRatePercent: number;
   extractedFieldCount: number;
+}
+
+export function resumeContainsSkill(lowerText: string, skill: string): boolean {
+  const aliases = getAliasesForSkill(skill);
+  return aliases.some((alias) => {
+    if (alias.length <= 3) {
+      const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`\\b${escaped}\\b`, 'i').test(lowerText);
+    }
+    return lowerText.includes(alias);
+  });
 }
 
 export function parseResumeText(
@@ -69,47 +82,60 @@ export function parseResumeText(
   }
 
   // 6. Candidate Name and Title Extraction
-  // Look at the first 3 lines
-  const topLines = lines.slice(0, 4);
+  const topLines = lines.slice(0, 5);
   for (const line of topLines) {
-    // Skip if line is just contact info
     if (line.includes('@') || line.includes('github.com') || line.includes('linkedin.com')) {
       continue;
     }
 
-    // If formatted as "Name - Title" or "Name | Title"
-    if (line.includes(' - ') || line.includes(' | ')) {
-      const parts = line.split(/\s*[-|]\s*/);
-      if (parts[0] && parts[0].length < 40 && !parts[0].toLowerCase().includes('resume')) {
+    if (line.includes(' - ') || line.includes(' | ') || line.includes(' — ')) {
+      const parts = line.split(/\s*[-|—]\s*/);
+      if (parts[0] && parts[0].length < 45 && !parts[0].toLowerCase().includes('resume')) {
         candidateName = parts[0].replace(/^(Name:\s*)/i, '').trim();
       }
-      if (parts[1] && parts[1].length < 60) {
+      if (parts[1] && parts[1].length < 65) {
         detectedTitle = parts[1].trim();
       }
       break;
     }
 
-    // Or a clean capitalized 2-4 word line
     const nameCandidate = line.replace(/^(Name:\s*|Candidate:\s*)/i, '').trim();
     const words = nameCandidate.split(/\s+/);
     if (
       words.length >= 2 &&
       words.length <= 4 &&
+      words.every(w => /^[A-Za-z.'-]+$/.test(w)) &&
       !line.toLowerCase().includes('resume') &&
       !line.toLowerCase().includes('curriculum') &&
       !line.toLowerCase().includes('profile') &&
       !line.toLowerCase().includes('summary') &&
       !line.toLowerCase().includes('education') &&
+      !line.toLowerCase().includes('experience') &&
       !candidateName
     ) {
-      candidateName = nameCandidate;
+      // Convert ALL CAPS names to Title Case
+      candidateName = nameCandidate === nameCandidate.toUpperCase()
+        ? words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
+        : nameCandidate;
       break;
+    }
+  }
+
+  // Fallback candidate name from email local part if still empty
+  if (!candidateName && candidateEmail) {
+    const local = candidateEmail.split('@')[0].replace(/[0-9]+/g, '');
+    const parts = local.split(/[._-]+/).filter(Boolean);
+    if (parts.length >= 1) {
+      candidateName = parts
+        .slice(0, 3)
+        .map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())
+        .join(' ');
     }
   }
 
   // If no title found from name line, search for common title patterns
   if (!detectedTitle) {
-    const titleRegex = /(?:Senior|Lead|Staff|Principal|Junior|Mid-Level)?\s*(?:Software|Machine Learning|AI|ML|Frontend|Backend|Full[- ]Stack|DevOps|Data|Cloud|Platform|Systems)\s*(?:Engineer|Architect|Developer|Scientist|Analyst)/i;
+    const titleRegex = /(?:Senior|Lead|Staff|Principal|Junior|Mid-Level)?\s*(?:Software|Machine Learning|AI|ML|Frontend|Backend|Full[- ]Stack|DevOps|Data|Cloud|Platform|Systems|Research)\s*(?:Engineer|Architect|Developer|Scientist|Analyst)/i;
     const titleMatch = cleanText.match(titleRegex);
     if (titleMatch) {
       detectedTitle = titleMatch[0].trim();
@@ -117,10 +143,10 @@ export function parseResumeText(
   }
 
   // 7. Degree Extraction
-  const degreeRegex = /(?:Ph\.?D\.?|M\.?S\.?|B\.?S\.?|Master(?:'s)?\s+(?:of\s+Science)?|Bachelor(?:'s)?\s+(?:of\s+Science)?)\s*(?:in\s+[A-Za-z\s]+)?/i;
+  const degreeRegex = /(?:Ph\.?D\.?|M\.?S\.?|B\.?S\.?|M\.?Tech\.?|B\.?Tech\.?|Master(?:'s)?\s+(?:of\s+Science)?|Bachelor(?:'s)?\s+(?:of\s+Science)?)\s*(?:in\s+[A-Za-z\s]{2,32})?/i;
   const degreeMatch = cleanText.match(degreeRegex);
   if (degreeMatch) {
-    detectedDegree = degreeMatch[0].trim().replace(/\n/g, ' ').slice(0, 45);
+    detectedDegree = degreeMatch[0].trim().replace(/\n/g, ' ').slice(0, 48);
   }
 
   // 8. Experience Years Extraction
@@ -129,7 +155,6 @@ export function parseResumeText(
   if (expMatch) {
     detectedExperienceYears = `${expMatch[1]}+ years`;
   } else {
-    // Scan for year patterns e.g. 2018 – Present
     const years = cleanText.match(/\b(20[0-2][0-9])\b/g);
     if (years && years.length >= 2) {
       const numYears = years.map(Number);
@@ -143,37 +168,33 @@ export function parseResumeText(
   }
 
   // 9. Work Highlights Extraction
-  // Look for high-impact metric bullets in Experience/Projects
   for (const line of lines) {
     const trimmed = line.trim();
     const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('• ') || trimmed.startsWith('* ');
     if (isBullet) {
       const content = trimmed.replace(/^[-•*]\s*/, '');
-      const hasMetrics = /%|\$|\b\d+M\b|\b\d+k\b|reduced|architected|increased|deployed|improved|spearheaded/i.test(content);
-      if (hasMetrics && content.length > 35 && content.length < 220) {
+      const hasMetrics = /%|\$|\b\d+M\b|\b\d+k\b|reduced|architected|increased|deployed|improved|spearheaded|built|designed|led/i.test(content);
+      if (hasMetrics && content.length > 25 && content.length < 220) {
         workHighlights = content;
         break;
       }
     }
   }
 
-  // Fallback highlight from summary if bullet wasn't found
   if (!workHighlights) {
-    const summaryIndex = lines.findIndex(l => /SUMMARY|OVERVIEW|OBJECTIVE/i.test(l));
+    const summaryIndex = lines.findIndex(l => /SUMMARY|OVERVIEW|OBJECTIVE|ABOUT/i.test(l));
     if (summaryIndex !== -1 && lines[summaryIndex + 1]) {
       workHighlights = lines[summaryIndex + 1].slice(0, 180);
     }
   }
 
-  // 10. Required Skills Matching
+  // 10. Required Skills Matching (with synonym support)
   const lowerText = cleanText.toLowerCase();
   const matchedSkills: string[] = [];
   const missingSkills: string[] = [];
 
   for (const skill of requiredSkills) {
-    const lowerSkill = skill.toLowerCase();
-    // Check direct substring or word boundary
-    if (lowerText.includes(lowerSkill)) {
+    if (resumeContainsSkill(lowerText, skill)) {
       matchedSkills.push(skill);
     } else {
       missingSkills.push(skill);

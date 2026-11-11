@@ -1,15 +1,13 @@
-import React from 'react';
-import { 
-  Compass, 
-  Mic, 
-  Layers, 
-  Cpu, 
-  Key, 
-  Sliders, 
-  ShieldCheck, 
-  FileText, 
-  RefreshCw,
-  FolderCheck
+import React, { useState } from 'react';
+import {
+  Compass,
+  Mic,
+  Layers,
+  ShieldCheck,
+  FileText,
+  ChevronDown,
+  ChevronRight,
+  Sliders,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -39,98 +37,138 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setModel,
   cutoffScore,
   setCutoffScore,
-  onLoadSamples,
   onOpenFairness,
-  onOpenResumeTools
+  onOpenResumeTools,
 }) => {
-  return (
-    <aside className="w-full lg:w-72 bg-white border-r border-slate-200 p-5 shrink-0 flex flex-col justify-between">
-      <div className="space-y-6">
-        <div>
-          <div className="flex items-center gap-2 text-slate-900 font-bold text-base">
-            <span className="text-[#6743ee]">◉</span> Recruitment Workspace
-          </div>
-          <p className="text-xs text-slate-500 mt-0.5">Recruitment workflow platform</p>
-        </div>
+  const [showModelSettings, setShowModelSettings] = useState<boolean>(false);
 
-        {/* Navigation Menu */}
+  return (
+    <aside className="w-full lg:w-64 bg-white border-r border-slate-200 p-5 shrink-0 flex flex-col justify-between">
+      <div className="space-y-6">
+        {/* Primary Navigation */}
         <div>
-          <div className="text-[11px] font-bold tracking-wider text-slate-400 uppercase mb-2">
-            Main Menu
+          <div className="text-[11px] font-semibold text-slate-400 px-3 mb-2">
+            Workspace
           </div>
           <nav className="space-y-1">
             <button
+              type="button"
               onClick={() => setActiveTab('workflow')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors text-left ${
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors text-left whitespace-nowrap cursor-pointer ${
                 activeTab === 'workflow'
-                  ? 'bg-[#f3f0ff] text-[#5b43d6] font-semibold border border-[#d8ccfd]'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  ? 'bg-indigo-50 text-indigo-700 font-semibold'
+                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
               }`}
             >
-              <Compass className="w-4 h-4 shrink-0 text-[#6743ee]" />
-              <span>Hiring Workflow</span>
+              <Compass className="w-4 h-4 shrink-0" />
+              <span>Hiring Pipeline</span>
             </button>
 
             <button
+              type="button"
               onClick={() => setActiveTab('interview')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors text-left ${
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors text-left whitespace-nowrap cursor-pointer ${
                 activeTab === 'interview'
-                  ? 'bg-[#f3f0ff] text-[#5b43d6] font-semibold border border-[#d8ccfd]'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  ? 'bg-indigo-50 text-indigo-700 font-semibold'
+                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
               }`}
             >
-              <Mic className="w-4 h-4 shrink-0 text-[#6743ee]" />
+              <Mic className="w-4 h-4 shrink-0" />
               <span>AI Online Interview</span>
             </button>
 
             <button
+              type="button"
               onClick={() => setActiveTab('architecture')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors text-left ${
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors text-left whitespace-nowrap cursor-pointer ${
                 activeTab === 'architecture'
-                  ? 'bg-[#f3f0ff] text-[#5b43d6] font-semibold border border-[#d8ccfd]'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  ? 'bg-indigo-50 text-indigo-700 font-semibold'
+                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
               }`}
             >
-              <Layers className="w-4 h-4 shrink-0 text-[#6743ee]" />
-              <span>Agent Architecture</span>
+              <Layers className="w-4 h-4 shrink-0" />
+              <span>Workflow Overview</span>
             </button>
           </nav>
         </div>
 
-        {/* Specialized Tools */}
-        <div>
-          <div className="text-[11px] font-bold tracking-wider text-slate-400 uppercase mb-2">
-            Specialist Agents & Auditing
+        {/* High-Scoring Cutoff Threshold */}
+        <div className="pt-5 border-t border-slate-100 px-1">
+          <div className="flex justify-between items-center mb-1.5">
+            <label
+              htmlFor="cutoff-score-slider"
+              className="text-xs font-semibold text-slate-700"
+            >
+              High-Scoring Cutoff
+            </label>
+            <span className="text-xs font-mono font-bold text-indigo-600 tabular-nums">
+              {cutoffScore}%
+            </span>
           </div>
-          <div className="space-y-1.5">
+          <input
+            id="cutoff-score-slider"
+            type="range"
+            min="50"
+            max="90"
+            value={cutoffScore}
+            onChange={(e) => setCutoffScore(Number(e.target.value))}
+            className="w-full accent-indigo-600 cursor-pointer"
+          />
+          <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+            Defines the high-scoring cohort for candidate shortlisting and Team Skills Gap Analysis.
+          </p>
+        </div>
+
+        {/* Compliance & Helper Agents */}
+        <div className="pt-5 border-t border-slate-100">
+          <div className="text-[11px] font-semibold text-slate-400 px-3 mb-2">
+            Compliance & Tools
+          </div>
+          <div className="space-y-1">
             <button
+              type="button"
               onClick={onOpenFairness}
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-colors border border-emerald-200 text-left"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors text-left whitespace-nowrap cursor-pointer"
             >
               <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>Fairness & Bias Audit (EEOC)</span>
+              <span>Fairness & Bias Audit</span>
             </button>
 
             <button
+              type="button"
               onClick={onOpenResumeTools}
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-lg bg-blue-50 text-blue-800 hover:bg-blue-100 transition-colors border border-blue-200 text-left"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors text-left whitespace-nowrap cursor-pointer"
             >
-              <FileText className="w-4 h-4 text-blue-600 shrink-0" />
-              <span>Resume Q&A & Policy Agent</span>
+              <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
+              <span>Resume Q&A & HR Policy</span>
             </button>
           </div>
         </div>
+      </div>
 
-        {/* AI Brain Configuration */}
-        <div className="pt-2 border-t border-slate-100">
-          <div className="flex items-center gap-1.5 text-[11px] font-bold tracking-wider text-slate-400 uppercase mb-3">
-            <Cpu className="w-3.5 h-3.5 text-[#6743ee]" />
-            AI Brain Settings
-          </div>
+      {/* Collapsible Advanced AI Model Settings */}
+      <div className="pt-4 border-t border-slate-100 mt-6">
+        <button
+          type="button"
+          onClick={() => setShowModelSettings((prev) => !prev)}
+          className="w-full flex items-center justify-between px-2 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 rounded-lg transition-colors cursor-pointer"
+          aria-expanded={showModelSettings}
+        >
+          <span className="flex items-center gap-2">
+            <Sliders className="w-3.5 h-3.5" />
+            <span>Model Settings ({provider})</span>
+          </span>
+          {showModelSettings ? (
+            <ChevronDown className="w-3.5 h-3.5" />
+          ) : (
+            <ChevronRight className="w-3.5 h-3.5" />
+          )}
+        </button>
 
-          <div className="space-y-3 text-xs">
+        {showModelSettings && (
+          <div className="mt-3 px-2 space-y-3 text-xs">
             <div>
-              <label className="block text-slate-700 font-medium mb-1">LLM Provider</label>
+              <label className="block text-slate-600 font-medium mb-1">Provider</label>
               <select
                 value={provider}
                 onChange={(e) => {
@@ -138,7 +176,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   setProvider(p);
                   setModel(p === 'Groq' ? 'llama-3.3-70b-versatile' : 'gemini-3.8-flash');
                 }}
-                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-600"
               >
                 <option value="Gemini">Gemini</option>
                 <option value="Groq">Groq</option>
@@ -146,28 +184,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             <div>
-              <label className="block text-slate-700 font-medium mb-1 flex items-center justify-between">
-                <span>{provider} API Key</span>
-                <span className="text-[10px] text-slate-400 font-normal">Optional</span>
-              </label>
-              <div className="relative">
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={`Leave blank to use internal mock/env`}
-                  className="w-full pl-7 pr-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 text-xs focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-                />
-                <Key className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-2" />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-slate-700 font-medium mb-1">Model</label>
+              <label className="block text-slate-600 font-medium mb-1">Model</label>
               <select
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-600"
               >
                 {provider === 'Groq' ? (
                   <>
@@ -175,41 +196,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <option value="llama-3.1-8b-instant">llama-3.1-8b-instant</option>
                   </>
                 ) : (
-                  <>
-                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
-                  </>
+                  <option value="gemini-3.8-flash">gemini-3.8-flash</option>
                 )}
               </select>
             </div>
 
             <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="text-slate-700 font-medium">Cutoff Score</label>
-                <span className="font-semibold text-[#5b43d6]">{cutoffScore}%</span>
-              </div>
+              <label className="block text-slate-600 font-medium mb-1">
+                API Key <span className="text-slate-400 font-normal">(Optional)</span>
+              </label>
               <input
-                type="range"
-                min="50"
-                max="90"
-                value={cutoffScore}
-                onChange={(e) => setCutoffScore(Number(e.target.value))}
-                className="w-full accent-[#6743ee] cursor-pointer"
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="Uses built-in agent if blank"
+                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-600"
               />
-              <span className="text-[10px] text-slate-400">Score threshold for candidate auto-advance recommendation</span>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Quick Sample Action */}
-      <div className="pt-4 border-t border-slate-100 mt-6">
-        <button
-          onClick={onLoadSamples}
-          className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors"
-        >
-          <FolderCheck className="w-3.5 h-3.5 text-[#6743ee]" />
-          <span>Load Realistic Demo Candidates</span>
-        </button>
+        )}
       </div>
     </aside>
   );

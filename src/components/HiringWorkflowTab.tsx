@@ -1,18 +1,24 @@
 import React, { useState, useMemo } from 'react';
-import { 
-  Candidate, 
-  HiringBrief, 
-  OutreachDraft, 
-  AuditEvent, 
+import {
+  Candidate,
+  HiringBrief,
+  OutreachDraft,
+  AuditEvent,
   RoundType,
   HiringStage,
   EmailDraftType,
-  ScheduledInterview
+  ScheduledInterview,
+  InterviewRoundFeedback,
 } from '../types';
 import { ROLE_REQUIREMENTS } from '../data/roles';
+import { SAMPLE_RESUME_PRESETS, SampleResumePreset } from '../data/sampleResumes';
 import { recruitmentAgent } from '../services/recruitmentAgent';
+import { generateCandidatePersona } from '../services/personaGenerator';
+import { generateInterviewEmailConfirmation } from '../services/interviewSchedulerService';
+import { parseResumeText, ParsedResumeData } from '../services/resumeParser';
+import { extractTextFromResumeFile } from '../services/resumeFileReader';
+import { TeamSkillsGapAnalysis } from './TeamSkillsGapAnalysis';
 import { SkillRadarChart } from './SkillRadarChart';
-import { CandidateDimensionRadar } from './CandidateDimensionRadar';
 import { CandidateStageDropdown } from './CandidateStageDropdown';
 import { CandidateComparisonModal } from './CandidateComparisonModal';
 import { CandidatePrivateNotes } from './CandidatePrivateNotes';
@@ -21,61 +27,45 @@ import { BulkActionToolbar } from './BulkActionToolbar';
 import { CandidateKanbanBoard } from './CandidateKanbanBoard';
 import { LinkedInImportModal } from './LinkedInImportModal';
 import { WorkforceGraph } from './WorkforceGraph';
-import { CandidatePersonaCard } from './CandidatePersonaCard';
 import { CandidatePersonaModal } from './CandidatePersonaModal';
-import { generateCandidatePersona } from '../services/personaGenerator';
 import { InterviewSchedulerModal } from './InterviewSchedulerModal';
 import { ScheduledInterviewsSection } from './ScheduledInterviewsSection';
-import { generateInterviewEmailConfirmation } from '../services/interviewSchedulerService';
-import { SAMPLE_RESUME_PRESETS, SampleResumePreset } from '../data/sampleResumes';
-import { parseResumeText, ParsedResumeData } from '../services/resumeParser';
-import { 
-  Briefcase, 
-  FileCheck, 
-  Upload, 
-  CheckCircle, 
-  XCircle, 
-  Clock, 
-  Sparkles, 
-  ChevronDown, 
-  ChevronUp, 
-  Download, 
-  CheckCircle2, 
-  AlertCircle, 
-  Send,
+import { RecruitmentIntensityHeatmap } from './RecruitmentIntensityHeatmap';
+import { InterviewFeedbackModal } from './InterviewFeedbackModal';
+import { SplitPaneComparisonView } from './SplitPaneComparisonView';
+import { CandidateScoreTrajectorySection } from './CandidateScoreTrajectorySection';
+import { OutreachQueueSection } from './OutreachQueueSection';
+import {
+  Briefcase,
+  Upload,
+  CheckCircle2,
+  XCircle,
+  Sparkles,
+  Download,
+  AlertCircle,
   Mail,
-  UserCheck,
-  Shield,
   FileCode,
-  ListTodo,
-  FileText,
-  ArrowUpDown,
-  ArrowDownWideNarrow,
-  ArrowUpNarrowWide,
-  SlidersHorizontal,
-  Award,
-  TrendingUp,
-  Eye,
-  Filter,
-  RotateCcw,
   Search,
   Tag,
   X,
-  Layers,
   Scale,
   CheckSquare,
   Square,
-  MinusSquare,
   Kanban,
   ListFilter,
-  LayoutGrid,
-  Zap,
   Check,
-  GraduationCap,
-  Link2,
-  Phone,
   Calendar,
-  CalendarCheck
+  Flame,
+  ClipboardCheck,
+  MoreVertical,
+  Plus,
+  UserPlus,
+  RotateCcw,
+  ArrowUpDown,
+  FileText,
+  ExternalLink,
+  Radar,
+  TrendingUp,
 } from 'lucide-react';
 
 interface HiringWorkflowTabProps {
@@ -88,7 +78,11 @@ interface HiringWorkflowTabProps {
   events: AuditEvent[];
   setEvents: React.Dispatch<React.SetStateAction<AuditEvent[]>>;
   cutoffScore?: number;
+  selectedCandidateId?: string | null;
+  onSelectCandidateId?: (id: string | null) => void;
 }
+
+const PRESET_CUSTOM_TAGS = ['High Priority', 'Referred', 'Internal', 'Domain Specialist', 'Fast Track'];
 
 export const getCandidateStage = (cand: Candidate): HiringStage => {
   if (cand.stage) return cand.stage;
@@ -117,31 +111,55 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   events,
   setEvents,
   cutoffScore = 75,
+  selectedCandidateId: controlledSelectedId,
+  onSelectCandidateId,
 }) => {
-  // Step 1: Form state
-  const [selectedRolePreset, setSelectedRolePreset] = useState<string>("AI/ML Engineer");
-  const [companyName, setCompanyName] = useState<string>("Anthropic Tech");
-  const [jobTitle, setJobTitle] = useState<string>("AI/ML Engineer");
-  const [location, setLocation] = useState<string>("San Francisco, CA / Remote");
-  const [headcount, setHeadcount] = useState<number>(1);
-  const [salaryBudget, setSalaryBudget] = useState<string>("$160,000 – $210,000");
-  const [timeline, setTimeline] = useState<string>("Within 30 days");
+  // Top-level workspace section
+  const [workspaceSection, setWorkspaceSection] = useState<'pipeline' | 'intake' | 'brief' | 'activity'>('pipeline');
+
+  // Selected candidate tracking (controlled or local fallback)
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(
+    candidates[2]?.candidate_id || candidates[0]?.candidate_id || null
+  );
+  const effectiveSelectedId =
+    controlledSelectedId !== undefined ? controlledSelectedId : localSelectedId;
+
+  const selectCandidate = (id: string | null) => {
+    setLocalSelectedId(id);
+    if (onSelectCandidateId) {
+      onSelectCandidateId(id);
+    }
+  };
+
+  const [justUploadedCandidateId, setJustUploadedCandidateId] = useState<string | null>(null);
+  const [isReadingResumeFile, setIsReadingResumeFile] = useState<boolean>(false);
+  const [selectedDetailTab, setSelectedDetailTab] = useState<'overview' | 'rounds' | 'resume'>('overview');
+  const [showRadarInDetail, setShowRadarInDetail] = useState<boolean>(false);
+
+  // Job Brief state
+  const [selectedRolePreset, setSelectedRolePreset] = useState<string>(brief?.job_title || 'AI/ML Engineer');
+  const [companyName, setCompanyName] = useState<string>(brief?.company_name || 'Anthropic Tech');
+  const [jobTitle, setJobTitle] = useState<string>(brief?.job_title || 'AI/ML Engineer');
+  const [location, setLocation] = useState<string>(brief?.location || 'San Francisco, CA / Remote');
+  const [headcount, setHeadcount] = useState<number>(brief?.headcount || 1);
+  const [salaryBudget, setSalaryBudget] = useState<string>(brief?.salary_budget || '$160,000 – $210,000');
+  const [timeline, setTimeline] = useState<string>(brief?.timeline || 'Within 30 days');
   const [requirementsText, setRequirementsText] = useState<string>(
-    ROLE_REQUIREMENTS["AI/ML Engineer"].join(", ")
+    brief?.requirements || ROLE_REQUIREMENTS['AI/ML Engineer'].join(', ')
   );
 
-  // Step 3: Screen resume state
-  const [candidateNameInput, setCandidateNameInput] = useState<string>("");
-  const [candidateEmailInput, setCandidateEmailInput] = useState<string>("");
-  const [candidatePhoneInput, setCandidatePhoneInput] = useState<string>("");
-  const [resumeTextInput, setResumeTextInput] = useState<string>("");
-  const [githubUrl, setGithubUrl] = useState<string>("");
-  const [linkedinUrl, setLinkedinUrl] = useState<string>("");
-  const [portfolioUrl, setPortfolioUrl] = useState<string>("");
-  const [workHighlights, setWorkHighlights] = useState<string>("");
+  // Resume screening form state
+  const [candidateNameInput, setCandidateNameInput] = useState<string>('');
+  const [candidateEmailInput, setCandidateEmailInput] = useState<string>('');
+  const [candidatePhoneInput, setCandidatePhoneInput] = useState<string>('');
+  const [resumeTextInput, setResumeTextInput] = useState<string>('');
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [githubUrl, setGithubUrl] = useState<string>('');
+  const [linkedinUrl, setLinkedinUrl] = useState<string>('');
+  const [portfolioUrl, setPortfolioUrl] = useState<string>('');
+  const [workHighlights, setWorkHighlights] = useState<string>('');
   const [processingConsent, setProcessingConsent] = useState<boolean>(true);
-  const [memoryConsent, setMemoryConsent] = useState<boolean>(false);
-  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [memoryConsent, setMemoryConsent] = useState<boolean>(true);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [autoFillNotification, setAutoFillNotification] = useState<string | null>(null);
   const [lastParsedData, setLastParsedData] = useState<ParsedResumeData | null>(null);
@@ -152,15 +170,16 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedSkillTag, setSelectedSkillTag] = useState<string | null>(null);
+  const [selectedCustomTag, setSelectedCustomTag] = useState<string | null>(null);
 
-  // Pipeline View Mode: List view vs Kanban board view
-  const [pipelineViewMode, setPipelineViewMode] = useState<'list' | 'kanban'>('list');
+  // Pipeline View Mode
+  const [pipelineViewMode, setPipelineViewMode] = useState<'list' | 'kanban' | 'heatmap' | 'compare'>('list');
 
-  // Expanded cards
-  const [expandedCandidates, setExpandedCandidates] = useState<Record<string, boolean>>({});
+  // Overflow menus & tag input
+  const [openMoreMenuId, setOpenMoreMenuId] = useState<string | null>(null);
+  const [newTagInput, setNewTagInput] = useState<string>('');
 
   // Candidate Compare Mode state
-  const [isCompareMode, setIsCompareMode] = useState<boolean>(false);
   const [selectedCompareIds, setSelectedCompareIds] = useState<string[]>([]);
   const [showCompareModal, setShowCompareModal] = useState<boolean>(false);
 
@@ -169,146 +188,392 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   const [emailModalInitialType, setEmailModalInitialType] = useState<EmailDraftType>('progress');
   const [showEmailModal, setShowEmailModal] = useState<boolean>(false);
 
-  const handleOpenEmailDraftModal = (cand: Candidate, type?: EmailDraftType) => {
-    const isReject = cand.decision_status?.includes('Not proceeding') || cand.recruiter_decision === 'reject';
-    const chosenType = type || (isReject ? 'rejection' : 'progress');
-    setEmailModalCandidate(cand);
-    setEmailModalInitialType(chosenType);
-    setShowEmailModal(true);
-    appendAudit("Recruiter", `Opened AI follow-up email draft generator (${chosenType})`, `${cand.name} (${cand.candidate_id})`);
-  };
-
-  const handleQueueEmailDraft = (draft: OutreachDraft, reasonCategory: string) => {
-    setOutreachQueue(prev => [draft, ...prev]);
-    appendAudit(
-      "Recruiter",
-      `Queued AI-drafted ${draft.type} email for delivery (Reason: ${reasonCategory.replace(/_/g, ' ')})`,
-      `${draft.candidate_name} (${draft.candidate_id})`
-    );
-  };
-
   // Candidate Persona Modal & Generation State
   const [personaModalCandidate, setPersonaModalCandidate] = useState<Candidate | null>(null);
   const [showPersonaModal, setShowPersonaModal] = useState<boolean>(false);
   const [generatingPersonaId, setGeneratingPersonaId] = useState<string | null>(null);
+
+  // LinkedIn Talent Import Modal state
+  const [showLinkedInImportModal, setShowLinkedInImportModal] = useState<boolean>(false);
+
+  // AI Interview Scheduler State & Handlers
+  const [scheduledInterviews, setScheduledInterviews] = useState<ScheduledInterview[]>([
+    {
+      id: 'interview-init-1',
+      candidateId: 'CAN-9821',
+      candidateName: 'Alex Rivera',
+      candidateEmail: 'alex.rivera@example.com',
+      candidatePhone: '+1-555-019-2831',
+      jobTitle: brief?.job_title || 'AI/ML Engineer',
+      companyName: brief?.company_name || 'Anthropic Tech',
+      roundName: 'Technical Live Coding Round',
+      roundType: 'coding',
+      durationMinutes: 45,
+      format: 'video_meet',
+      meetingLink: 'https://meet.google.com/ari-eval-recr',
+      dateStr: '2026-11-04',
+      startTime: '14:00',
+      endTime: '14:45',
+      timezone: 'America/New_York (EST)',
+      panelInterviewerIds: ['int-2'],
+      panelInterviewerNames: ['David Chen'],
+      calendarInviteSent: true,
+      calendarInviteSentAt: '10:18 AM',
+      status: 'Confirmed',
+      createdAt: new Date().toISOString(),
+    },
+  ]);
+  const [showSchedulerModal, setShowSchedulerModal] = useState<boolean>(false);
+  const [schedulerCandidate, setSchedulerCandidate] = useState<Candidate | null>(null);
+
+  // Interview Feedback Form & Standardized Evaluation Report State
+  const [showFeedbackModal, setShowFeedbackModal] = useState<boolean>(false);
+  const [feedbackCandidate, setFeedbackCandidate] = useState<Candidate | null>(null);
+
+  // Bulk Action Selection State
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
+
+  const appendAudit = (actor: string, action: string, subject: string) => {
+    const newEvent: AuditEvent = {
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      actor,
+      action,
+      subject,
+    };
+    setEvents((prev) => [...prev, newEvent]);
+  };
+
+  // Sorted & filtered candidates
+  const sortedCandidates = useMemo(() => {
+    let result = [...candidates];
+
+    if (statusFilter !== 'all') {
+      result = result.filter((c) => {
+        if (statusFilter === 'advanced') {
+          return c.decision_status.includes('Advanced') || c.decision_status.includes('Hired');
+        }
+        if (statusFilter === 'pending') {
+          return c.decision_status.includes('Pending');
+        }
+        if (statusFilter === 'not_proceeding') {
+          return c.decision_status.includes('Not proceeding');
+        }
+        if (['Screening', 'Technical', 'Interview', 'Offered', 'Rejected'].includes(statusFilter)) {
+          return getCandidateStage(c) === statusFilter;
+        }
+        return true;
+      });
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter((c) => {
+        const matchesName =
+          c.name.toLowerCase().includes(q) ||
+          c.candidate_id.toLowerCase().includes(q) ||
+          c.email.toLowerCase().includes(q);
+        const matchesSkills = Object.keys(c.skill_scores || {}).some((skill) =>
+          skill.toLowerCase().includes(q)
+        );
+        const matchesTags = (c.custom_tags || []).some((t) => t.toLowerCase().includes(q));
+        const matchesStrengths = c.strengths?.some((s) => s.toLowerCase().includes(q));
+        return matchesName || matchesSkills || matchesTags || matchesStrengths;
+      });
+    }
+
+    if (selectedSkillTag) {
+      const targetSkill = selectedSkillTag.toLowerCase();
+      result = result.filter((c) =>
+        Object.keys(c.skill_scores || {}).some((skill) => skill.toLowerCase() === targetSkill)
+      );
+    }
+
+    if (selectedCustomTag) {
+      const targetTag = selectedCustomTag.toLowerCase();
+      result = result.filter((c) =>
+        (c.custom_tags || []).some((t) => t.toLowerCase() === targetTag)
+      );
+    }
+
+    result.sort((a, b) => {
+      let comparison = 0;
+      if (sortField === 'score') {
+        comparison = b.overall_score - a.overall_score;
+      } else if (sortField === 'technical') {
+        comparison = (b.dimension_scores?.technical ?? 0) - (a.dimension_scores?.technical ?? 0);
+      } else if (sortField === 'experience') {
+        comparison = (b.dimension_scores?.experience ?? 0) - (a.dimension_scores?.experience ?? 0);
+      } else if (sortField === 'name') {
+        comparison = a.name.localeCompare(b.name);
+      }
+      if (comparison === 0) {
+        comparison = a.candidate_id.localeCompare(b.candidate_id);
+      }
+      return sortDirection === 'desc' ? comparison : -comparison;
+    });
+
+    return result;
+  }, [candidates, sortField, sortDirection, statusFilter, searchQuery, selectedSkillTag, selectedCustomTag]);
+
+  // Active selected candidate for the Selected Candidate Details view
+  const activeCandidate = useMemo(() => {
+    return (
+      candidates.find((c) => c.candidate_id === effectiveSelectedId) ||
+      sortedCandidates[0] ||
+      candidates[0] ||
+      null
+    );
+  }, [candidates, effectiveSelectedId, sortedCandidates]);
+
+  const availableSkillTags = useMemo(() => {
+    const map = new Map<string, number>();
+    candidates.forEach((c) => {
+      Object.keys(c.skill_scores || {}).forEach((skill) => {
+        map.set(skill, (map.get(skill) || 0) + 1);
+      });
+    });
+    return Array.from(map.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([skill, count]) => ({ skill, count }));
+  }, [candidates]);
+
+  const availableCustomTags = useMemo(() => {
+    const set = new Set<string>(PRESET_CUSTOM_TAGS);
+    candidates.forEach((c) => {
+      (c.custom_tags || []).forEach((t) => set.add(t));
+    });
+    return Array.from(set);
+  }, [candidates]);
+
+  // Count of candidates whose outreach is overdue for a follow-up reminder
+  const overdueFollowUpCount = useMemo(() => {
+    const now = Date.now();
+    return outreachQueue.filter((d) => {
+      if (d.response_status === 'responded') return false;
+      const thresholdDays = d.reminder_days ?? 3;
+      if (!d.sent_at) return false;
+      const sentTime = new Date(d.sent_at).getTime();
+      const days = Math.floor((now - sentTime) / (1000 * 60 * 60 * 24));
+      return days >= thresholdDays;
+    }).length;
+  }, [outreachQueue]);
+
+  const defaultCompareAId =
+    activeCandidate?.candidate_id ||
+    sortedCandidates[0]?.candidate_id ||
+    candidates[0]?.candidate_id ||
+    null;
+  const defaultCompareBId =
+    sortedCandidates.find((c) => c.candidate_id !== defaultCompareAId)?.candidate_id ||
+    candidates.find((c) => c.candidate_id !== defaultCompareAId)?.candidate_id ||
+    null;
+
+  const effectiveCompareAId =
+    selectedCompareIds[0] && candidates.some((c) => c.candidate_id === selectedCompareIds[0])
+      ? selectedCompareIds[0]
+      : defaultCompareAId;
+  const effectiveCompareBId =
+    selectedCompareIds[1] &&
+    selectedCompareIds[1] !== effectiveCompareAId &&
+    candidates.some((c) => c.candidate_id === selectedCompareIds[1])
+      ? selectedCompareIds[1]
+      : candidates.find(
+          (c) => c.candidate_id === defaultCompareBId && c.candidate_id !== effectiveCompareAId
+        )?.candidate_id ||
+        sortedCandidates.find((c) => c.candidate_id !== effectiveCompareAId)?.candidate_id ||
+        candidates.find((c) => c.candidate_id !== effectiveCompareAId)?.candidate_id ||
+        null;
+
+  const compareCandA =
+    candidates.find((c) => c.candidate_id === effectiveCompareAId) || sortedCandidates[0] || candidates[0];
+  const compareCandB =
+    candidates.find((c) => c.candidate_id === effectiveCompareBId) ||
+    sortedCandidates.find((c) => c.candidate_id !== compareCandA?.candidate_id) ||
+    sortedCandidates[1] ||
+    candidates[1];
+
+  const focusSelectedCandidateDetails = (candidateId: string) => {
+    selectCandidate(candidateId);
+    setSelectedDetailTab('overview');
+    setWorkspaceSection('pipeline');
+    setPipelineViewMode('list');
+    setTimeout(() => {
+      document
+        .getElementById('selected-candidate-panel')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+  };
+
+  // Direct 1-click resume file upload -> parse -> evaluate -> select & display details
+  const handleQuickUploadResume = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setIsReadingResumeFile(true);
+    try {
+      const extracted = await extractTextFromResumeFile(file);
+      const activeBrief: HiringBrief = brief || {
+        company_name: companyName,
+        job_title: jobTitle,
+        location,
+        headcount,
+        salary_budget: salaryBudget,
+        timeline,
+        requirements: requirementsText,
+        jd: '',
+        status: 'Approved by recruiter — publishing integration required',
+      };
+
+      if (brief && !brief.status.includes('Approved')) {
+        setBrief({
+          ...brief,
+          status: 'Approved by recruiter — publishing integration required',
+        });
+      }
+
+      const requiredSkills = activeBrief.requirements
+        .split(/[\n,;]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const parsed = parseResumeText(extracted.text, requiredSkills);
+
+      const screenedCandidate = recruitmentAgent.screenResume(
+        parsed.candidateName,
+        parsed.candidateEmail,
+        extracted.text,
+        activeBrief.job_title,
+        requiredSkills,
+        [],
+        true,
+        parsed.candidatePhone,
+        activeBrief,
+        file.name
+      );
+
+      setCandidates((prev) => [screenedCandidate, ...prev]);
+      setStatusFilter('all');
+      setSearchQuery('');
+      setSelectedSkillTag(null);
+      setSelectedCustomTag(null);
+      setJustUploadedCandidateId(screenedCandidate.candidate_id);
+      focusSelectedCandidateDetails(screenedCandidate.candidate_id);
+
+      appendAudit(
+        'AI Screener',
+        `Uploaded & evaluated ${extracted.fileType} resume "${file.name}" (Score: ${screenedCandidate.overall_score}%)`,
+        `${activeBrief.job_title}: ${screenedCandidate.name} (${screenedCandidate.candidate_id})`
+      );
+    } finally {
+      setIsReadingResumeFile(false);
+    }
+  };
+
+  // Handlers
+  const handleOpenEmailDraftModal = (cand: Candidate, type?: EmailDraftType) => {
+    const isReject =
+      cand.decision_status?.includes('Not proceeding') || cand.recruiter_decision === 'reject';
+    const chosenType = type || (isReject ? 'rejection' : 'progress');
+    setEmailModalCandidate(cand);
+    setEmailModalInitialType(chosenType);
+    setShowEmailModal(true);
+    setOpenMoreMenuId(null);
+    appendAudit('Recruiter', `Opened email draft (${chosenType})`, `${cand.name} (${cand.candidate_id})`);
+  };
+
+  const handleQueueEmailDraft = (draft: OutreachDraft, reasonCategory: string) => {
+    const stampedDraft: OutreachDraft = {
+      ...draft,
+      sent_at: draft.sent_at || new Date().toISOString(),
+      reminder_days: draft.reminder_days ?? 3,
+      response_status: draft.response_status ?? 'waiting',
+      status: 'Sent / Dispatched',
+    };
+    setOutreachQueue((prev) => [stampedDraft, ...prev]);
+    appendAudit(
+      'Recruiter',
+      `Queued & dispatched ${draft.type} email draft (${reasonCategory.replace(/_/g, ' ')})`,
+      `${draft.candidate_name} (${draft.candidate_id})`
+    );
+  };
 
   const handleOpenPersona = (cand: Candidate) => {
     let target = cand;
     if (!cand.persona) {
       const persona = generateCandidatePersona(cand, brief);
       target = { ...cand, persona };
-      setCandidates(prev => prev.map(c => c.candidate_id === cand.candidate_id ? target : c));
+      setCandidates((prev) => prev.map((c) => (c.candidate_id === cand.candidate_id ? target : c)));
       appendAudit(
-        "AI Agent",
-        `AI generated Candidate Persona summary card for ${cand.name} (${persona.archetype})`,
+        'AI Agent',
+        `Generated Candidate Persona summary (${persona.archetype})`,
         `${cand.name} (${cand.candidate_id})`
       );
     }
     setPersonaModalCandidate(target);
     setShowPersonaModal(true);
+    setOpenMoreMenuId(null);
   };
 
   const handleRegeneratePersona = (candidateId: string) => {
     setGeneratingPersonaId(candidateId);
-    const cand = candidates.find(c => c.candidate_id === candidateId);
+    const cand = candidates.find((c) => c.candidate_id === candidateId);
     if (!cand) {
       setGeneratingPersonaId(null);
       return;
     }
     const persona = generateCandidatePersona(cand, brief);
     const updated = { ...cand, persona };
-    setCandidates(prev => prev.map(c => c.candidate_id === candidateId ? updated : c));
+    setCandidates((prev) => prev.map((c) => (c.candidate_id === candidateId ? updated : c)));
     if (personaModalCandidate?.candidate_id === candidateId) {
       setPersonaModalCandidate(updated);
     }
-    appendAudit(
-      "AI Agent",
-      `AI refreshed Candidate Persona summary card for ${cand.name} (${persona.archetype})`,
-      `${cand.name} (${cand.candidate_id})`
-    );
+    appendAudit('AI Agent', `Refreshed Candidate Persona (${persona.archetype})`, `${cand.name} (${cand.candidate_id})`);
     setTimeout(() => {
       setGeneratingPersonaId(null);
-    }, 350);
+    }, 300);
   };
-
-  // LinkedIn Talent Import Modal state
-  const [showLinkedInImportModal, setShowLinkedInImportModal] = useState<boolean>(false);
 
   const handleImportLinkedInCandidates = (newCandidates: Candidate[], auditDescription: string) => {
-    setCandidates(prev => [...newCandidates, ...prev]);
+    const stamped = newCandidates.map((c) => ({
+      ...c,
+      processed_at: c.processed_at || new Date().toISOString(),
+    }));
+    setCandidates((prev) => [...stamped, ...prev]);
     appendAudit(
-      "LinkedIn Talent Agent",
+      'LinkedIn Talent Agent',
       auditDescription,
-      `${newCandidates.length} Candidates (${newCandidates.map(c => c.name).join(', ')})`
+      `${newCandidates.length} Candidates (${newCandidates.map((c) => c.name).join(', ')})`
     );
     if (newCandidates.length > 0) {
-      setSelectedCandidateId(newCandidates[0].candidate_id);
-      setExpandedCandidates(prev => ({
-        ...prev,
-        [newCandidates[0].candidate_id]: true
-      }));
+      focusSelectedCandidateDetails(newCandidates[0].candidate_id);
     }
   };
 
-  // AI Interview Scheduler State & Handlers
-  const [scheduledInterviews, setScheduledInterviews] = useState<ScheduledInterview[]>([
-    {
-      id: "interview-init-1",
-      candidateId: "CAN-9821",
-      candidateName: "Alex Rivera",
-      candidateEmail: "alex.rivera@example.com",
-      candidatePhone: "+1-555-019-2831",
-      jobTitle: brief?.job_title || "AI/ML Engineer",
-      companyName: brief?.company_name || "Anthropic Tech",
-      roundName: "Technical Live Coding Round",
-      roundType: "coding",
-      durationMinutes: 45,
-      format: "video_meet",
-      meetingLink: "https://meet.google.com/ari-eval-recr",
-      dateStr: "2026-11-04",
-      startTime: "14:00",
-      endTime: "14:45",
-      timezone: "America/New_York (EST)",
-      panelInterviewerIds: ["int-2"],
-      panelInterviewerNames: ["David Chen"],
-      calendarInviteSent: true,
-      calendarInviteSentAt: "10:18 AM",
-      status: "Confirmed",
-      createdAt: new Date().toISOString()
-    }
-  ]);
-  const [showSchedulerModal, setShowSchedulerModal] = useState<boolean>(false);
-  const [schedulerCandidate, setSchedulerCandidate] = useState<Candidate | null>(null);
-
   const handleOpenScheduler = (cand?: Candidate) => {
-    const target = cand || sortedCandidates[0] || candidates[0] || null;
+    const target = cand || activeCandidate || sortedCandidates[0] || candidates[0] || null;
     setSchedulerCandidate(target);
     setShowSchedulerModal(true);
+    setOpenMoreMenuId(null);
     if (target) {
-      appendAudit(
-        "Recruiter",
-        `Opened AI Interview Scheduler for ${target.name} to check team calendar availability`,
-        `${target.name} (${target.candidate_id})`
-      );
+      appendAudit('Recruiter', `Opened Interview Scheduler for ${target.name}`, `${target.name} (${target.candidate_id})`);
     }
   };
 
   const handleConfirmScheduledInterview = (scheduled: ScheduledInterview) => {
-    setScheduledInterviews(prev => [scheduled, ...prev]);
+    setScheduledInterviews((prev) => [scheduled, ...prev]);
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.candidate_id !== scheduled.candidateId) return c;
+        return {
+          ...c,
+          stage: 'Interview',
+          recruiter_decision: 'advance',
+          decision_status: 'Advanced by recruiter',
+          current_round: scheduled.roundType,
+        };
+      })
+    );
 
-    // Update candidate stage to 'Interview' if currently Screening
-    setCandidates(prev => prev.map(c => {
-      if (c.candidate_id !== scheduled.candidateId) return c;
-      return {
-        ...c,
-        stage: 'Interview',
-        recruiter_decision: 'advance',
-        decision_status: 'Advanced by recruiter',
-        current_round: scheduled.roundType,
-      };
-    }));
-
-    // Auto-queue calendar confirmation email with meeting link
     const { subject, body } = generateInterviewEmailConfirmation(scheduled);
     const draft: OutreachDraft = {
       id: `draft-${Date.now()}`,
@@ -323,30 +588,73 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       body,
       call_script: `Hi ${scheduled.candidateName}, calling from ${scheduled.companyName} to confirm your upcoming ${scheduled.roundName} on ${scheduled.dateStr}. Google Meet and calendar invite have been dispatched.`,
       availability: `${scheduled.dateStr} at ${scheduled.startTime} EST`,
-      status: 'Recruiter approved — integration required; not sent or called'
+      status: 'Sent / Dispatched',
+      sent_at: new Date().toISOString(),
+      reminder_days: 3,
+      response_status: 'waiting',
     };
-    setOutreachQueue(prev => [draft, ...prev]);
-
+    setOutreachQueue((prev) => [draft, ...prev]);
     appendAudit(
-      "AI Scheduler",
-      `Scheduled ${scheduled.durationMinutes}m ${scheduled.roundName} on ${scheduled.dateStr} at ${scheduled.startTime} EST (Google Meet & .ics invite dispatched to candidate & ${scheduled.panelInterviewerNames.length} panel members)`,
+      'Scheduler',
+      `Scheduled ${scheduled.durationMinutes}m ${scheduled.roundName} on ${scheduled.dateStr} at ${scheduled.startTime} EST`,
       `${scheduled.candidateName} (${scheduled.candidateId})`
     );
   };
 
-  // Bulk Action Selection State & Handlers
-  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
+  const handleOpenFeedbackModal = (cand: Candidate) => {
+    setFeedbackCandidate(cand);
+    setShowFeedbackModal(true);
+    setOpenMoreMenuId(null);
+    appendAudit('Recruiter', `Opened Interview Feedback form for ${cand.name}`, `${cand.name} (${cand.candidate_id})`);
+  };
+
+  const handleSaveFeedbackReport = (candidateId: string, feedback: InterviewRoundFeedback) => {
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.candidate_id !== candidateId) return c;
+        const existing = c.interview_feedback_reports || [];
+        const updatedReports = existing.some((f) => f.id === feedback.id)
+          ? existing.map((f) => (f.id === feedback.id ? feedback : f))
+          : [feedback, ...existing];
+        return {
+          ...c,
+          interview_feedback_reports: updatedReports,
+        };
+      })
+    );
+
+    if (feedbackCandidate?.candidate_id === candidateId) {
+      setFeedbackCandidate((prev) =>
+        prev
+          ? {
+              ...prev,
+              interview_feedback_reports: (prev.interview_feedback_reports || []).some(
+                (f) => f.id === feedback.id
+              )
+                ? prev.interview_feedback_reports!.map((f) => (f.id === feedback.id ? feedback : f))
+                : [feedback, ...(prev.interview_feedback_reports || [])],
+            }
+          : null
+      );
+    }
+
+    appendAudit(
+      'Evaluation Engine',
+      `Saved standardized evaluation report: ${feedback.overallRecommendation} (${feedback.evaluationReport?.compositeScore || 85}/100)`,
+      `${feedback.candidateName} (${candidateId})`
+    );
+  };
 
   const handleToggleSelectCandidate = (candidateId: string) => {
-    setSelectedCandidateIds(prev => 
-      prev.includes(candidateId) ? prev.filter(id => id !== candidateId) : [...prev, candidateId]
+    setSelectedCandidateIds((prev) =>
+      prev.includes(candidateId) ? prev.filter((id) => id !== candidateId) : [...prev, candidateId]
     );
   };
 
   const handleSelectAllFiltered = () => {
-    const filteredIds = sortedCandidates.map(c => c.candidate_id);
+    const filteredIds = sortedCandidates.map((c) => c.candidate_id);
     setSelectedCandidateIds(filteredIds);
-    appendAudit("Recruiter", `Selected all ${filteredIds.length} filtered candidates for bulk action`, `${filteredIds.length} Candidates`);
+    appendAudit('Recruiter', `Selected all ${filteredIds.length} candidates for bulk action`, `${filteredIds.length} Candidates`);
   };
 
   const handleDeselectAll = () => {
@@ -354,141 +662,125 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   };
 
   const handleSelectAboveCutoff = () => {
-    const above = candidates.filter(c => c.overall_score >= cutoffScore).map(c => c.candidate_id);
+    const above = candidates.filter((c) => c.overall_score >= cutoffScore).map((c) => c.candidate_id);
     setSelectedCandidateIds(above);
-    appendAudit("Recruiter", `Bulk selected ${above.length} candidates scoring above cutoff (>=${cutoffScore}%)`, `${above.length} Candidates`);
+    appendAudit('Recruiter', `Selected ${above.length} candidates above cutoff (>=${cutoffScore}%)`, `${above.length} Candidates`);
   };
 
   const handleBulkStageChange = (newStage: HiringStage, candidateIds: string[]) => {
-    setCandidates(prev => prev.map(c => {
-      if (!candidateIds.includes(c.candidate_id)) return c;
-      let decision_status = c.decision_status;
-      let recruiter_decision = c.recruiter_decision;
-      let current_round = c.current_round;
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (!candidateIds.includes(c.candidate_id)) return c;
+        let decision_status = c.decision_status;
+        let recruiter_decision = c.recruiter_decision;
+        let current_round = c.current_round;
 
-      if (newStage === 'Rejected') {
-        recruiter_decision = 'reject';
-        decision_status = 'Not proceeding (recruiter decision)';
-      } else if (newStage === 'Offered') {
-        recruiter_decision = 'advance';
-        decision_status = 'Hired by recruiter';
-      } else if (newStage === 'Technical') {
-        recruiter_decision = 'advance';
-        decision_status = 'Advanced by recruiter';
-        current_round = 'coding';
-      } else if (newStage === 'Interview') {
-        recruiter_decision = 'advance';
-        decision_status = 'Advanced by recruiter';
-        current_round = 'technical';
-      } else if (newStage === 'Screening') {
-        recruiter_decision = 'hold';
-        decision_status = 'Pending recruiter review';
-      }
+        if (newStage === 'Rejected') {
+          recruiter_decision = 'reject';
+          decision_status = 'Not proceeding (recruiter decision)';
+        } else if (newStage === 'Offered') {
+          recruiter_decision = 'advance';
+          decision_status = 'Hired by recruiter';
+        } else if (newStage === 'Technical') {
+          recruiter_decision = 'advance';
+          decision_status = 'Advanced by recruiter';
+          current_round = 'coding';
+        } else if (newStage === 'Interview') {
+          recruiter_decision = 'advance';
+          decision_status = 'Advanced by recruiter';
+          current_round = 'technical';
+        } else if (newStage === 'Screening') {
+          recruiter_decision = 'hold';
+          decision_status = 'Pending recruiter review';
+        }
 
-      return {
-        ...c,
-        stage: newStage,
-        decision_status,
-        recruiter_decision,
-        current_round
-      };
-    }));
-
-    appendAudit(
-      "Recruiter",
-      `Bulk updated hiring stage to "${newStage}" for ${candidateIds.length} candidate(s)`,
-      candidateIds.join(', ')
+        return {
+          ...c,
+          stage: newStage,
+          decision_status,
+          recruiter_decision,
+          current_round,
+        };
+      })
     );
+    appendAudit('Recruiter', `Bulk updated stage to "${newStage}" for ${candidateIds.length} candidate(s)`, candidateIds.join(', '));
   };
 
   const handleBulkAdvance = (candidateIds: string[]) => {
-    setCandidates(prev => prev.map(c => {
-      if (!candidateIds.includes(c.candidate_id)) return c;
-      return {
-        ...c,
-        recruiter_decision: 'advance',
-        decision_status: 'Advanced by recruiter'
-      };
-    }));
-
-    appendAudit("Recruiter", `Bulk advanced ${candidateIds.length} candidate(s)`, candidateIds.join(', '));
+    setCandidates((prev) =>
+      prev.map((c) =>
+        candidateIds.includes(c.candidate_id)
+          ? { ...c, recruiter_decision: 'advance', decision_status: 'Advanced by recruiter' }
+          : c
+      )
+    );
+    appendAudit('Recruiter', `Bulk advanced ${candidateIds.length} candidate(s)`, candidateIds.join(', '));
   };
 
   const handleBulkReject = (candidateIds: string[]) => {
-    setCandidates(prev => prev.map(c => {
-      if (!candidateIds.includes(c.candidate_id)) return c;
-      return {
-        ...c,
-        recruiter_decision: 'reject',
-        decision_status: 'Not proceeding (recruiter decision)'
-      };
-    }));
-
-    appendAudit("Recruiter", `Bulk rejected ${candidateIds.length} candidate(s)`, candidateIds.join(', '));
+    setCandidates((prev) =>
+      prev.map((c) =>
+        candidateIds.includes(c.candidate_id)
+          ? { ...c, recruiter_decision: 'reject', decision_status: 'Not proceeding (recruiter decision)' }
+          : c
+      )
+    );
+    appendAudit('Recruiter', `Bulk declined ${candidateIds.length} candidate(s)`, candidateIds.join(', '));
   };
 
   const handleBulkAssignCoding = (candidateIds: string[]) => {
     if (!brief) return;
     const challenge = recruitmentAgent.generateCodingChallenge(brief.job_title, 'Medium');
-    setCandidates(prev => prev.map(c => {
-      if (!candidateIds.includes(c.candidate_id)) return c;
-      return {
-        ...c,
-        rounds: {
-          ...c.rounds,
-          coding: {
-            ...c.rounds.coding,
-            challenge_version: (c.rounds.coding?.challenge_version || 0) + 1,
-            challenge,
-            candidate_submission: challenge.starter_code
-          }
-        }
-      };
-    }));
-
-    appendAudit("Agent", `Bulk assigned adaptive coding challenges to ${candidateIds.length} candidate(s)`, candidateIds.join(', '));
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (!candidateIds.includes(c.candidate_id)) return c;
+        return {
+          ...c,
+          rounds: {
+            ...c.rounds,
+            coding: {
+              ...c.rounds.coding,
+              challenge_version: (c.rounds.coding?.challenge_version || 0) + 1,
+              challenge,
+              candidate_submission: challenge.starter_code,
+            },
+          },
+        };
+      })
+    );
+    appendAudit('Agent', `Assigned coding challenges to ${candidateIds.length} candidate(s)`, candidateIds.join(', '));
   };
 
   const handleBulkQueueEmails = (drafts: OutreachDraft[], description: string) => {
-    setOutreachQueue(prev => [...drafts, ...prev]);
-    appendAudit(
-      "Agent & Recruiter",
-      `Bulk generated & queued ${drafts.length} follow-up emails (${description})`,
-      `${drafts.length} Candidates`
-    );
-  };
-
-  const appendAudit = (actor: string, action: string, subject: string) => {
-    const newEvent: AuditEvent = {
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      actor,
-      action,
-      subject,
-    };
-    setEvents(prev => [...prev, newEvent]);
+    const stamped = drafts.map((d) => ({
+      ...d,
+      sent_at: d.sent_at || new Date().toISOString(),
+      reminder_days: d.reminder_days ?? 3,
+      response_status: d.response_status ?? 'waiting',
+      status: 'Sent / Dispatched',
+    }));
+    setOutreachQueue((prev) => [...stamped, ...prev]);
+    appendAudit('Recruiter', `Queued & dispatched ${drafts.length} emails (${description})`, `${drafts.length} Candidates`);
   };
 
   const handleToggleCompareCandidate = (candidateId: string) => {
-    setSelectedCompareIds(prev => {
+    setOpenMoreMenuId(null);
+    setSelectedCompareIds((prev) => {
       let next: string[];
       if (prev.includes(candidateId)) {
-        next = prev.filter(id => id !== candidateId);
+        next = prev.filter((id) => id !== candidateId);
       } else if (prev.length >= 2) {
         next = [prev[0], candidateId];
       } else {
         next = [...prev, candidateId];
       }
 
-      // If user just selected the 2nd candidate, auto open the comparison modal
       if (next.length === 2 && !prev.includes(candidateId)) {
-        setShowCompareModal(true);
-        const cA = candidates.find(c => c.candidate_id === next[0]);
-        const cB = candidates.find(c => c.candidate_id === next[1]);
-        appendAudit(
-          "Recruiter",
-          `Initiated candidate head-to-head radar comparison`,
-          `${cA?.name || next[0]} vs ${cB?.name || next[1]}`
-        );
+        setWorkspaceSection('pipeline');
+        setPipelineViewMode('compare');
+        const cA = candidates.find((c) => c.candidate_id === next[0]);
+        const cB = candidates.find((c) => c.candidate_id === next[1]);
+        appendAudit('Recruiter', 'Compared two candidates side-by-side', `${cA?.name || next[0]} vs ${cB?.name || next[1]}`);
       }
       return next;
     });
@@ -504,8 +796,14 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         finalB = selectedCompareIds[1];
       } else if (selectedCompareIds.length === 1) {
         finalA = selectedCompareIds[0];
-        const other = candidates.find(c => c.candidate_id !== finalA)?.candidate_id;
-        finalB = other;
+        finalB =
+          sortedCandidates.find((c) => c.candidate_id !== finalA)?.candidate_id ||
+          candidates.find((c) => c.candidate_id !== finalA)?.candidate_id;
+      } else if (activeCandidate && candidates.length >= 2) {
+        finalA = activeCandidate.candidate_id;
+        finalB =
+          sortedCandidates.find((c) => c.candidate_id !== finalA)?.candidate_id ||
+          candidates.find((c) => c.candidate_id !== finalA)?.candidate_id;
       } else if (sortedCandidates.length >= 2) {
         finalA = sortedCandidates[0]?.candidate_id;
         finalB = sortedCandidates[1]?.candidate_id;
@@ -514,22 +812,47 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
 
     if (finalA && finalB && finalA !== finalB) {
       setSelectedCompareIds([finalA, finalB]);
-      setShowCompareModal(true);
-      const cA = candidates.find(c => c.candidate_id === finalA);
-      const cB = candidates.find(c => c.candidate_id === finalB);
-      appendAudit(
-        "Recruiter",
-        `Initiated candidate head-to-head radar comparison`,
-        `${cA?.name || finalA} vs ${cB?.name || finalB}`
-      );
+      setWorkspaceSection('pipeline');
+      setPipelineViewMode('compare');
+      const cA = candidates.find((c) => c.candidate_id === finalA);
+      const cB = candidates.find((c) => c.candidate_id === finalB);
+      appendAudit('Recruiter', 'Compared two candidates side-by-side', `${cA?.name || finalA} vs ${cB?.name || finalB}`);
     }
+  };
+
+  const handleAddCustomTag = (candidateId: string, rawTag: string) => {
+    const trimmed = rawTag.trim();
+    if (!trimmed) return;
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.candidate_id !== candidateId) return c;
+        const current = c.custom_tags || [];
+        if (current.some((t) => t.toLowerCase() === trimmed.toLowerCase())) return c;
+        return { ...c, custom_tags: [...current, trimmed] };
+      })
+    );
+    setNewTagInput('');
+    appendAudit('Recruiter', `Added label "${trimmed}" to candidate`, candidateId);
+  };
+
+  const handleRemoveCustomTag = (candidateId: string, tagToRemove: string) => {
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.candidate_id !== candidateId) return c;
+        return {
+          ...c,
+          custom_tags: (c.custom_tags || []).filter((t) => t !== tagToRemove),
+        };
+      })
+    );
+    appendAudit('Recruiter', `Removed label "${tagToRemove}" from candidate`, candidateId);
   };
 
   const handleRolePresetChange = (role: string) => {
     setSelectedRolePreset(role);
     setJobTitle(role);
     if (ROLE_REQUIREMENTS[role]) {
-      setRequirementsText(ROLE_REQUIREMENTS[role].join(", "));
+      setRequirementsText(ROLE_REQUIREMENTS[role].join(', '));
     }
   };
 
@@ -556,12 +879,12 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       timeline,
       requirements: requirementsText,
       jd,
-      status: 'Draft — recruiter review required',
+      status: 'Approved by recruiter — publishing integration required',
       evaluation_rubric: rubric,
     };
 
     setBrief(newBrief);
-    appendAudit("AI Agent", "AI drafted inclusive job description & rubric", jobTitle);
+    appendAudit('AI Agent', 'Updated job description & evaluation rubric', jobTitle);
   };
 
   const handleApproveJd = () => {
@@ -570,11 +893,12 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       ...brief,
       status: 'Approved by recruiter — publishing integration required',
     });
-    appendAudit("Recruiter", "Approved job description for distribution", brief.job_title);
+    appendAudit('Recruiter', 'Approved job description', brief.job_title);
   };
 
   const handleSelectSamplePreset = (preset: SampleResumePreset) => {
     setSelectedPresetId(preset.id);
+    setUploadedFileName(`${preset.candidateName.replace(/\s+/g, '_')}_Resume.txt`);
     setCandidateNameInput(preset.candidateName);
     setCandidateEmailInput(preset.candidateEmail);
     setResumeTextInput(preset.resumeText);
@@ -583,24 +907,26 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     setPortfolioUrl(preset.portfolioUrl);
     setWorkHighlights(preset.workHighlights);
 
-    const requiredSkills = brief ? brief.requirements.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean) : [];
+    const requiredSkills = brief
+      ? brief.requirements.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean)
+      : [];
     const parsed = parseResumeText(preset.resumeText, requiredSkills);
     if (parsed.candidatePhone) {
       setCandidatePhoneInput(parsed.candidatePhone);
     }
     setLastParsedData(parsed);
-
-    setAutoFillNotification(`Loaded sample resume for ${preset.name} (${preset.matchTier.split(' ')[0]}) & auto-populated profile details, links, and work highlights.`);
-    appendAudit("Recruiter", `Loaded test candidate sample preset for "${preset.name}" (${preset.title})`, `${brief?.job_title || 'Role'}: ${preset.name}`);
+    setAutoFillNotification(`Loaded sample resume for ${preset.name}. Click "Screen & View Candidate Details" below to evaluate.`);
   };
 
   const handleAutoExtractFromResume = () => {
     if (!resumeTextInput.trim()) {
-      setAutoFillNotification("Please enter or paste resume text first to run automated extraction.");
+      setAutoFillNotification('Paste or upload resume text first to extract candidate fields.');
       return;
     }
 
-    const requiredSkills = brief ? brief.requirements.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean) : [];
+    const requiredSkills = brief
+      ? brief.requirements.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean)
+      : [];
     const parsed = parseResumeText(resumeTextInput, requiredSkills);
     setLastParsedData(parsed);
 
@@ -634,44 +960,44 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       filledCount++;
     }
 
-    setAutoFillNotification(`AI Auto-Fill Extracted: ${filledCount} candidate fields identified · ${parsed.matchedSkills.length} required skills verified (${parsed.matchRatePercent}% match coverage)`);
-    appendAudit("AI Parser", `Auto-extracted candidate profile & skills from resume text (${filledCount} fields)`, parsed.candidateName || "Candidate");
+    setAutoFillNotification(
+      `Extracted ${filledCount} fields and matched ${parsed.matchedSkills.length} required skills.`
+    );
   };
 
   const handleClearScreeningForm = () => {
-    setCandidateNameInput("");
-    setCandidateEmailInput("");
-    setCandidatePhoneInput("");
-    setResumeTextInput("");
-    setGithubUrl("");
-    setLinkedinUrl("");
-    setPortfolioUrl("");
-    setWorkHighlights("");
+    setCandidateNameInput('');
+    setCandidateEmailInput('');
+    setCandidatePhoneInput('');
+    setResumeTextInput('');
+    setUploadedFileName(null);
+    setGithubUrl('');
+    setLinkedinUrl('');
+    setPortfolioUrl('');
+    setWorkHighlights('');
     setSelectedPresetId(null);
     setLastParsedData(null);
     setAutoFillNotification(null);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      setResumeTextInput(content);
+    setIsReadingResumeFile(true);
+    try {
+      const extracted = await extractTextFromResumeFile(file);
+      setResumeTextInput(extracted.text);
+      setUploadedFileName(file.name);
       setSelectedPresetId(null);
 
-      // Automated parsing directly upon upload
-      const requiredSkills = brief ? brief.requirements.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean) : [];
-      const parsed = parseResumeText(content, requiredSkills);
+      const requiredSkills = brief
+        ? brief.requirements.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean)
+        : [];
+      const parsed = parseResumeText(extracted.text, requiredSkills);
       setLastParsedData(parsed);
 
-      if (parsed.candidateName) {
-        setCandidateNameInput(parsed.candidateName);
-      } else {
-        setCandidateNameInput(file.name.replace(/\.[^/.]+$/, ""));
-      }
+      setCandidateNameInput(parsed.candidateName || file.name.replace(/\.[^/.]+$/, ''));
       if (parsed.candidateEmail) setCandidateEmailInput(parsed.candidateEmail);
       if (parsed.candidatePhone) setCandidatePhoneInput(parsed.candidatePhone);
       if (parsed.githubUrl) setGithubUrl(parsed.githubUrl);
@@ -679,49 +1005,72 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       if (parsed.portfolioUrl) setPortfolioUrl(parsed.portfolioUrl);
       if (parsed.workHighlights) setWorkHighlights(parsed.workHighlights);
 
-      setAutoFillNotification(`Uploaded "${file.name}" & auto-extracted profile: ${parsed.candidateName || file.name} (${parsed.matchedSkills.length} matching skills detected)`);
-      appendAudit("AI Screener", `Uploaded and auto-parsed resume file "${file.name}"`, parsed.candidateName || file.name);
-    };
-    reader.readAsText(file);
+      setAutoFillNotification(
+        `Extracted ${extracted.fileType} resume "${file.name}" (${parsed.matchedSkills.length} matched skills). Click "Screen & View Candidate Details" to add & inspect.`
+      );
+    } finally {
+      setIsReadingResumeFile(false);
+    }
   };
 
   const handleScreenResume = () => {
-    if (!brief) return;
     if (!resumeTextInput.trim()) return;
 
-    const requiredSkills = brief.requirements.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
+    const activeBrief: HiringBrief = brief || {
+      company_name: companyName,
+      job_title: jobTitle,
+      location,
+      headcount,
+      salary_budget: salaryBudget,
+      timeline,
+      requirements: requirementsText,
+      jd: '',
+      status: 'Approved by recruiter — publishing integration required',
+    };
+
+    if (brief && !brief.status.includes('Approved')) {
+      setBrief({
+        ...brief,
+        status: 'Approved by recruiter — publishing integration required',
+      });
+    }
+
+    const requiredSkills = activeBrief.requirements
+      .split(/[\n,;]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     const digitalSources = [];
     if (githubUrl.trim()) {
       digitalSources.push({
-        source_type: "GitHub",
-        source_ref: "github",
+        source_type: 'GitHub',
+        source_ref: 'github',
         source_location: githubUrl.trim(),
-        content: "Candidate-provided link only; page content was not accessed or verified."
+        content: 'Candidate-provided link.',
       });
     }
     if (linkedinUrl.trim()) {
       digitalSources.push({
-        source_type: "LinkedIn",
-        source_ref: "linkedin",
+        source_type: 'LinkedIn',
+        source_ref: 'linkedin',
         source_location: linkedinUrl.trim(),
-        content: "Candidate-provided link only."
+        content: 'Candidate-provided link.',
       });
     }
     if (portfolioUrl.trim()) {
       digitalSources.push({
-        source_type: "Portfolio",
-        source_ref: "portfolio",
+        source_type: 'Portfolio',
+        source_ref: 'portfolio',
         source_location: portfolioUrl.trim(),
-        content: "Candidate-provided portfolio site."
+        content: 'Candidate-provided portfolio site.',
       });
     }
     if (workHighlights.trim()) {
       digitalSources.push({
-        source_type: "Candidate-submitted work highlights",
-        source_ref: "work_highlights",
-        source_location: "",
-        content: workHighlights.trim()
+        source_type: 'Candidate-submitted work highlights',
+        source_ref: 'work_highlights',
+        source_location: '',
+        content: workHighlights.trim(),
       });
     }
 
@@ -729,56 +1078,54 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       candidateNameInput,
       candidateEmailInput,
       resumeTextInput,
-      brief.job_title,
+      activeBrief.job_title,
       requiredSkills,
       digitalSources,
       memoryConsent,
-      candidatePhoneInput
+      candidatePhoneInput,
+      activeBrief,
+      uploadedFileName || undefined
     );
 
-    setCandidates(prev => [screenedCandidate, ...prev]);
-    setSelectedCandidateId(screenedCandidate.candidate_id);
-    setExpandedCandidates(prev => ({ ...prev, [screenedCandidate.candidate_id]: true }));
+    setCandidates((prev) => [screenedCandidate, ...prev]);
+    setStatusFilter('all');
+    setSearchQuery('');
+    setSelectedSkillTag(null);
+    setSelectedCustomTag(null);
+    setJustUploadedCandidateId(screenedCandidate.candidate_id);
+    focusSelectedCandidateDetails(screenedCandidate.candidate_id);
 
     appendAudit(
-      "AI Screener",
-      `Screened resume with 6-dimension evaluation (Score: ${screenedCandidate.overall_score}%)`,
-      `${brief.job_title}: ${screenedCandidate.candidate_id} (${screenedCandidate.name})`
+      'AI Screener',
+      `Screened resume (Score: ${screenedCandidate.overall_score}%)`,
+      `${activeBrief.job_title}: ${screenedCandidate.name} (${screenedCandidate.candidate_id})`
     );
 
-    // Reset screening form inputs
     handleClearScreeningForm();
   };
 
-  const toggleExpand = (candidateId: string) => {
-    setExpandedCandidates(prev => ({
-      ...prev,
-      [candidateId]: !prev[candidateId]
-    }));
-  };
-
-  // Recruiter actions on candidate
   const handleRecruiterDecision = (candidateId: string, decision: 'advance' | 'reject') => {
-    setCandidates(prev => prev.map(c => {
-      if (c.candidate_id !== candidateId) return c;
-      const status = decision === 'advance' 
-        ? 'Advanced by recruiter' 
-        : 'Not proceeding (recruiter decision)';
-      return {
-        ...c,
-        recruiter_decision: decision,
-        decision_status: status
-      };
-    }));
-
-    const cand = candidates.find(c => c.candidate_id === candidateId);
-    appendAudit(
-      "Recruiter",
-      `Recruiter marked candidate as ${decision === 'advance' ? 'Advanced' : 'Not proceeding'}`,
-      `${brief?.job_title || 'Role'}: ${candidateId}`
+    setOpenMoreMenuId(null);
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.candidate_id !== candidateId) return c;
+        const status =
+          decision === 'advance' ? 'Advanced by recruiter' : 'Not proceeding (recruiter decision)';
+        return {
+          ...c,
+          recruiter_decision: decision,
+          decision_status: status,
+        };
+      })
     );
 
-    // If advanced, auto-prepare round draft
+    const cand = candidates.find((c) => c.candidate_id === candidateId);
+    appendAudit(
+      'Recruiter',
+      `Marked candidate as ${decision === 'advance' ? 'Advanced' : 'Not proceeding'}`,
+      `${brief?.job_title || 'Role'}: ${cand?.name || candidateId}`
+    );
+
     if (decision === 'advance' && cand) {
       const draft: OutreachDraft = {
         id: `draft-${Date.now()}`,
@@ -790,12 +1137,12 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         round_name: 'coding',
         interview_format: 'Video interview with live coding exercise',
         subject: `Interview Invitation: ${brief?.job_title} at ${brief?.company_name || 'Our Company'}`,
-        body: `Dear ${cand.name},\n\nWe were impressed by your background and would love to invite you to the Coding Round for the ${brief?.job_title} position.\n\nIn this round, you will be invited to complete an adaptive coding exercise and discuss system design.\n\nPlease let us know if the suggested availability works for you.\n\nBest regards,\nRecruitment Team`,
-        call_script: `Hi ${cand.name}, this is the recruiter for ${brief?.company_name}. We're excited about your resume and would like to confirm your availability for the technical coding round.`,
-        availability: "Upcoming weekdays, 10:00 AM – 4:00 PM EST",
-        status: 'Draft — not sent or scheduled'
+        body: `Dear ${cand.name},\n\nWe were impressed by your background and would love to invite you to the Coding Round for the ${brief?.job_title} position.\n\nPlease let us know if the suggested availability works for you.\n\nBest regards,\nRecruitment Team`,
+        call_script: `Hi ${cand.name}, calling from ${brief?.company_name}. We would like to schedule your technical coding round.`,
+        availability: 'Upcoming weekdays, 10:00 AM – 4:00 PM EST',
+        status: 'Draft — not sent or scheduled',
       };
-      setOutreachQueue(prev => [...prev, draft]);
+      setOutreachQueue((prev) => [draft, ...prev]);
     } else if (decision === 'reject' && cand) {
       const draft: OutreachDraft = {
         id: `draft-${Date.now()}`,
@@ -805,212 +1152,208 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         candidate_email: cand.email,
         candidate_phone: cand.phone,
         subject: `Application update regarding ${brief?.job_title} position`,
-        body: `Dear ${cand.name},\n\nThank you very much for taking the time to apply for the ${brief?.job_title} role at ${brief?.company_name || 'our company'}. After careful consideration, we have decided to move forward with candidates whose experience more closely matches our immediate technical requirements.\n\nWe sincerely appreciate your interest and wish you the very best in your job search.\n\nWarm regards,\nRecruitment Team`,
-        call_script: `Hi ${cand.name}, calling with an update regarding your application for the ${brief?.job_title} position. While your background is impressive, we have chosen to proceed with another profile for this role. We appreciate your time.`,
-        availability: "N/A",
-        status: 'Draft — not sent or scheduled'
+        body: `Dear ${cand.name},\n\nThank you for applying for the ${brief?.job_title} role at ${brief?.company_name || 'our company'}. After careful review, we have decided to move forward with other candidates for this opening.\n\nBest regards,\nRecruitment Team`,
+        call_script: `Hi ${cand.name}, calling with an update regarding your application for ${brief?.job_title}.`,
+        availability: 'N/A',
+        status: 'Draft — not sent or scheduled',
       };
-      setOutreachQueue(prev => [...prev, draft]);
+      setOutreachQueue((prev) => [draft, ...prev]);
     }
   };
 
-  // Recruiter hiring stage update with automatic AuditEvent logging
   const handleStageChange = (candidateId: string, newStage: HiringStage) => {
-    const candidate = candidates.find(c => c.candidate_id === candidateId);
+    const candidate = candidates.find((c) => c.candidate_id === candidateId);
     if (!candidate) return;
     const previousStage = getCandidateStage(candidate);
     if (previousStage === newStage) return;
 
-    // 1. Update candidate state
-    setCandidates(prev => prev.map(c => {
-      if (c.candidate_id !== candidateId) return c;
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.candidate_id !== candidateId) return c;
+        let decision_status = c.decision_status;
+        let recruiter_decision = c.recruiter_decision;
+        let current_round = c.current_round;
 
-      let decision_status = c.decision_status;
-      let recruiter_decision = c.recruiter_decision;
-      let current_round = c.current_round;
+        if (newStage === 'Rejected') {
+          recruiter_decision = 'reject';
+          decision_status = 'Not proceeding (recruiter decision)';
+        } else if (newStage === 'Offered') {
+          recruiter_decision = 'advance';
+          decision_status = 'Hired by recruiter';
+        } else if (newStage === 'Technical') {
+          recruiter_decision = 'advance';
+          decision_status = 'Advanced by recruiter';
+          current_round = 'coding';
+        } else if (newStage === 'Interview') {
+          recruiter_decision = 'advance';
+          decision_status = 'Advanced by recruiter';
+          current_round = 'technical';
+        } else if (newStage === 'Screening') {
+          recruiter_decision = 'hold';
+          decision_status = 'Pending recruiter review';
+        }
 
-      if (newStage === 'Rejected') {
-        recruiter_decision = 'reject';
-        decision_status = 'Not proceeding (recruiter decision)';
-      } else if (newStage === 'Offered') {
-        recruiter_decision = 'advance';
-        decision_status = 'Hired by recruiter';
-      } else if (newStage === 'Technical') {
-        recruiter_decision = 'advance';
-        decision_status = 'Advanced by recruiter';
-        current_round = 'coding';
-      } else if (newStage === 'Interview') {
-        recruiter_decision = 'advance';
-        decision_status = 'Advanced by recruiter';
-        current_round = 'technical';
-      } else if (newStage === 'Screening') {
-        recruiter_decision = 'hold';
-        decision_status = 'Pending recruiter review';
-      }
+        return {
+          ...c,
+          stage: newStage,
+          decision_status,
+          recruiter_decision,
+          current_round,
+        };
+      })
+    );
 
-      return {
-        ...c,
-        stage: newStage,
-        decision_status,
-        recruiter_decision,
-        current_round,
-      };
-    }));
-
-    // 2. Automatically append an entry to the AuditEvent log
     appendAudit(
-      "Recruiter",
-      `Updated candidate hiring stage to "${newStage}" (from "${previousStage}")`,
-      `${brief?.job_title || 'Role'}: ${candidate.name} (${candidateId})`
+      'Recruiter',
+      `Moved stage from "${previousStage}" to "${newStage}"`,
+      `${candidate.name} (${candidateId})`
     );
   };
 
-  // Recruiter private notes update with local state persistence and AuditEvent logging
   const handleSaveCandidateNotes = (candidateId: string, notes: string) => {
-    const candidate = candidates.find(c => c.candidate_id === candidateId);
+    const candidate = candidates.find((c) => c.candidate_id === candidateId);
     if (!candidate) return;
-
     const formattedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    setCandidates(prev => prev.map(c => {
-      if (c.candidate_id !== candidateId) return c;
-      return {
-        ...c,
-        private_notes: notes,
-        notes_updated_at: `Today at ${formattedTime}`,
-      };
-    }));
-
-    const observationSnippet = notes.trim()
-      ? `"${notes.trim().slice(0, 50)}${notes.trim().length > 50 ? '...' : ''}"`
-      : 'Cleared observation';
-
-    appendAudit(
-      "Recruiter",
-      `Saved private observation in candidate notes (${observationSnippet})`,
-      `${brief?.job_title || 'Role'}: ${candidate.name} (${candidateId})`
+    setCandidates((prev) =>
+      prev.map((c) =>
+        c.candidate_id === candidateId
+          ? { ...c, private_notes: notes, notes_updated_at: `Today at ${formattedTime}` }
+          : c
+      )
     );
+    appendAudit('Recruiter', 'Updated private candidate notes', `${candidate.name} (${candidateId})`);
   };
 
-  // Coding round actions
   const handleGenerateCoding = (candidateId: string) => {
     if (!brief) return;
     const challenge = recruitmentAgent.generateCodingChallenge(brief.job_title, 'Medium');
-    setCandidates(prev => prev.map(c => {
-      if (c.candidate_id !== candidateId) return c;
-      return {
-        ...c,
-        rounds: {
-          ...c.rounds,
-          coding: {
-            ...c.rounds.coding,
-            challenge_version: (c.rounds.coding?.challenge_version || 0) + 1,
-            challenge,
-            candidate_submission: challenge.starter_code
-          }
-        }
-      };
-    }));
-    appendAudit("Agent", "Agent planned & generated adaptive coding challenge", candidateId);
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.candidate_id !== candidateId) return c;
+        return {
+          ...c,
+          rounds: {
+            ...c.rounds,
+            coding: {
+              ...c.rounds.coding,
+              challenge_version: (c.rounds.coding?.challenge_version || 0) + 1,
+              challenge,
+              candidate_submission: challenge.starter_code,
+            },
+          },
+        };
+      })
+    );
+    appendAudit('Agent', 'Generated coding challenge', candidateId);
   };
 
   const handleEvaluateCoding = (candidateId: string) => {
-    const candidate = candidates.find(c => c.candidate_id === candidateId);
+    const candidate = candidates.find((c) => c.candidate_id === candidateId);
     const round = candidate?.rounds.coding;
     if (!round?.challenge || !round.candidate_submission) return;
 
-    const evaluation = recruitmentAgent.evaluateCodingSubmission(round.challenge, round.candidate_submission);
-    setCandidates(prev => prev.map(c => {
-      if (c.candidate_id !== candidateId) return c;
-      return {
-        ...c,
-        rounds: {
-          ...c.rounds,
-          coding: {
-            ...c.rounds.coding,
-            evaluation
-          }
-        }
-      };
-    }));
-    appendAudit("Agent", `Agent evaluated coding submission (Score: ${evaluation.score}/100)`, candidateId);
+    const evaluation = recruitmentAgent.evaluateCodingSubmission(
+      round.challenge,
+      round.candidate_submission
+    );
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.candidate_id !== candidateId) return c;
+        return {
+          ...c,
+          rounds: {
+            ...c.rounds,
+            coding: { ...c.rounds.coding, evaluation },
+          },
+        };
+      })
+    );
+    appendAudit('Agent', `Evaluated coding submission (${evaluation.score}/100)`, candidateId);
   };
 
-  const handleRoundDecision = (candidateId: string, roundName: RoundType, decision: 'pass' | 'not_proceeding') => {
-    setCandidates(prev => prev.map(c => {
-      if (c.candidate_id !== candidateId) return c;
-      const roundData = c.rounds[roundName] || {};
-      const nextRound: RoundType = roundName === 'coding' ? 'technical' : roundName === 'technical' ? 'hr' : 'hr';
-      return {
-        ...c,
-        current_round: decision === 'pass' ? nextRound : c.current_round,
-        decision_status: decision === 'pass' && roundName === 'hr' ? 'Hired by recruiter' : c.decision_status,
-        rounds: {
-          ...c.rounds,
-          [roundName]: {
-            ...roundData,
-            decision
-          }
-        }
-      };
-    }));
-    appendAudit("Recruiter", `Recruiter ${decision === 'pass' ? 'passed' : 'ended process after'} ${roundName} round`, candidateId);
+  const handleRoundDecision = (
+    candidateId: string,
+    roundName: RoundType,
+    decision: 'pass' | 'not_proceeding'
+  ) => {
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.candidate_id !== candidateId) return c;
+        const roundData = c.rounds[roundName] || {};
+        const nextRound: RoundType =
+          roundName === 'coding' ? 'technical' : roundName === 'technical' ? 'hr' : 'hr';
+        return {
+          ...c,
+          current_round: decision === 'pass' ? nextRound : c.current_round,
+          decision_status:
+            decision === 'pass' && roundName === 'hr' ? 'Hired by recruiter' : c.decision_status,
+          rounds: {
+            ...c.rounds,
+            [roundName]: { ...roundData, decision },
+          },
+        };
+      })
+    );
+    appendAudit('Recruiter', `${decision === 'pass' ? 'Passed' : 'Ended'} ${roundName} round`, candidateId);
   };
 
-  // Generate Technical Questions
   const handleGenerateTechnicalQuestions = (candidateId: string) => {
     if (!brief) return;
     const questions = recruitmentAgent.generateRoundQuestions('technical', brief.job_title);
-    setCandidates(prev => prev.map(c => {
-      if (c.candidate_id !== candidateId) return c;
-      return {
-        ...c,
-        rounds: {
-          ...c.rounds,
-          technical: {
-            ...c.rounds.technical,
-            questions,
-            answers: questions.map(() => "")
-          }
-        }
-      };
-    }));
-    appendAudit("Agent", "Agent generated technical interview questions", candidateId);
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.candidate_id !== candidateId) return c;
+        return {
+          ...c,
+          rounds: {
+            ...c.rounds,
+            technical: {
+              ...c.rounds.technical,
+              questions,
+              answers: questions.map(() => ''),
+            },
+          },
+        };
+      })
+    );
+    appendAudit('Agent', 'Generated technical interview questions', candidateId);
   };
 
-  // Evaluate Technical Questions
   const handleEvaluateTechnical = (candidateId: string) => {
-    const candidate = candidates.find(c => c.candidate_id === candidateId);
+    const candidate = candidates.find((c) => c.candidate_id === candidateId);
     const round = candidate?.rounds.technical;
     if (!round?.questions || !round.answers) return;
 
-    const evaluation = recruitmentAgent.reflectOnInterviewAnswers('technical', round.questions, round.answers);
-    setCandidates(prev => prev.map(c => {
-      if (c.candidate_id !== candidateId) return c;
-      return {
-        ...c,
-        rounds: {
-          ...c.rounds,
-          technical: {
-            ...c.rounds.technical,
-            evaluation
-          }
-        }
-      };
-    }));
-    appendAudit("Agent", "Agent reflected on technical interview evidence", candidateId);
+    const evaluation = recruitmentAgent.reflectOnInterviewAnswers(
+      'technical',
+      round.questions,
+      round.answers
+    );
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.candidate_id !== candidateId) return c;
+        return {
+          ...c,
+          rounds: {
+            ...c.rounds,
+            technical: { ...c.rounds.technical, evaluation },
+          },
+        };
+      })
+    );
+    appendAudit('Agent', 'Evaluated technical interview answers', candidateId);
   };
 
-  // Outreach draft approval
   const handleApproveDraft = (draftId: string) => {
-    setOutreachQueue(prev => prev.map(d => {
-      if (d.id !== draftId) return d;
-      return {
-        ...d,
-        status: 'Recruiter approved — integration required; not sent or called'
-      };
-    }));
-    appendAudit("Recruiter", "Approved communication draft", draftId);
+    setOutreachQueue((prev) =>
+      prev.map((d) =>
+        d.id === draftId
+          ? { ...d, status: 'Recruiter approved — integration required; not sent or called' }
+          : d
+      )
+    );
+    appendAudit('Recruiter', 'Approved communication draft', draftId);
   };
 
   const handleDownloadDraft = (draft: OutreachDraft) => {
@@ -1024,2281 +1367,1921 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  // Sorted and filtered candidates based on active sorting criteria
-  const sortedCandidates = useMemo(() => {
-    let result = [...candidates];
-
-    // Filter by decision status
-    if (statusFilter !== 'all') {
-      result = result.filter(c => {
-        if (statusFilter === 'advanced') {
-          return c.decision_status.includes('Advanced') || c.decision_status.includes('Hired');
-        }
-        if (statusFilter === 'pending') {
-          return c.decision_status.includes('Pending');
-        }
-        if (statusFilter === 'not_proceeding') {
-          return c.decision_status.includes('Not proceeding');
-        }
-        if (['Screening', 'Technical', 'Interview', 'Offered', 'Rejected'].includes(statusFilter)) {
-          return getCandidateStage(c) === statusFilter;
-        }
-        return true;
-      });
-    }
-
-    // Filter by search query (name or skill tags)
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      result = result.filter(c => {
-        // Match by candidate name, ID, or email
-        const matchesName = c.name.toLowerCase().includes(q) || 
-                            c.candidate_id.toLowerCase().includes(q) ||
-                            c.email.toLowerCase().includes(q);
-
-        // Match by skill tags in skill_scores
-        const skillKeys = Object.keys(c.skill_scores || {});
-        const matchesSkills = skillKeys.some(skill => skill.toLowerCase().includes(q));
-
-        // Match by strengths or weaknesses
-        const matchesStrengths = c.strengths?.some(s => s.toLowerCase().includes(q));
-        const matchesWeaknesses = c.detailed_weaknesses?.some(w => w.skill.toLowerCase().includes(q));
-
-        return matchesName || matchesSkills || matchesStrengths || matchesWeaknesses;
-      });
-    }
-
-    // Filter by selected skill tag pill
-    if (selectedSkillTag) {
-      const targetSkill = selectedSkillTag.toLowerCase();
-      result = result.filter(c => {
-        const skillKeys = Object.keys(c.skill_scores || {});
-        return skillKeys.some(skill => skill.toLowerCase() === targetSkill);
-      });
-    }
-
-    // Rank and sort candidates
-    result.sort((a, b) => {
-      let comparison = 0;
-      if (sortField === 'score') {
-        comparison = b.overall_score - a.overall_score;
-      } else if (sortField === 'technical') {
-        comparison = (b.dimension_scores?.technical ?? 0) - (a.dimension_scores?.technical ?? 0);
-      } else if (sortField === 'experience') {
-        comparison = (b.dimension_scores?.experience ?? 0) - (a.dimension_scores?.experience ?? 0);
-      } else if (sortField === 'name') {
-        comparison = a.name.localeCompare(b.name);
-      }
-      
-      if (comparison === 0) {
-        comparison = a.candidate_id.localeCompare(b.candidate_id);
-      }
-
-      return sortDirection === 'desc' ? comparison : -comparison;
-    });
-
-    return result;
-  }, [candidates, sortField, sortDirection, statusFilter, searchQuery, selectedSkillTag]);
-
-  // Unique skill tags across candidates in the pool with counts
-  const availableSkillTags = useMemo(() => {
-    const map = new Map<string, number>();
-    candidates.forEach(c => {
-      Object.keys(c.skill_scores || {}).forEach(skill => {
-        map.set(skill, (map.get(skill) || 0) + 1);
-      });
-    });
-    return Array.from(map.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([skill, count]) => ({ skill, count }));
-  }, [candidates]);
-
-  // Aggregate stats of candidate score distribution
-  const scoreStats = useMemo(() => {
-    if (candidates.length === 0) return { max: 0, min: 0, avg: 0 };
-    const scores = candidates.map(c => c.overall_score);
-    const max = Math.max(...scores);
-    const min = Math.min(...scores);
-    const avg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
-    return { max, min, avg };
-  }, [candidates]);
-
-  // Active candidate for the radar chart
-  const activeCandidate = candidates.find(c => c.candidate_id === selectedCandidateId) || sortedCandidates[0] || candidates[0];
-
-  // Candidates for comparison modal
-  const compareCandA = candidates.find(c => c.candidate_id === selectedCompareIds[0]) || sortedCandidates[0] || candidates[0];
-  const compareCandB = candidates.find(c => c.candidate_id === selectedCompareIds[1]) || sortedCandidates.find(c => c.candidate_id !== compareCandA?.candidate_id) || sortedCandidates[1] || candidates[1];
+  const isJdApproved = brief?.status.includes('Approved');
+  const hasActiveFilters = Boolean(
+    statusFilter !== 'all' || searchQuery.trim() || selectedSkillTag || selectedCustomTag
+  );
 
   return (
-    <div className="space-y-8 max-w-6xl mx-auto">
-      {/* 1. Hiring Brief Section */}
-      <section className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-5">
-        <div className="flex items-center gap-2.5 pb-2 border-b border-slate-100">
-          <div className="p-2 bg-indigo-50 text-[#6743ee] rounded-xl">
-            <Briefcase className="w-5 h-5" />
-          </div>
-          <div>
-            <h2 className="text-base font-bold text-slate-900">1. Hiring Brief</h2>
-            <p className="text-xs text-slate-500">Define the organizational requirements and technical criteria</p>
-          </div>
-        </div>
-
-        {/* Role Presets */}
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1.5">Preset Job Role Templates</label>
-          <div className="flex flex-wrap gap-1.5">
-            {Object.keys(ROLE_REQUIREMENTS).map((role) => (
-              <button
-                key={role}
-                type="button"
-                onClick={() => handleRolePresetChange(role)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                  selectedRolePreset === role
-                    ? 'bg-[#6743ee] text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {role}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <form onSubmit={handleGenerateJd} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Company / Organization</label>
-              <input
-                type="text"
-                value={companyName}
-                onChange={(e) => setCompanyName(e.target.value)}
-                placeholder="e.g. Anthropic Tech"
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Job Title *</label>
-              <input
-                type="text"
-                value={jobTitle}
-                onChange={(e) => setJobTitle(e.target.value)}
-                required
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Location</label>
-              <input
-                type="text"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="San Francisco, CA / Remote"
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Headcount / Vacancies</label>
-              <input
-                type="number"
-                min="1"
-                value={headcount}
-                onChange={(e) => setHeadcount(Number(e.target.value))}
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Salary Budget</label>
-              <input
-                type="text"
-                value={salaryBudget}
-                onChange={(e) => setSalaryBudget(e.target.value)}
-                placeholder="e.g. $160,000 – $210,000"
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Hiring Timeline</label>
-              <input
-                type="text"
-                value={timeline}
-                onChange={(e) => setTimeline(e.target.value)}
-                placeholder="e.g. Within 30 days"
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Required Skills and Eligibility Criteria (comma or line separated) *
-            </label>
-            <textarea
-              value={requirementsText}
-              onChange={(e) => setRequirementsText(e.target.value)}
-              rows={3}
-              required
-              className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="px-5 py-2.5 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-2"
-          >
-            <Sparkles className="w-4 h-4" />
-            Generate JD Draft with AI Agent
-          </button>
-        </form>
-      </section>
-
-      {/* 2. Review and Approve JD */}
-      {brief && (
-        <section className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-100">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 bg-purple-50 text-purple-700 rounded-xl">
-                <FileCheck className="w-5 h-5" />
-              </div>
-              <div>
-                <h2 className="text-base font-bold text-slate-900">2. Review and Approve Job Description</h2>
-                <p className="text-xs text-slate-500">Recruiter must inspect and approve before candidate screening</p>
-              </div>
-            </div>
-
-            <span className={`px-3 py-1 rounded-full text-xs font-semibold self-start sm:self-auto ${
-              brief.status.includes('Approved') 
-                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                : 'bg-amber-100 text-amber-800 border border-amber-200'
-            }`}>
-              {brief.status}
-            </span>
-          </div>
-
-          <textarea
-            value={brief.jd}
-            onChange={(e) => setBrief({ ...brief, jd: e.target.value })}
-            disabled={brief.status.includes('Approved')}
-            rows={10}
-            className="w-full text-xs font-mono p-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-          />
-
-          {!brief.status.includes('Approved') ? (
-            <button
-              onClick={handleApproveJd}
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-2"
-            >
-              <CheckCircle className="w-4 h-4" />
-              Approve JD for Publication & Candidate Screening
-            </button>
-          ) : (
-            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 space-y-2">
-              <div className="font-bold flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                JD Approved by Recruiter
-              </div>
-              <p>Job Distribution Agent prepared the approved multi-channel checklist (LinkedIn, Indeed, Internal Careers, Tech Boards). Candidates can now be screened.</p>
-            </div>
-          )}
-
-          {/* Evaluation Rubric preview */}
-          {brief.evaluation_rubric && (
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-2">
-              <div className="font-bold text-slate-800">Job Intelligence Agent: 6-Dimension Rubric</div>
-              <p className="text-slate-500">{brief.evaluation_rubric.scoring_scale}</p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
-                {brief.evaluation_rubric.criteria.map((c, i) => (
-                  <div key={i} className="p-2 bg-white rounded border border-slate-200">
-                    <span className="font-semibold text-slate-800 block">{c.criterion}</span>
-                    <span className="text-[10px] text-purple-600 font-bold">{c.weight_percent}% Weight</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* 3. Screen Candidate Resumes */}
-      {brief && (() => {
-        const activePreset = SAMPLE_RESUME_PRESETS.find(p => p.id === selectedPresetId);
-        const requiredSkillsList = brief.requirements.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
-        const displayParsed = lastParsedData || (resumeTextInput.trim().length > 30 ? parseResumeText(resumeTextInput, requiredSkillsList) : null);
-
-        return (
-          <section className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-5">
-            {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 bg-blue-50 text-blue-700 rounded-xl">
-                  <Upload className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-base font-bold text-slate-900">3. Screen Candidate Resumes</h2>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-[#5b43d6] flex items-center gap-1">
-                      <Sparkles className="w-3 h-3" />
-                      1-Click Test Presets & AI Auto-Fill
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Quick-load candidate profiles or paste any resume → Auto-extract details & links → 6-Dimension semantic evaluation
-                  </p>
-                </div>
-              </div>
-
-              {/* Reset / Clear Form */}
-              {(resumeTextInput || candidateNameInput || candidateEmailInput) && (
-                <button
-                  type="button"
-                  onClick={handleClearScreeningForm}
-                  className="px-2.5 py-1 text-slate-500 hover:text-slate-800 text-xs font-semibold rounded-lg hover:bg-slate-100 flex items-center gap-1.5 transition-colors self-start sm:self-auto border border-slate-200"
-                  title="Clear all inputs and reset form"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Clear Form</span>
-                </button>
-              )}
-            </div>
-
-            {/* Quick-Load Sample Resumes Bar */}
-            <div className="p-4 bg-gradient-to-r from-purple-50/70 via-slate-50 to-blue-50/70 rounded-xl border border-purple-200/80 space-y-3 shadow-2xs">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <div className="p-1.5 bg-[#6743ee] text-white rounded-lg shadow-2xs">
-                    <Zap className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-900">Quick-Load Sample Resumes</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-200/70 text-purple-900 font-semibold">
-                        Instant 1-Click Test Profiles
-                      </span>
-                    </div>
-                    <span className="text-[11px] text-slate-500 block">
-                      Choose any candidate persona to instantly populate resume text, contact info, GitHub/LinkedIn links, and project metrics.
-                    </span>
-                  </div>
-                </div>
-
-                {selectedPresetId && (
-                  <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1 self-start sm:self-auto shrink-0">
-                    <Check className="w-3.5 h-3.5 text-emerald-600" />
-                    Preset Loaded
-                  </span>
-                )}
-              </div>
-
-              {/* Sample Resume Preset Buttons Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5 pt-1">
-                {SAMPLE_RESUME_PRESETS.map((preset) => {
-                  const isSelected = selectedPresetId === preset.id;
-                  return (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => handleSelectSamplePreset(preset)}
-                      className={`p-3 rounded-xl border text-left transition-all relative flex flex-col justify-between group ${
-                        isSelected
-                          ? 'bg-white border-[#6743ee] ring-2 ring-[#6743ee]/30 shadow-xs'
-                          : 'bg-white/85 border-slate-200 hover:border-purple-300 hover:bg-white shadow-2xs'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between gap-1 mb-1">
-                          <span className={`text-xs font-bold truncate ${isSelected ? 'text-[#6743ee]' : 'text-slate-900 group-hover:text-[#6743ee]'}`}>
-                            {preset.name}
-                          </span>
-                          {isSelected && <Check className="w-3.5 h-3.5 text-[#6743ee] shrink-0" />}
-                        </div>
-                        <span className="text-[10px] text-slate-500 line-clamp-1 block mb-2">
-                          {preset.title}
-                        </span>
-                      </div>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-bold self-start border ${preset.tierColor}`}>
-                        {preset.matchTier.split(' ')[0]}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Selected Preset Details Box */}
-              {activePreset && (
-                <div className="p-3 bg-white/95 rounded-lg border border-purple-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-slate-700">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-900">{activePreset.name}</span>
-                      <span className="text-slate-400">•</span>
-                      <span className="text-slate-600 font-medium">{activePreset.title}</span>
-                      <span className="text-slate-400">•</span>
-                      <span className="text-purple-700 font-semibold text-[11px]">Target: {activePreset.targetRole}</span>
-                    </div>
-                    <p className="text-[11px] text-slate-500">{activePreset.summary}</p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border shadow-2xs ${activePreset.tierColor}`}>
-                      {activePreset.matchTier}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Auto-Fill Status Alert Banner */}
-            {autoFillNotification && (
-              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-center justify-between gap-3 shadow-2xs animate-fadeIn">
-                <div className="flex items-center gap-2.5">
-                  <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span className="font-medium">{autoFillNotification}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setAutoFillNotification(null)}
-                  className="text-emerald-700 hover:text-emerald-900 text-[11px] font-bold hover:underline shrink-0"
-                >
-                  Dismiss
-                </button>
-              </div>
-            )}
-
-            {/* Candidate Identity & Contact Fields */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
-                  <span>Candidate Name</span>
-                  {candidateNameInput && <span className="text-[10px] text-emerald-600 font-medium">Captured</span>}
-                </label>
-                <input
-                  type="text"
-                  value={candidateNameInput}
-                  onChange={(e) => setCandidateNameInput(e.target.value)}
-                  placeholder="e.g. Marcus Vance"
-                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
-                  <span>Candidate Email</span>
-                  {candidateEmailInput && <span className="text-[10px] text-emerald-600 font-medium">Captured</span>}
-                </label>
-                <input
-                  type="email"
-                  value={candidateEmailInput}
-                  onChange={(e) => setCandidateEmailInput(e.target.value)}
-                  placeholder="e.g. marcus.vance@aiml-innovations.io"
-                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
-                  <span>Candidate Phone (Optional)</span>
-                  {candidatePhoneInput && <span className="text-[10px] text-emerald-600 font-medium">Captured</span>}
-                </label>
-                <input
-                  type="text"
-                  value={candidatePhoneInput}
-                  onChange={(e) => setCandidatePhoneInput(e.target.value)}
-                  placeholder="e.g. +1 (415) 555-0182"
-                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-                />
-              </div>
-            </div>
-
-            {/* Resume Content Textarea & Auto-Extract Toolbar */}
-            <div className="space-y-2">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-[#6743ee]" />
-                  <span>Resume Content (Paste text or upload file below)</span>
-                </label>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  {/* Automated Parsing Button */}
+    <div className="max-w-6xl mx-auto space-y-6">
+      {/* Compact Role Header Bar */}
+      <div className="bg-white border border-slate-200 rounded-xl px-5 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+            <h1 className="text-lg font-semibold text-slate-900 truncate">
+              {brief?.job_title || jobTitle}
+            </h1>
+            <span className="text-slate-300">·</span>
+            <span className="text-sm text-slate-600">{brief?.company_name || companyName}</span>
+            <span className="text-slate-300">·</span>
+            {isJdApproved ? (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                JD Approved
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-2 text-xs font-medium text-amber-700">
+                Draft JD
+                {brief && (
                   <button
                     type="button"
-                    onClick={handleAutoExtractFromResume}
-                    disabled={!resumeTextInput.trim()}
-                    className="px-3 py-1.5 bg-gradient-to-r from-[#6743ee] to-indigo-600 hover:from-[#5837d7] hover:to-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                    title="Automatically extract candidate name, email, phone, web links, and matching skills from the resume text"
+                    onClick={handleApproveJd}
+                    className="underline font-semibold hover:text-amber-900 cursor-pointer"
                   >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Auto-Extract & Fill Fields</span>
+                    Approve now
                   </button>
-
-                  {/* Upload File */}
-                  <label className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-colors shadow-2xs">
-                    <Upload className="w-3.5 h-3.5 text-[#6743ee]" />
-                    <span>Upload File (.txt, .pdf)</span>
-                    <input type="file" accept=".txt,.pdf" onChange={handleFileUpload} className="hidden" />
-                  </label>
-                </div>
-              </div>
-
-              <textarea
-                value={resumeTextInput}
-                onChange={(e) => {
-                  setResumeTextInput(e.target.value);
-                  setSelectedPresetId(null);
-                }}
-                rows={6}
-                placeholder="Paste candidate resume text or click a quick-load test profile above..."
-                className="w-full text-xs font-mono p-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-              />
-            </div>
-
-            {/* Live Skill Match & Extracted Intelligence Card */}
-            {displayParsed && (
-              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200/80">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-[#6743ee]" />
-                    <span className="text-xs font-bold text-slate-900">Extracted Intelligence & Live Skill Coverage</span>
-                  </div>
-
-                  {/* Live Match Rate Gauge */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-slate-500 font-medium">Job Requirements Match:</span>
-                    <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold border ${
-                      displayParsed.matchRatePercent >= 75
-                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                        : displayParsed.matchRatePercent >= 50
-                        ? 'bg-amber-100 text-amber-800 border-amber-300'
-                        : 'bg-slate-200 text-slate-700 border-slate-300'
-                    }`}>
-                      {displayParsed.matchRatePercent}% ({displayParsed.matchedSkills.length}/{requiredSkillsList.length} skills)
-                    </span>
-                  </div>
-                </div>
-
-                {/* Detected Attribute Pills */}
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  {displayParsed.detectedTitle && (
-                    <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 shadow-2xs">
-                      <Briefcase className="w-3.5 h-3.5 text-[#6743ee]" />
-                      <span className="font-semibold">{displayParsed.detectedTitle}</span>
-                    </div>
-                  )}
-
-                  {displayParsed.detectedDegree && (
-                    <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 shadow-2xs">
-                      <GraduationCap className="w-3.5 h-3.5 text-blue-600" />
-                      <span>{displayParsed.detectedDegree}</span>
-                    </div>
-                  )}
-
-                  {displayParsed.detectedExperienceYears && (
-                    <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 shadow-2xs">
-                      <Clock className="w-3.5 h-3.5 text-amber-600" />
-                      <span>{displayParsed.detectedExperienceYears}</span>
-                    </div>
-                  )}
-
-                  {displayParsed.candidatePhone && (
-                    <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 shadow-2xs">
-                      <Phone className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>{displayParsed.candidatePhone}</span>
-                    </div>
-                  )}
-
-                  {displayParsed.githubUrl && (
-                    <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 shadow-2xs">
-                      <Link2 className="w-3.5 h-3.5 text-slate-600" />
-                      <span>GitHub Link Found</span>
-                    </div>
-                  )}
-
-                  {displayParsed.linkedinUrl && (
-                    <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 shadow-2xs">
-                      <Link2 className="w-3.5 h-3.5 text-blue-600" />
-                      <span>LinkedIn Link Found</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Skills Breakdown */}
-                <div className="space-y-1.5 pt-1">
-                  <div className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
-                    Skills Verification Breakdown:
-                  </div>
-
-                  <div className="flex flex-wrap gap-1.5">
-                    {displayParsed.matchedSkills.map((skill) => (
-                      <span
-                        key={skill}
-                        className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1"
-                      >
-                        <Check className="w-3 h-3 text-emerald-600" />
-                        {skill}
-                      </span>
-                    ))}
-
-                    {displayParsed.missingSkills.map((skill) => (
-                      <span
-                        key={skill}
-                        className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200/80 flex items-center gap-1"
-                        title="Skill not explicitly mentioned in resume"
-                      >
-                        <AlertCircle className="w-3 h-3 text-amber-500" />
-                        {skill} (missing)
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
+                )}
+              </span>
             )}
+          </div>
+          <p className="text-xs text-slate-500 mt-1">
+            {brief?.location || location} · {brief?.salary_budget || salaryBudget} · High-scoring cutoff{' '}
+            <span className="font-medium text-slate-700 tabular-nums">{cutoffScore}%</span>
+          </p>
+        </div>
 
-            {/* Digital Profile Sources Accordion */}
-            <details 
-              open={Boolean(githubUrl || linkedinUrl || portfolioUrl || workHighlights)}
-              className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-3"
-            >
-              <summary className="font-semibold text-slate-700 cursor-pointer flex items-center justify-between">
-                <span>Candidate Digital Profile Sources & Work Highlights</span>
-                <span className="text-[10px] text-slate-400 font-normal">
-                  {(githubUrl || linkedinUrl || portfolioUrl) ? 'Links detected & auto-populated' : 'Optional'}
-                </span>
-              </summary>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">GitHub URL</label>
-                  <input
-                    type="url"
-                    value={githubUrl}
-                    onChange={(e) => setGithubUrl(e.target.value)}
-                    placeholder="https://github.com/username"
-                    className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">LinkedIn URL</label>
-                  <input
-                    type="url"
-                    value={linkedinUrl}
-                    onChange={(e) => setLinkedinUrl(e.target.value)}
-                    placeholder="https://linkedin.com/in/username"
-                    className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Portfolio URL</label>
-                  <input
-                    type="url"
-                    value={portfolioUrl}
-                    onChange={(e) => setPortfolioUrl(e.target.value)}
-                    placeholder="https://candidate.dev"
-                    className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                  Candidate Project, Metric or Research Highlights
-                </label>
-                <textarea
-                  value={workHighlights}
-                  onChange={(e) => setWorkHighlights(e.target.value)}
-                  placeholder="Candidate-submitted project, hackathon, or research highlights..."
-                  rows={2}
-                  className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
-                />
-              </div>
-            </details>
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {/* Direct 1-Click Upload Resume */}
+          <label
+            className="px-3.5 py-2 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+            title="Upload a PDF, DOCX, TXT, or Markdown resume to immediately evaluate and view candidate details"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>{isReadingResumeFile ? 'Reading Resume...' : 'Upload Resume'}</span>
+            <input
+              type="file"
+              accept=".pdf,.txt,.md,.docx,.doc,.rtf"
+              onChange={handleQuickUploadResume}
+              className="sr-only"
+            />
+          </label>
 
-            {/* Compliance & Consent Checkboxes */}
-            <div className="space-y-2 text-xs text-slate-600 pt-1">
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={processingConsent}
-                  onChange={(e) => setProcessingConsent(e.target.checked)}
-                  className="mt-0.5 accent-[#6743ee]"
-                />
-                <span>I confirm these resumes were submitted for hiring and may be processed for this role.</span>
-              </label>
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={memoryConsent}
-                  onChange={(e) => setMemoryConsent(e.target.checked)}
-                  className="mt-0.5 accent-[#6743ee]"
-                />
-                <span>I confirm the candidate gave informed consent to retain full hiring history in organizational memory.</span>
-              </label>
-            </div>
+          <button
+            type="button"
+            onClick={() => setWorkspaceSection('intake')}
+            className="px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5 text-slate-500" />
+            Paste Resume
+          </button>
 
-            {/* Submit Screening Button */}
+          <button
+            type="button"
+            onClick={() => setShowLinkedInImportModal(true)}
+            className="px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <UserPlus className="w-3.5 h-3.5 text-[#0a66c2]" />
+            Import LinkedIn
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleOpenScheduler()}
+            disabled={candidates.length === 0}
+            className="px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 disabled:opacity-50 cursor-pointer"
+          >
+            <Calendar className="w-3.5 h-3.5 text-slate-500" />
+            Schedule
+          </button>
+        </div>
+      </div>
+
+      {/* Workspace Section Tabs */}
+      <nav
+        aria-label="Hiring workspace sections"
+        className="flex items-center gap-6 border-b border-slate-200 px-1 overflow-x-auto"
+      >
+        {[
+          {
+            id: 'pipeline' as const,
+            label: 'Candidates & Details',
+            count: candidates.length,
+          },
+          {
+            id: 'intake' as const,
+            label: 'Upload / Paste Resume',
+          },
+          {
+            id: 'brief' as const,
+            label: 'Job Brief & JD',
+          },
+          {
+            id: 'activity' as const,
+            label: 'Interviews & Activity',
+            count: scheduledInterviews.length + outreachQueue.length,
+            overdueAlert: overdueFollowUpCount,
+          },
+        ].map((tab) => {
+          const isActive = workspaceSection === tab.id;
+          return (
             <button
-              onClick={handleScreenResume}
-              disabled={!resumeTextInput.trim() || !processingConsent || !brief.status.includes('Approved')}
-              className="px-5 py-2.5 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              key={tab.id}
+              type="button"
+              onClick={() => setWorkspaceSection(tab.id)}
+              className={`pb-3 text-xs font-semibold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
+                isActive
+                  ? 'border-[#6743ee] text-[#6743ee]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
             >
-              <Sparkles className="w-4 h-4" />
-              <span>Screen Candidate Resume</span>
-              {candidateNameInput && <span className="opacity-90 font-normal">({candidateNameInput})</span>}
+              <span>{tab.label}</span>
+              {tab.count !== undefined && (
+                <span className="text-slate-400 font-normal tabular-nums">({tab.count})</span>
+              )}
+              {tab.overdueAlert ? (
+                <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                  {tab.overdueAlert} follow-up due
+                </span>
+              ) : null}
             </button>
-          </section>
-        );
-      })()}
+          );
+        })}
+      </nav>
 
-      {/* 3.5. Scheduled Interviews & Shared Team Calendar Availability */}
-      <ScheduledInterviewsSection
-        scheduledInterviews={scheduledInterviews}
-        onOpenScheduler={handleOpenScheduler}
-        candidates={candidates}
-      />
-
-      {/* 4. Candidate Insights Radar & Overview */}
-      {candidates.length > 0 && (
-        <section className="space-y-6">
-          <SkillRadarChart
-            skillScores={activeCandidate?.skill_scores}
-            overallScore={activeCandidate?.overall_score}
-            selected={activeCandidate?.decision_status === 'Advanced by recruiter' || activeCandidate?.decision_status === 'Hired by recruiter'}
-          />
-
-          {/* 5. Candidate Ranking & Recruiter Supervision */}
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+      {/* ================================================================= */}
+      {/* TAB 1: CANDIDATE PIPELINE, SELECTED CANDIDATE DETAILS & SKILLS GAP */}
+      {/* ================================================================= */}
+      {workspaceSection === 'pipeline' && (
+        <div className="space-y-6">
+          {/* 1. Candidate Pipeline List */}
+          <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            {/* Pipeline Header & View Switcher */}
+            <div className="px-5 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <span>4. Recruiter Supervision & Candidate Pipeline</span>
-                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-[#5b43d6]">
-                    {candidates.length} {candidates.length === 1 ? 'Candidate' : 'Candidates'}
+                <h2 className="text-sm font-semibold text-slate-900">
+                  Candidate Pipeline{' '}
+                  <span className="text-slate-400 font-normal tabular-nums">
+                    ({sortedCandidates.length}
+                    {sortedCandidates.length !== candidates.length ? ` of ${candidates.length}` : ''})
                   </span>
                 </h2>
-                <p className="text-xs text-slate-500">
-                  Ranked by multi-dimensional AI evaluation scores. The recruiter oversees evidence and approves each decision.
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Click any candidate to view their full profile below, or upload a resume to evaluate a new applicant.
                 </p>
               </div>
 
-              {/* Status Badge & View Mode Switcher */}
-              <div className="flex flex-wrap items-center gap-2">
-                {/* View Switcher: List vs Kanban Board */}
-                <div className="inline-flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 shadow-2xs">
-                  <button
-                    type="button"
-                    onClick={() => setPipelineViewMode('list')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-                      pipelineViewMode === 'list'
-                        ? 'bg-white text-slate-900 shadow-xs border border-slate-200/80'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                    title="List view with rank sorting, sticky bulk action toolbar, and detailed candidate cards"
-                  >
-                    <ListFilter className="w-3.5 h-3.5 text-[#6743ee]" />
-                    <span>List View</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPipelineViewMode('kanban')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-                      pipelineViewMode === 'kanban'
-                        ? 'bg-[#6743ee] text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                    title="Kanban Board view: Drag & drop candidates across recruitment stages"
-                  >
-                    <Kanban className="w-3.5 h-3.5" />
-                    <span>Kanban Board</span>
-                  </button>
-                </div>
-
-                {/* Import from LinkedIn Button */}
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
                 <button
                   type="button"
-                  onClick={() => setShowLinkedInImportModal(true)}
-                  className="px-3 py-1.5 bg-[#0a66c2] hover:bg-[#004182] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs hover:shadow-xs transition-all active:scale-95"
-                  title="Generate and import realistic candidate profiles from LinkedIn with AI agent"
+                  onClick={() => {
+                    document
+                      .getElementById('candidate-score-trajectory-section')
+                      ?.scrollIntoView({ behavior: 'smooth' });
+                  }}
+                  className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                  title="View overall score distribution & intake trajectory line chart"
                 >
-                  <span className="w-4 h-4 rounded bg-white text-[#0a66c2] font-black text-[11px] flex items-center justify-center leading-none">
-                    in
-                  </span>
-                  <span>Import from LinkedIn</span>
+                  <TrendingUp className="w-3.5 h-3.5 text-[#6743ee]" />
+                  <span>Score Trajectory</span>
                 </button>
 
-                <span className="px-2.5 py-1.5 bg-purple-50 text-[#5b43d6] border border-purple-200 rounded-lg text-xs font-semibold flex items-center gap-1.5">
-                  <Award className="w-3.5 h-3.5 text-[#6743ee]" />
+                <button
+                  type="button"
+                  onClick={() => handleLaunchCompare()}
+                  disabled={candidates.length < 2}
+                  className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 disabled:opacity-40 cursor-pointer"
+                >
+                  <Scale className="w-3.5 h-3.5 text-slate-500" />
                   <span>
-                    {pipelineViewMode === 'kanban'
-                      ? '5 Pipeline Stages'
-                      : sortField === 'score'
-                        ? `Ranked by AI Score (${sortDirection === 'desc' ? 'Highest first' : 'Lowest first'})`
-                        : `Sorted by ${sortField}`}
+                    {selectedCompareIds.length === 2
+                      ? 'Compare Selected (2)'
+                      : selectedCompareIds.length === 1
+                      ? 'Compare (1 selected)'
+                      : 'Compare'}
                   </span>
-                </span>
+                </button>
+
+                <div
+                  role="group"
+                  aria-label="Pipeline view mode"
+                  className="inline-flex bg-slate-100 p-0.5 rounded-lg border border-slate-200"
+                >
+                  {[
+                    { id: 'list' as const, label: 'List', icon: ListFilter },
+                    { id: 'kanban' as const, label: 'Board', icon: Kanban },
+                    { id: 'heatmap' as const, label: 'Heatmap', icon: Flame },
+                    { id: 'compare' as const, label: 'Compare', icon: Scale },
+                  ].map((mode) => {
+                    const Icon = mode.icon;
+                    const active = pipelineViewMode === mode.id;
+                    return (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        onClick={() => setPipelineViewMode(mode.id)}
+                        className={`px-2.5 py-1 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                          active
+                            ? 'bg-white text-slate-900 shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                        <span>{mode.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
             {pipelineViewMode === 'kanban' ? (
-              <CandidateKanbanBoard
+              <div className="p-4">
+                <CandidateKanbanBoard
+                  candidates={candidates}
+                  brief={brief}
+                  cutoffScore={cutoffScore}
+                  onStageChange={handleStageChange}
+                  onOpenEmailModal={handleOpenEmailDraftModal}
+                  onInspectCandidate={(id) => focusSelectedCandidateDetails(id)}
+                  onSaveNotes={handleSaveCandidateNotes}
+                  auditEvents={events}
+                  onOpenLinkedInImport={() => setShowLinkedInImportModal(true)}
+                  onOpenPersona={handleOpenPersona}
+                  onLaunchCompare={handleLaunchCompare}
+                  onOpenScheduler={handleOpenScheduler}
+                  onOpenFeedbackModal={handleOpenFeedbackModal}
+                />
+              </div>
+            ) : pipelineViewMode === 'heatmap' ? (
+              <div className="p-4">
+                <RecruitmentIntensityHeatmap
+                  candidates={candidates}
+                  brief={brief}
+                  onInspectCandidate={(id) => focusSelectedCandidateDetails(id)}
+                  onOpenScheduler={handleOpenScheduler}
+                  onOpenEmailModal={handleOpenEmailDraftModal}
+                  onStageChange={handleStageChange}
+                />
+              </div>
+            ) : pipelineViewMode === 'compare' ? (
+              <SplitPaneComparisonView
                 candidates={candidates}
+                candidateAId={effectiveCompareAId}
+                candidateBId={effectiveCompareBId}
+                onSelectCandidateA={(idA) =>
+                  setSelectedCompareIds([idA, effectiveCompareBId].filter(Boolean) as string[])
+                }
+                onSelectCandidateB={(idB) =>
+                  setSelectedCompareIds([effectiveCompareAId, idB].filter(Boolean) as string[])
+                }
+                onSelectPair={(idA, idB) => setSelectedCompareIds([idA, idB])}
+                onSwapCandidates={() => {
+                  if (effectiveCompareAId && effectiveCompareBId) {
+                    setSelectedCompareIds([effectiveCompareBId, effectiveCompareAId]);
+                  }
+                }}
                 brief={brief}
                 cutoffScore={cutoffScore}
-                onStageChange={handleStageChange}
-                onOpenEmailModal={handleOpenEmailDraftModal}
-                onInspectCandidate={(id) => {
-                  setSelectedCandidateId(id);
-                  setExpandedCandidates((prev) => ({ ...prev, [id]: true }));
-                  setPipelineViewMode('list');
-                  setTimeout(() => {
-                    const el = document.getElementById(`candidate-card-${id}`);
-                    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  }, 150);
-                }}
-                onSaveNotes={handleSaveCandidateNotes}
-                auditEvents={events}
-                onOpenLinkedInImport={() => setShowLinkedInImportModal(true)}
-                onOpenPersona={handleOpenPersona}
-                onLaunchCompare={handleLaunchCompare}
+                onInspectCandidate={(id) => focusSelectedCandidateDetails(id)}
                 onOpenScheduler={handleOpenScheduler}
+                onOpenPersona={handleOpenPersona}
+                onAdvanceCandidate={(id) => handleRecruiterDecision(id, 'advance')}
+                onBackToList={() => setPipelineViewMode('list')}
               />
             ) : (
               <>
-                {/* Candidate Sorting Component */}
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
-                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                    {/* Left title & quick rank */}
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-2 bg-white rounded-xl border border-slate-200 text-[#6743ee] shadow-2xs">
-                        <SlidersHorizontal className="w-4 h-4" />
-                      </div>
-                      <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-900">Rank & Sort Candidates</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-semibold">
-                        Showing {sortedCandidates.length} of {candidates.length}
-                      </span>
-                    </div>
-                    <span className="text-[11px] text-slate-500 block">
-                      Rank candidates by overall AI evaluation score, technical strength, or experience.
-                    </span>
-                  </div>
-                </div>
-
-                {/* Quick Action Buttons */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSortField('score');
-                      setSortDirection('desc');
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs ${
-                      sortField === 'score' && sortDirection === 'desc'
-                        ? 'bg-[#6743ee] text-white shadow-xs ring-2 ring-[#6743ee]/30'
-                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100 hover:text-[#6743ee]'
-                    }`}
-                    title="Rank all candidates by their AI-generated evaluation score (Highest First)"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Rank by AI Score</span>
-                    {sortField === 'score' && sortDirection === 'desc' && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCandidates(sortedCandidates);
-                      appendAudit(
-                        "Recruiter",
-                        `Saved pipeline ranking order (${sortField === 'score' ? 'AI evaluation score' : sortField})`,
-                        brief?.job_title || 'Role Pipeline'
-                      );
-                    }}
-                    className="px-2.5 py-1.5 bg-white text-slate-700 hover:text-slate-900 border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-medium transition-all shadow-2xs"
-                    title="Persist this ranked order into the candidate list"
-                  >
-                    Lock Pipeline Order
-                  </button>
-
-                  {/* Compare Mode Toggle */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsCompareMode(prev => !prev);
-                      if (!isCompareMode && selectedCompareIds.length < 2 && sortedCandidates.length >= 2) {
-                        setSelectedCompareIds([sortedCandidates[0].candidate_id, sortedCandidates[1].candidate_id]);
-                      }
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs ${
-                      isCompareMode
-                        ? 'bg-teal-600 text-white shadow-xs ring-2 ring-teal-500/30'
-                        : selectedCompareIds.length > 0
-                        ? 'bg-teal-50 text-teal-800 border border-teal-300'
-                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100 hover:text-teal-700'
-                    }`}
-                    title="Toggle Compare Mode to pick 2 candidates and view their radar charts side-by-side"
-                  >
-                    <Scale className="w-3.5 h-3.5" />
-                    <span>Compare Mode</span>
-                    {selectedCompareIds.length > 0 && (
-                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                        isCompareMode ? 'bg-white/25 text-white' : 'bg-teal-200 text-teal-900'
-                      }`}>
-                        {selectedCompareIds.length}/2
-                      </span>
-                    )}
-                  </button>
-
-                  {/* Quick Launch Compare Modal */}
-                  {candidates.length >= 2 && (
-                    <button
-                      type="button"
-                      onClick={() => handleLaunchCompare()}
-                      className="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs bg-gradient-to-r from-[#6743ee] to-teal-600 hover:from-[#5637d2] hover:to-teal-700 text-white"
-                      title="View side-by-side split screen to compare scores, strengths, and persona summaries"
-                    >
-                      <Scale className="w-3.5 h-3.5" />
-                      <span>⚡ Split-Screen Compare</span>
-                    </button>
-                  )}
-
-                  {/* Schedule Interview Button */}
-                  <button
-                    type="button"
-                    onClick={() => handleOpenScheduler()}
-                    className="px-2.5 py-1.5 bg-purple-50 hover:bg-purple-100 text-[#5b43d6] border border-purple-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs hover:shadow-xs active:scale-95"
-                    title="Generate AI-suggested time slots based on hiring team shared calendar availability"
-                  >
-                    <Calendar className="w-3.5 h-3.5 text-[#6743ee]" />
-                    <span>Schedule Interview</span>
-                  </button>
-
-                  {/* Import from LinkedIn Button */}
-                  <button
-                    type="button"
-                    onClick={() => setShowLinkedInImportModal(true)}
-                    className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#0a66c2] border border-blue-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs hover:shadow-xs active:scale-95"
-                    title="Import placeholder candidate profiles from LinkedIn using AI agent"
-                  >
-                    <span className="w-3.5 h-3.5 rounded bg-[#0a66c2] text-white font-black text-[9px] flex items-center justify-center leading-none">
-                      in
-                    </span>
-                    <span>Import from LinkedIn</span>
-                  </button>
-
-                  {(sortField !== 'score' || sortDirection !== 'desc' || statusFilter !== 'all' || searchQuery.trim() !== '') && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSortField('score');
-                        setSortDirection('desc');
-                        setStatusFilter('all');
-                        setSearchQuery('');
-                      }}
-                      className="px-2 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors"
-                      title="Reset sorting and filters to default AI Score rank"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>Reset</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Sorting Criteria Tabs & Direction Controls */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-3 border-t border-slate-200/80">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mr-1">
-                    Sort By:
-                  </span>
-
-                  {/* 1. Overall AI Score */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (sortField === 'score') {
-                        setSortDirection(prev => prev === 'desc' ? 'asc' : 'desc');
-                      } else {
-                        setSortField('score');
-                        setSortDirection('desc');
-                      }
-                    }}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                      sortField === 'score'
-                        ? 'bg-purple-100 text-purple-900 border border-purple-300 shadow-2xs'
-                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    <Award className="w-3.5 h-3.5 text-[#6743ee]" />
-                    <span>AI Evaluation Score</span>
-                    {sortField === 'score' && (
-                      sortDirection === 'desc' 
-                        ? <ArrowDownWideNarrow className="w-3.5 h-3.5 text-[#6743ee]" /> 
-                        : <ArrowUpNarrowWide className="w-3.5 h-3.5 text-[#6743ee]" />
-                    )}
-                  </button>
-
-                  {/* 2. Technical Skills */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (sortField === 'technical') {
-                        setSortDirection(prev => prev === 'desc' ? 'asc' : 'desc');
-                      } else {
-                        setSortField('technical');
-                        setSortDirection('desc');
-                      }
-                    }}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                      sortField === 'technical'
-                        ? 'bg-purple-100 text-purple-900 border border-purple-300 shadow-2xs'
-                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    <span>Technical (30%)</span>
-                    {sortField === 'technical' && (
-                      sortDirection === 'desc' 
-                        ? <ArrowDownWideNarrow className="w-3.5 h-3.5 text-[#6743ee]" /> 
-                        : <ArrowUpNarrowWide className="w-3.5 h-3.5 text-[#6743ee]" />
-                    )}
-                  </button>
-
-                  {/* 3. Experience */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (sortField === 'experience') {
-                        setSortDirection(prev => prev === 'desc' ? 'asc' : 'desc');
-                      } else {
-                        setSortField('experience');
-                        setSortDirection('desc');
-                      }
-                    }}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                      sortField === 'experience'
-                        ? 'bg-purple-100 text-purple-900 border border-purple-300 shadow-2xs'
-                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    <span>Experience (20%)</span>
-                    {sortField === 'experience' && (
-                      sortDirection === 'desc' 
-                        ? <ArrowDownWideNarrow className="w-3.5 h-3.5 text-[#6743ee]" /> 
-                        : <ArrowUpNarrowWide className="w-3.5 h-3.5 text-[#6743ee]" />
-                    )}
-                  </button>
-
-                  {/* 4. Candidate Name */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (sortField === 'name') {
-                        setSortDirection(prev => prev === 'desc' ? 'asc' : 'desc');
-                      } else {
-                        setSortField('name');
-                        setSortDirection('asc');
-                      }
-                    }}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                      sortField === 'name'
-                        ? 'bg-purple-100 text-purple-900 border border-purple-300 shadow-2xs'
-                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    <span>Name (A-Z)</span>
-                    {sortField === 'name' && (
-                      sortDirection === 'asc' 
-                        ? <ArrowDownWideNarrow className="w-3.5 h-3.5 text-[#6743ee]" /> 
-                        : <ArrowUpNarrowWide className="w-3.5 h-3.5 text-[#6743ee]" />
-                    )}
-                  </button>
-                </div>
-
-                {/* Direction Toggle */}
-                <div className="flex items-center gap-2 self-start sm:self-auto">
-                  <span className="text-[11px] text-slate-500 font-medium">Direction:</span>
-                  <button
-                    type="button"
-                    onClick={() => setSortDirection(prev => prev === 'desc' ? 'asc' : 'desc')}
-                    className="px-2.5 py-1 bg-white border border-slate-200 hover:bg-slate-100 rounded-md text-slate-700 font-semibold text-xs flex items-center gap-1.5 shadow-2xs transition-colors"
-                  >
-                    <ArrowUpDown className="w-3.5 h-3.5 text-[#6743ee]" />
-                    <span>{sortDirection === 'desc' ? 'High to Low' : 'Low to High'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Dedicated Search Bar by Name or Skill Tags */}
-              <div className="pt-3 border-t border-slate-200/80 space-y-2.5">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  {/* Search Bar Input */}
-                  <div className="relative flex-1">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                      <Search className="w-4 h-4" />
-                    </div>
+                {/* Single Clean Filter & Sort Bar */}
+                <div className="px-5 py-3 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center gap-2.5">
+                  <div className="relative flex-1 min-w-[200px]">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
                       type="text"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search candidates by name or skill tags (e.g. Python, MLOps, Alex, Deep Learning)..."
-                      className="w-full text-xs pl-9 pr-9 py-2 bg-white border border-slate-300 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#6743ee]/30 focus:border-[#6743ee] shadow-2xs transition-all"
+                      placeholder="Search name, skill, or label..."
+                      className="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#6743ee]"
                     />
-                    {searchQuery && (
-                      <button
-                        type="button"
-                        onClick={() => setSearchQuery('')}
-                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
-                        title="Clear search"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
                   </div>
 
-                  {/* Status & Stage Filter Buttons */}
-                  <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                    <span className="text-[11px] font-semibold text-slate-500">Stage:</span>
-                    {(['all', 'Screening', 'Technical', 'Interview', 'Offered', 'Rejected'] as const).map(status => {
-                      const count = status === 'all' 
-                        ? candidates.length 
-                        : candidates.filter(c => getCandidateStage(c) === status).length;
+                  <select
+                    aria-label="Filter by stage"
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-[#6743ee]"
+                  >
+                    <option value="all">All Stages</option>
+                    <option value="Screening">Stage: Screening</option>
+                    <option value="Technical">Stage: Technical</option>
+                    <option value="Interview">Stage: Interview</option>
+                    <option value="Offered">Stage: Offered</option>
+                    <option value="Rejected">Stage: Rejected</option>
+                    <option value="advanced">Decision: Advanced</option>
+                    <option value="pending">Decision: Pending</option>
+                  </select>
 
-                      return (
-                        <button
-                          key={status}
-                          type="button"
-                          onClick={() => setStatusFilter(status)}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                            statusFilter === status
-                              ? 'bg-slate-800 text-white font-bold shadow-2xs'
-                              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                          }`}
-                        >
-                          {status === 'all' ? `All (${count})` : `${status} (${count})`}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                  <select
+                    aria-label="Filter by label"
+                    value={selectedCustomTag || ''}
+                    onChange={(e) => setSelectedCustomTag(e.target.value || null)}
+                    className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-[#6743ee]"
+                  >
+                    <option value="">All Labels</option>
+                    {availableCustomTags.map((tag) => (
+                      <option key={tag} value={tag}>
+                        Label: {tag}
+                      </option>
+                    ))}
+                  </select>
 
-                {/* Quick Skill Tag Filter Chips */}
-                {availableSkillTags.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs pt-1">
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mr-1">
-                      <Tag className="w-3 h-3 text-[#6743ee]" />
-                      Skill Tags:
-                    </span>
+                  <select
+                    aria-label="Filter by skill"
+                    value={selectedSkillTag || ''}
+                    onChange={(e) => setSelectedSkillTag(e.target.value || null)}
+                    className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-[#6743ee]"
+                  >
+                    <option value="">All Skills</option>
+                    {availableSkillTags.map((item) => (
+                      <option key={item.skill} value={item.skill}>
+                        {item.skill} ({item.count})
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="flex items-center gap-1">
+                    <select
+                      aria-label="Sort candidates by"
+                      value={sortField}
+                      onChange={(e) =>
+                        setSortField(e.target.value as 'score' | 'technical' | 'experience' | 'name')
+                      }
+                      className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-[#6743ee]"
+                    >
+                      <option value="score">Sort: Match Score</option>
+                      <option value="technical">Sort: Technical</option>
+                      <option value="experience">Sort: Experience</option>
+                      <option value="name">Sort: Name</option>
+                    </select>
                     <button
                       type="button"
-                      onClick={() => setSelectedSkillTag(null)}
-                      className={`px-2 py-0.5 rounded-md text-[11px] font-semibold transition-colors ${
-                        selectedSkillTag === null
-                          ? 'bg-[#6743ee] text-white shadow-2xs'
-                          : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                      }`}
+                      onClick={() => setSortDirection((d) => (d === 'desc' ? 'asc' : 'desc'))}
+                      className="p-1.5 bg-white border border-slate-200 rounded-lg text-slate-600 hover:text-slate-900 cursor-pointer"
+                      title={sortDirection === 'desc' ? 'Descending order' : 'Ascending order'}
                     >
-                      All Skills
+                      <ArrowUpDown className="w-3.5 h-3.5" />
                     </button>
-                    {availableSkillTags.slice(0, 10).map(({ skill, count }) => {
-                      const isActive = selectedSkillTag === skill;
-                      return (
-                        <button
-                          key={skill}
-                          type="button"
-                          onClick={() => {
-                            if (selectedSkillTag === skill) {
-                              setSelectedSkillTag(null);
-                            } else {
-                              setSelectedSkillTag(skill);
-                            }
-                          }}
-                          className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition-all flex items-center gap-1 ${
-                            isActive
-                              ? 'bg-[#6743ee] text-white font-semibold shadow-2xs'
-                              : 'bg-white text-slate-700 border border-slate-200 hover:border-[#6743ee]/50 hover:bg-purple-50 hover:text-[#5b43d6]'
-                          }`}
-                        >
-                          <span>{skill}</span>
-                          <span className={`text-[10px] px-1 py-0.2 rounded-full ${
-                            isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
-                          }`}>
-                            {count}
-                          </span>
-                        </button>
-                      );
-                    })}
-                    {selectedSkillTag && (
-                      <button
-                        type="button"
-                        onClick={() => setSelectedSkillTag(null)}
-                        className="text-[11px] text-slate-500 hover:text-slate-800 underline ml-1 flex items-center gap-0.5"
-                      >
-                        <X className="w-3 h-3" />
-                        Clear filter
-                      </button>
-                    )}
                   </div>
-                )}
 
-                {/* Active Filter Notification Bar */}
-                {(searchQuery.trim() || selectedSkillTag || statusFilter !== 'all') && (
-                  <div className="flex flex-wrap items-center justify-between gap-2 p-2 bg-purple-50/70 border border-purple-200/80 rounded-lg text-[11px] text-[#5b43d6]">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-semibold">Active filters:</span>
-                      {searchQuery.trim() && (
-                        <span className="px-1.5 py-0.5 rounded bg-white text-purple-900 border border-purple-200 font-medium">
-                          Search: "{searchQuery.trim()}"
-                        </span>
-                      )}
-                      {selectedSkillTag && (
-                        <span className="px-1.5 py-0.5 rounded bg-white text-purple-900 border border-purple-200 font-medium">
-                          Skill: {selectedSkillTag}
-                        </span>
-                      )}
-                      {statusFilter !== 'all' && (
-                        <span className="px-1.5 py-0.5 rounded bg-white text-purple-900 border border-purple-200 font-medium capitalize">
-                          Status: {statusFilter.replace('_', ' ')}
-                        </span>
-                      )}
-                      <span className="text-slate-500 ml-1">
-                        — found {sortedCandidates.length} matching {sortedCandidates.length === 1 ? 'candidate' : 'candidates'}
-                      </span>
-                    </div>
-
+                  {hasActiveFilters && (
                     <button
                       type="button"
                       onClick={() => {
+                        setStatusFilter('all');
                         setSearchQuery('');
                         setSelectedSkillTag(null);
-                        setStatusFilter('all');
+                        setSelectedCustomTag(null);
                       }}
-                      className="text-xs font-bold text-[#6743ee] hover:underline"
+                      className="text-xs font-medium text-[#6743ee] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
                     >
-                      Clear all filters
+                      Clear filters
                     </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Score Benchmark Metrics Strip */}
-              {scoreStats.max > 0 && (
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/60 text-[11px] text-slate-500">
-                  <div className="flex items-center gap-3">
-                    <span>Top AI Score: <strong className="text-[#6743ee] font-bold">{scoreStats.max}%</strong></span>
-                    <span>•</span>
-                    <span>Average: <strong className="text-slate-800 font-bold">{scoreStats.avg}%</strong></span>
-                    <span>•</span>
-                    <span>Lowest: <strong className="text-slate-700 font-bold">{scoreStats.min}%</strong></span>
-                  </div>
-                  <div className="text-[10px] text-slate-400">
-                    Click any candidate card to focus on their Skill Radar snapshot above.
-                  </div>
+                  )}
                 </div>
-              )}
-            </div>
 
-            {/* Interactive Compare Mode Banner */}
-            {(isCompareMode || selectedCompareIds.length > 0) && (
-              <div className="p-4 bg-gradient-to-r from-purple-50/90 via-teal-50/70 to-purple-50/90 border border-purple-200 rounded-xl space-y-2.5 shadow-2xs">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 bg-[#6743ee] text-white rounded-lg shadow-2xs shrink-0">
-                      <Scale className="w-4 h-4" />
+                {/* Active Compare Pair Banner */}
+                {selectedCompareIds.length > 0 && (
+                  <div className="px-5 py-2.5 bg-purple-50/60 border-b border-slate-200 flex items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-slate-700">Comparing:</span>
+                      {selectedCompareIds.map((id, idx) => {
+                        const c = candidates.find((item) => item.candidate_id === id);
+                        return (
+                          <span key={id} className="inline-flex items-center gap-1 font-medium text-slate-900">
+                            {idx === 1 && <span className="text-slate-400 mr-1">vs</span>}
+                            {c?.name || id}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleCompareCandidate(id)}
+                              className="text-slate-400 hover:text-slate-700"
+                              aria-label={`Remove ${c?.name || id} from comparison`}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        );
+                      })}
+                      {selectedCompareIds.length === 1 && (
+                        <span className="text-slate-500">— select a second candidate to compare</span>
+                      )}
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-slate-900">Candidate Head-to-Head Compare Mode</span>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                          selectedCompareIds.length === 2 
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
-                            : 'bg-purple-100 text-[#5b43d6] border border-purple-300'
-                        }`}>
-                          {selectedCompareIds.length === 2 ? '2 of 2 selected — Ready to Compare' : `${selectedCompareIds.length} of 2 selected`}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-500">
-                        {selectedCompareIds.length === 2
-                          ? 'Both candidates selected. Click "Launch Side-by-Side Comparison" to analyze their 6-dimension radars.'
-                          : selectedCompareIds.length === 1
-                          ? 'Select 1 more candidate from the list below to complete the side-by-side comparison pair.'
-                          : 'Click "Compare" on any two candidate cards below to evaluate their radar charts side-by-side.'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    {selectedCompareIds.length === 2 ? (
-                      <button
-                        type="button"
-                        onClick={() => handleLaunchCompare()}
-                        className="px-3.5 py-1.5 bg-gradient-to-r from-[#6743ee] to-teal-600 hover:from-[#5637d2] hover:to-teal-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5"
-                      >
-                        <Scale className="w-3.5 h-3.5" />
-                        <span>Launch Side-by-Side Comparison</span>
-                      </button>
-                    ) : (
-                      sortedCandidates.length >= 2 && (
+                    <div className="flex items-center gap-3 shrink-0">
+                      {selectedCompareIds.length === 2 && (
                         <button
                           type="button"
-                          onClick={() => {
-                            handleLaunchCompare(sortedCandidates[0].candidate_id, sortedCandidates[1].candidate_id);
-                          }}
-                          className="px-3 py-1.5 bg-white text-[#6743ee] border border-purple-300 hover:bg-purple-50 rounded-lg text-xs font-bold transition-all shadow-2xs"
+                          onClick={() => setPipelineViewMode('compare')}
+                          className="font-semibold text-[#6743ee] hover:underline cursor-pointer"
                         >
-                          Auto-Select Top 2
+                          Open side-by-side view
                         </button>
-                      )
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedCompareIds([]);
-                        setIsCompareMode(false);
-                      }}
-                      className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-lg text-xs"
-                      title="Exit Compare Mode"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Candidate Pills in Selection */}
-                {selectedCompareIds.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-purple-200/60 text-xs">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Comparing Pair:</span>
-                    {selectedCompareIds.map((id, idx) => {
-                      const cand = candidates.find(c => c.candidate_id === id);
-                      const isA = idx === 0;
-                      return (
-                        <div 
-                          key={id}
-                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium shadow-2xs ${
-                            isA 
-                              ? 'bg-purple-100 border-purple-300 text-[#5b43d6]' 
-                              : 'bg-teal-100 border-teal-300 text-teal-800'
-                          }`}
-                        >
-                          <span className="font-bold text-[10px] uppercase">{isA ? 'Candidate A:' : 'Candidate B:'}</span>
-                          <strong className="font-bold">{cand?.name || id}</strong>
-                          <span className="text-[10px] opacity-80">({cand?.overall_score}%)</span>
-                          <button
-                            type="button"
-                            onClick={() => handleToggleCompareCandidate(id)}
-                            className="hover:text-rose-600 ml-1 p-0.5 rounded hover:bg-black/5"
-                            title="Remove candidate from comparison"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      );
-                    })}
-                    {selectedCompareIds.length === 1 && (
-                      <span className="text-slate-500 italic text-[11px]">+ Select 1 more candidate from the list below</span>
-                    )}
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCompareIds([])}
+                        className="text-slate-500 hover:text-slate-800 cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    </div>
                   </div>
                 )}
-              </div>
-            )}
 
-            {/* Sticky Header Toolbar for Candidate Bulk Actions */}
-            {sortedCandidates.length > 0 && (
-              <BulkActionToolbar
-                selectedCandidateIds={selectedCandidateIds}
-                allFilteredCandidates={sortedCandidates}
-                allCandidates={candidates}
-                brief={brief}
-                cutoffScore={cutoffScore}
-                onSelectAll={handleSelectAllFiltered}
-                onDeselectAll={handleDeselectAll}
-                onSelectAboveCutoff={handleSelectAboveCutoff}
-                onBulkStageChange={handleBulkStageChange}
-                onBulkAdvance={handleBulkAdvance}
-                onBulkReject={handleBulkReject}
-                onBulkAssignCoding={handleBulkAssignCoding}
-                onBulkQueueEmails={handleBulkQueueEmails}
-                onLaunchCompare={(idA, idB) => handleLaunchCompare(idA, idB)}
-              />
-            )}
+                {/* Bulk Selection Strip / Action Bar */}
+                {sortedCandidates.length > 0 && (
+                  <BulkActionToolbar
+                    selectedCandidateIds={selectedCandidateIds}
+                    allFilteredCandidates={sortedCandidates}
+                    allCandidates={candidates}
+                    brief={brief}
+                    cutoffScore={cutoffScore}
+                    onSelectAll={handleSelectAllFiltered}
+                    onDeselectAll={handleDeselectAll}
+                    onSelectAboveCutoff={handleSelectAboveCutoff}
+                    onBulkStageChange={handleBulkStageChange}
+                    onBulkAdvance={handleBulkAdvance}
+                    onBulkReject={handleBulkReject}
+                    onBulkAssignCoding={handleBulkAssignCoding}
+                    onBulkQueueEmails={handleBulkQueueEmails}
+                    onLaunchCompare={(idA, idB) => handleLaunchCompare(idA, idB)}
+                  />
+                )}
 
-            {/* Candidate List with Rank Indicators */}
-            <div className="space-y-4">
-              {sortedCandidates.length === 0 ? (
-                <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                  <p className="text-slate-600 font-medium text-xs">No candidates match the current filter or search criteria.</p>
-                  <button
-                    type="button"
-                    onClick={() => { setStatusFilter('all'); setSearchQuery(''); }}
-                    className="px-3 py-1 bg-[#6743ee] text-white text-xs font-semibold rounded-lg hover:bg-[#5637d2]"
-                  >
-                    Reset Filters
-                  </button>
-                </div>
-              ) : (
-                sortedCandidates.map((cand, index) => {
-                  const isExpanded = !!expandedCandidates[cand.candidate_id];
-                  const codingRound = cand.rounds.coding;
-                  const techRound = cand.rounds.technical;
-                  const isTopRanked = index === 0 && sortField === 'score' && sortDirection === 'desc';
-                  const isSelectedInRadar = cand.candidate_id === activeCandidate?.candidate_id;
-                  const isSelectedForBulk = selectedCandidateIds.includes(cand.candidate_id);
-
-                  return (
-                    <div
-                      key={cand.candidate_id}
-                      id={`candidate-card-${cand.candidate_id}`}
-                      className={`border rounded-xl overflow-hidden bg-white shadow-xs transition-all ${
-                        isSelectedForBulk
-                          ? 'border-[#6743ee] ring-2 ring-[#6743ee]/30 bg-purple-50/15'
-                          : isSelectedInRadar
-                          ? 'border-[#6743ee] ring-2 ring-[#6743ee]/20'
-                          : 'border-slate-200 hover:border-slate-300'
-                      }`}
-                    >
-                      {/* Header bar */}
-                      <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          {/* Candidate Bulk Selection Checkbox */}
-                          <label
-                            onClick={(e) => e.stopPropagation()}
-                            className="cursor-pointer p-1 rounded-lg hover:bg-slate-200/80 text-slate-400 hover:text-[#6743ee] transition-colors shrink-0 flex items-center"
-                            title={isSelectedForBulk ? `Deselect ${cand.name}` : `Select ${cand.name} for bulk actions`}
+                {/* Candidate List */}
+                <div className="divide-y divide-slate-200">
+                  {sortedCandidates.length === 0 ? (
+                    <div className="p-10 text-center space-y-2">
+                      <p className="text-sm text-slate-600">
+                        {candidates.length === 0
+                          ? 'No candidates in the pipeline yet.'
+                          : 'No candidates match your current filters.'}
+                      </p>
+                      <div className="flex items-center justify-center gap-3 pt-1">
+                        {hasActiveFilters && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setStatusFilter('all');
+                              setSearchQuery('');
+                              setSelectedSkillTag(null);
+                              setSelectedCustomTag(null);
+                            }}
+                            className="px-3 py-1.5 text-xs font-semibold text-[#6743ee] hover:underline cursor-pointer"
                           >
-                            <input
-                              type="checkbox"
-                              checked={isSelectedForBulk}
-                              onChange={() => handleToggleSelectCandidate(cand.candidate_id)}
-                              className="sr-only"
-                              aria-label={`Select ${cand.name} for bulk actions`}
-                            />
-                            {isSelectedForBulk ? (
-                              <CheckSquare className="w-5 h-5 text-[#6743ee]" />
-                            ) : (
-                              <Square className="w-5 h-5 text-slate-300 hover:text-slate-500" />
-                            )}
-                          </label>
+                            Reset filters
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setWorkspaceSection('intake')}
+                          className="px-3.5 py-1.5 bg-[#6743ee] text-white text-xs font-semibold rounded-lg hover:bg-[#5637d2] cursor-pointer"
+                        >
+                          Upload or Paste Resume
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    sortedCandidates.map((cand, index) => {
+                      const isSelectedCandidate = activeCandidate?.candidate_id === cand.candidate_id;
+                      const isSelectedForBulk = selectedCandidateIds.includes(cand.candidate_id);
+                      const isAboveCutoff = cand.overall_score >= cutoffScore;
+                      const isMoreOpen = openMoreMenuId === cand.candidate_id;
+                      const topSkills = Object.entries(cand.skill_scores || {})
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 4);
+                      const latestFeedback = cand.interview_feedback_reports?.[0];
 
-                          {/* Score Box with Rank Position Badge */}
-                          <div className="relative shrink-0">
-                            <div className={`w-11 h-11 rounded-xl font-black text-sm flex items-center justify-center shadow-2xs ${
-                              isTopRanked
-                                ? 'bg-gradient-to-tr from-[#6743ee] to-[#8a72ff] text-white'
-                                : 'bg-purple-100 text-purple-800'
-                            }`}>
-                              {cand.overall_score}%
-                            </div>
-                            {sortField === 'score' && (
-                              <span className={`absolute -top-1.5 -left-1.5 px-1.5 py-0.2 rounded-full text-[9px] font-black border shadow-2xs ${
-                                isTopRanked
-                                  ? 'bg-amber-400 text-slate-900 border-amber-300'
-                                  : 'bg-white text-purple-900 border-purple-200'
-                              }`}>
-                                #{index + 1}
-                              </span>
-                            )}
-                          </div>
-
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-bold text-slate-900 text-sm">{cand.name}</span>
-                              <span className="text-xs text-slate-400 font-mono">({cand.candidate_id})</span>
-                              {isTopRanked && (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1">
-                                  <Award className="w-3 h-3 text-amber-600" />
-                                  Top Ranked AI Match
-                                </span>
-                              )}
-                              {isSelectedInRadar ? (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#6743ee]/10 text-[#6743ee] border border-[#6743ee]/30 flex items-center gap-1">
-                                  <Eye className="w-3 h-3" />
-                                  Active in Radar
-                                </span>
+                      return (
+                        <div
+                          key={cand.candidate_id}
+                          id={`candidate-card-${cand.candidate_id}`}
+                          onClick={() => selectCandidate(cand.candidate_id)}
+                          className={`px-5 py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-colors cursor-pointer ${
+                            isSelectedCandidate
+                              ? 'bg-purple-50/45'
+                              : isSelectedForBulk
+                              ? 'bg-slate-50/80'
+                              : 'bg-white hover:bg-slate-50/60'
+                          }`}
+                        >
+                          <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+                            {/* Selection Checkbox */}
+                            <label
+                              onClick={(e) => e.stopPropagation()}
+                              className="cursor-pointer mt-1 sm:mt-0 text-slate-400 hover:text-[#6743ee] shrink-0"
+                              title={`Select ${cand.name} for bulk actions`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelectedForBulk}
+                                onChange={() => handleToggleSelectCandidate(cand.candidate_id)}
+                                className="sr-only"
+                                aria-label={`Select ${cand.name}`}
+                              />
+                              {isSelectedForBulk ? (
+                                <CheckSquare className="w-4 h-4 text-[#6743ee]" />
                               ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedCandidateId(cand.candidate_id)}
-                                  className="px-2 py-0.5 rounded-full text-[10px] text-slate-500 hover:text-[#6743ee] hover:bg-purple-50 border border-slate-200 transition-colors flex items-center gap-1"
-                                  title="View this candidate's radar insights in the overview section"
-                                >
-                                  <Eye className="w-3 h-3" />
-                                  Inspect Radar
-                                </button>
+                                <Square className="w-4 h-4 text-slate-300 hover:text-slate-500" />
                               )}
-                              {cand.digital_profile_sources?.some(s => s.source_type === 'LinkedIn') && (
-                                <a
-                                  href={cand.digital_profile_sources.find(s => s.source_type === 'LinkedIn')?.source_location || '#'}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-[#0a66c2] border border-blue-200 hover:bg-blue-100 transition-colors flex items-center gap-1 shadow-2xs"
-                                  title="Candidate profile imported via LinkedIn Talent Agent. Click to view profile link."
-                                >
-                                  <span className="w-3 h-3 rounded bg-[#0a66c2] text-white font-black text-[8px] flex items-center justify-center leading-none">
-                                    in
-                                  </span>
-                                  <span>LinkedIn Sourced</span>
-                                </a>
-                              )}
-                              {cand.persona && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenPersona(cand);
-                                  }}
-                                  className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-[#5b43d6] border border-purple-200 hover:bg-purple-100 transition-colors flex items-center gap-1 shadow-2xs"
-                                  title={`Archetype: ${cand.persona.archetype}. Click to open full persona summary reel.`}
-                                >
-                                  <Sparkles className="w-2.5 h-2.5 text-amber-500 shrink-0" />
-                                  <span>{cand.persona.archetype}</span>
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (!isExpanded) {
-                                    setExpandedCandidates(prev => ({ ...prev, [cand.candidate_id]: true }));
-                                  }
-                                  setTimeout(() => {
-                                    const el = document.getElementById(`candidate-notes-${cand.candidate_id}`);
-                                    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                  }, 100);
-                                }}
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-medium flex items-center gap-1 transition-colors cursor-pointer ${
-                                  cand.private_notes
-                                    ? 'bg-purple-100 text-[#5b43d6] border border-purple-300 font-semibold hover:bg-purple-200'
-                                    : 'bg-slate-100 text-slate-500 border border-slate-200 hover:text-purple-600 hover:bg-purple-50'
+                            </label>
+
+                            {/* Tabular Match Score */}
+                            <div className="w-12 shrink-0 text-left">
+                              <div
+                                className={`text-base font-bold tabular-nums leading-tight ${
+                                  isAboveCutoff ? 'text-slate-900' : 'text-slate-500'
                                 }`}
-                                title={cand.private_notes ? `Confidential recruiter note recorded (${cand.notes_updated_at || 'Saved'}). Click to view or edit.` : 'Add private recruiter note'}
                               >
-                                <FileText className="w-2.5 h-2.5" />
-                                <span>{cand.private_notes ? 'Notes' : '+ Add Note'}</span>
-                              </button>
-                            </div>
-                            <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
-                              <span>{cand.email}</span>
-                              <span>•</span>
-                              <span className="font-semibold text-slate-800">Stage: {getCandidateStage(cand)}</span>
-                              <span>•</span>
-                              <span className="font-medium text-slate-600">Round: {cand.current_round.toUpperCase()}</span>
-                              <span>•</span>
-                              <span className="text-slate-600">Tech Score: {cand.dimension_scores.technical}%</span>
+                                {cand.overall_score}%
+                              </div>
+                              <div className="text-[11px] text-slate-400 tabular-nums">
+                                #{index + 1}
+                              </div>
                             </div>
 
-                            {/* Candidate Verified Skill Tags with Instant Filtering */}
-                            <div className="flex flex-wrap items-center gap-1 mt-1.5">
-                              {Object.entries(cand.skill_scores || {}).slice(0, 6).map(([skill, score]) => {
-                                const isSkillMatch = searchQuery.trim() && skill.toLowerCase().includes(searchQuery.toLowerCase().trim());
-                                const isFilterMatch = selectedSkillTag && skill.toLowerCase() === selectedSkillTag.toLowerCase();
-                                const isHighlighted = isSkillMatch || isFilterMatch;
+                            {/* Name, Explicit Status & Quiet Metadata */}
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                <span
+                                  className={`text-sm font-semibold ${
+                                    isSelectedCandidate ? 'text-[#6743ee]' : 'text-slate-900'
+                                  }`}
+                                >
+                                  {cand.name}
+                                </span>
 
-                                return (
+                                <span className="text-slate-300">·</span>
+
+                                {/* Explicit Status Text */}
+                                {cand.decision_status.includes('Not proceeding') ? (
+                                  <span className="text-xs font-medium text-rose-700">
+                                    Not proceeding
+                                  </span>
+                                ) : cand.decision_status.includes('Hired') ? (
+                                  <span className="text-xs font-medium text-emerald-700">Hired</span>
+                                ) : cand.decision_status.includes('Advanced') ? (
+                                  <span className="text-xs font-medium text-emerald-700">
+                                    Advanced
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-slate-500">Pending review</span>
+                                )}
+
+                                {latestFeedback && (
+                                  <>
+                                    <span className="text-slate-300">·</span>
+                                    <span className="text-xs font-medium text-[#6743ee]">
+                                      {latestFeedback.overallRecommendation}
+                                    </span>
+                                  </>
+                                )}
+
+                                {(cand.custom_tags || []).map((tag) => (
                                   <button
-                                    key={skill}
+                                    key={tag}
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      if (selectedSkillTag === skill) {
-                                        setSelectedSkillTag(null);
-                                      } else {
-                                        setSelectedSkillTag(skill);
-                                      }
+                                      setSelectedCustomTag((prev) => (prev === tag ? null : tag));
                                     }}
-                                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-all flex items-center gap-1 ${
-                                      isHighlighted
-                                        ? 'bg-[#6743ee] text-white font-bold ring-2 ring-[#6743ee]/30'
-                                        : 'bg-slate-100 hover:bg-purple-100 text-slate-700 hover:text-purple-900 border border-slate-200'
-                                    }`}
-                                    title={`Click to filter list by skill tag: ${skill}`}
+                                    className="text-[11px] font-medium text-slate-600 hover:text-[#6743ee] bg-slate-100 px-1.5 py-0.5 rounded cursor-pointer"
+                                    title={`Filter by label: ${tag}`}
                                   >
-                                    <Tag className="w-2.5 h-2.5 opacity-60" />
-                                    <span>{skill}</span>
-                                    <span className={`text-[9px] font-bold ${isHighlighted ? 'text-white/90' : 'text-slate-400'}`}>
-                                      {score}/10
-                                    </span>
+                                    {tag}
                                   </button>
-                                );
-                              })}
-                              {Object.keys(cand.skill_scores || {}).length > 6 && (
-                                <span className="text-[10px] text-slate-400 ml-0.5">
-                                  +{Object.keys(cand.skill_scores || {}).length - 6} more
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                          {/* Compare Selection Button on Card */}
-                          <button
-                            type="button"
-                            onClick={() => handleToggleCompareCandidate(cand.candidate_id)}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                              selectedCompareIds.includes(cand.candidate_id)
-                                ? selectedCompareIds[0] === cand.candidate_id
-                                  ? 'bg-purple-100 text-[#5b43d6] border border-purple-300 shadow-2xs font-bold ring-1 ring-purple-300'
-                                  : 'bg-teal-100 text-teal-800 border border-teal-300 shadow-2xs font-bold ring-1 ring-teal-300'
-                                : isCompareMode
-                                ? 'bg-purple-50 text-[#6743ee] hover:bg-purple-100 border border-purple-200'
-                                : 'bg-white text-slate-600 hover:text-[#6743ee] hover:bg-slate-50 border border-slate-200'
-                            }`}
-                            title={
-                              selectedCompareIds.includes(cand.candidate_id)
-                                ? "Selected for comparison (Click to remove)"
-                                : "Select this candidate for side-by-side radar comparison"
-                            }
-                          >
-                            <Scale className="w-3.5 h-3.5" />
-                            <span>
-                              {selectedCompareIds.includes(cand.candidate_id)
-                                ? selectedCompareIds[0] === cand.candidate_id ? 'Compare [A]' : 'Compare [B]'
-                                : 'Compare'}
-                            </span>
-                          </button>
-
-                          {/* AI Candidate Persona Reel Trigger Button */}
-                          <button
-                            type="button"
-                            onClick={() => handleOpenPersona(cand)}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-2xs ${
-                              cand.persona
-                                ? 'bg-gradient-to-r from-amber-50 to-purple-50 hover:from-amber-100 hover:to-purple-100 text-[#5b43d6] border border-purple-200 font-bold'
-                                : 'bg-white hover:bg-purple-50 text-slate-700 hover:text-[#6743ee] border border-slate-200 hover:border-purple-200'
-                            }`}
-                            title={cand.persona ? `View ${cand.name}'s AI Persona Reel (${cand.persona.archetype})` : `Generate AI Candidate Persona summary reel for ${cand.name}`}
-                          >
-                            <Sparkles className={`w-3.5 h-3.5 ${cand.persona ? 'text-amber-500 fill-amber-400/20' : 'text-slate-400'}`} />
-                            <span>{cand.persona ? 'Persona Reel' : '⚡ Persona Reel'}</span>
-                          </button>
-
-                          {/* AI Follow-Up Email Trigger Button */}
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEmailDraftModal(cand)}
-                            className="px-2.5 py-1 bg-white hover:bg-purple-50 text-[#6743ee] hover:text-[#5637d2] border border-purple-200 hover:border-purple-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs"
-                            title="Draft personalized follow-up email based on progression or rejection reasons"
-                          >
-                            <Mail className="w-3.5 h-3.5 text-[#6743ee]" />
-                            <span>Draft Email</span>
-                          </button>
-
-                          {/* AI Interview Scheduler Trigger Button */}
-                          <button
-                            type="button"
-                            onClick={() => handleOpenScheduler(cand)}
-                            className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-700 hover:text-emerald-800 border border-emerald-200 hover:border-emerald-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs"
-                            title={`Schedule interview with ${cand.name} using hiring team shared calendar availability`}
-                          >
-                            <Calendar className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>Schedule</span>
-                          </button>
-
-                          {/* Hiring Stage Dropdown Menu */}
-                          <CandidateStageDropdown
-                            currentStage={getCandidateStage(cand)}
-                            onStageChange={(newStage) => handleStageChange(cand.candidate_id, newStage)}
-                            candidateName={cand.name}
-                            candidateId={cand.candidate_id}
-                          />
-
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                            cand.decision_status.includes('Advanced') || cand.decision_status.includes('Hired')
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                              : cand.decision_status.includes('Not proceeding')
-                              ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                              : 'bg-amber-100 text-amber-800 border border-amber-200'
-                          }`}>
-                            {cand.decision_status}
-                          </span>
-
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              onClick={() => handleRecruiterDecision(cand.candidate_id, 'advance')}
-                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors"
-                            >
-                              Advance
-                            </button>
-                            <button
-                              onClick={() => handleRecruiterDecision(cand.candidate_id, 'reject')}
-                              className="px-3 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold rounded-lg border border-rose-200 transition-colors"
-                            >
-                              Reject
-                            </button>
-                          </div>
-
-                          <button
-                            onClick={() => toggleExpand(cand.candidate_id)}
-                            className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-200 transition-colors"
-                            title={isExpanded ? "Collapse candidate details" : "Expand candidate details"}
-                          >
-                            {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                          </button>
-                        </div>
-                      </div>
-
-                    {/* Expanded details */}
-                    {isExpanded && (
-                      <div className="p-5 space-y-6 text-xs">
-                        {/* 6 Dimension Radar Chart & Breakdown */}
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                              <Sparkles className="w-3.5 h-3.5 text-[#6743ee]" />
-                              Individual Evaluation Radar & Dimension Evidence
-                            </span>
-                            {sortedCandidates.length >= 2 && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const other = sortedCandidates.find(c => c.candidate_id !== cand.candidate_id);
-                                  if (other) {
-                                    handleLaunchCompare(cand.candidate_id, other.candidate_id);
-                                  }
-                                }}
-                                className="px-2.5 py-1 bg-white hover:bg-purple-50 text-[#6743ee] font-bold border border-purple-200 hover:border-purple-300 rounded-lg text-xs transition-colors shadow-2xs flex items-center gap-1.5"
-                                title="Open head-to-head comparison with another candidate"
-                              >
-                                <Scale className="w-3.5 h-3.5" />
-                                <span>Compare Side-by-Side</span>
-                              </button>
-                            )}
-                          </div>
-                          <CandidateDimensionRadar
-                            scores={cand.dimension_scores}
-                            candidateName={cand.name}
-                            evidence={cand.dimension_evidence}
-                            cutoffScore={cutoffScore}
-                          />
-                        </div>
-
-                        {/* AI Candidate Persona Summary Card & Highlight Reel */}
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <Sparkles className="w-4 h-4 text-amber-500" />
-                              <span className="text-xs font-bold text-slate-800">
-                                AI Candidate Persona & Executive Highlight Reel
-                              </span>
-                              {cand.persona && (
-                                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                                  Archetype: {cand.persona.archetype}
-                                </span>
-                              )}
-                            </div>
-                            {cand.persona && (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenPersona(cand)}
-                                className="px-2.5 py-1 bg-white hover:bg-purple-50 text-[#6743ee] font-bold border border-purple-200 hover:border-purple-300 rounded-lg text-xs transition-colors shadow-2xs flex items-center gap-1.5"
-                                title="Open in expanded modal view with candidate switcher"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                <span>Full Screen Persona</span>
-                              </button>
-                            )}
-                          </div>
-
-                          {cand.persona ? (
-                            <CandidatePersonaCard
-                              candidate={cand}
-                              persona={cand.persona}
-                              onRegenerate={handleRegeneratePersona}
-                              isRegenerating={generatingPersonaId === cand.candidate_id}
-                              isModal={false}
-                            />
-                          ) : (
-                            <div className="p-5 rounded-2xl bg-gradient-to-r from-purple-50/70 via-indigo-50/40 to-amber-50/50 border border-dashed border-purple-300 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-2">
-                                  <Sparkles className="w-4 h-4 text-amber-500" />
-                                  <span className="text-xs font-black text-slate-900">
-                                    Generate AI Candidate Persona & Highlight Reel
-                                  </span>
-                                </div>
-                                <p className="text-[11px] text-slate-600 max-w-xl">
-                                  Distill {cand.name}'s resume and 6-dimension evaluation into an executive persona archetype, professional highlight reel, verified strengths with business impact, and targeted interview probes for hiring managers.
-                                </p>
+                                ))}
                               </div>
 
-                              <button
-                                type="button"
-                                onClick={() => handleOpenPersona(cand)}
-                                className="px-4 py-2.5 bg-gradient-to-r from-[#6743ee] to-indigo-600 hover:from-[#5637d2] hover:to-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs shrink-0 active:scale-95 transition-all"
-                              >
-                                <Sparkles className="w-4 h-4 text-amber-300" />
-                                <span>Distill AI Persona Reel</span>
-                              </button>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Pipeline Stage Progression Stepper */}
-                        <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                              <Layers className="w-3.5 h-3.5 text-[#6743ee]" />
-                              Hiring Stage Pipeline Journey
-                            </span>
-                            <span className="text-[11px] text-slate-500">
-                              Active Stage: <strong className="text-slate-900 font-bold">{getCandidateStage(cand)}</strong>
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-[11px]">
-                            {(['Screening', 'Technical', 'Interview', 'Offered'] as const).map((stg, idx) => {
-                              const candStage = getCandidateStage(cand);
-                              const stagesOrder = ['Screening', 'Technical', 'Interview', 'Offered'];
-                              const isCurrent = candStage === stg;
-                              const isPassed = stagesOrder.indexOf(candStage) > idx;
-                              const isRejected = candStage === 'Rejected';
-
-                              return (
-                                <button
-                                  key={stg}
-                                  type="button"
-                                  onClick={() => handleStageChange(cand.candidate_id, stg)}
-                                  className={`p-2 rounded-lg border text-left transition-all ${
-                                    isCurrent
-                                      ? 'bg-purple-100/70 border-purple-300 text-[#5b43d6] font-bold ring-2 ring-purple-400/20'
-                                      : isPassed && !isRejected
-                                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800 font-semibold'
-                                      : isRejected
-                                      ? 'bg-slate-100/70 border-slate-200 text-slate-400'
-                                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                                  }`}
-                                  title={`Click to transition stage to ${stg}`}
-                                >
-                                  <div className="text-[9px] text-slate-400 uppercase font-mono tracking-wider flex items-center justify-between">
-                                    <span>Step {idx + 1}</span>
-                                    {isPassed && !isRejected && <span className="text-emerald-600">✓</span>}
-                                    {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-[#6743ee]" />}
-                                  </div>
-                                  <div className="font-bold mt-0.5">{stg}</div>
-                                </button>
-                              );
-                            })}
-                          </div>
-                          {getCandidateStage(cand) === 'Rejected' && (
-                            <div className="p-2 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-[11px] flex items-center justify-between">
-                              <span className="flex items-center gap-1 font-semibold">
-                                <XCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                                Candidate is currently marked as Rejected.
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => handleStageChange(cand.candidate_id, 'Screening')}
-                                className="text-xs font-bold text-rose-700 hover:underline"
-                              >
-                                Reopen to Screening
-                              </button>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Strengths & Missing skills */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="p-3 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-1.5">
-                            <span className="font-bold text-emerald-900 block flex items-center gap-1.5">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                              Demonstrated Strengths
-                            </span>
-                            <ul className="list-disc list-inside space-y-1 text-slate-700">
-                              {cand.strengths.map((s, i) => (
-                                <li key={i}>{s}</li>
-                              ))}
-                            </ul>
-                          </div>
-
-                          <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl space-y-1.5">
-                            <span className="font-bold text-amber-900 block flex items-center gap-1.5">
-                              <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
-                              Gaps & Missing Skills
-                            </span>
-                            <ul className="list-disc list-inside space-y-1 text-slate-700">
-                              {cand.missing_skills.length > 0 ? (
-                                cand.missing_skills.map((s, i) => <li key={i}>{s}</li>)
-                              ) : (
-                                <li>All required primary competencies evidenced.</li>
-                              )}
-                            </ul>
-                          </div>
-                        </div>
-
-                        {/* Recruiter Private Notes & Observations (Tracked in System Audit Log) */}
-                        <CandidatePrivateNotes
-                          candidate={cand}
-                          onSaveNotes={handleSaveCandidateNotes}
-                          auditHistory={events}
-                        />
-
-                        {/* Interview Rounds & Verification Sub-tabs inside candidate card */}
-                        <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-4">
-                          <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                            <FileCode className="w-4 h-4 text-[#6743ee]" />
-                            Interview Rounds & Adaptive Assessments
-                          </h4>
-
-                          {/* Round 1: Coding Challenge */}
-                          <div className="p-3 bg-white rounded-lg border border-slate-200 space-y-3">
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold text-slate-800">Adaptive Coding Challenge</span>
-                              {!codingRound?.challenge && (
-                                <button
-                                  onClick={() => handleGenerateCoding(cand.candidate_id)}
-                                  className="px-3 py-1 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-semibold rounded-lg"
-                                >
-                                  Agent: Plan & Generate Coding Task
-                                </button>
-                              )}
-                            </div>
-
-                            {codingRound?.challenge && (
-                              <div className="space-y-3">
-                                <div>
-                                  <span className="font-bold text-slate-900">{codingRound.challenge.title}</span>
-                                  <p className="text-slate-600 mt-1">{codingRound.challenge.prompt}</p>
-                                </div>
-
-                                <div>
-                                  <label className="font-semibold text-slate-700 block mb-1">
-                                    Candidate Coding Submission:
-                                  </label>
-                                  <textarea
-                                    value={codingRound.candidate_submission || ""}
-                                    onChange={(e) => {
-                                      const val = e.target.value;
-                                      setCandidates(prev => prev.map(c => {
-                                        if (c.candidate_id !== cand.candidate_id) return c;
-                                        return {
-                                          ...c,
-                                          rounds: {
-                                            ...c.rounds,
-                                            coding: { ...c.rounds.coding, candidate_submission: val }
-                                          }
-                                        };
-                                      }));
-                                    }}
-                                    rows={5}
-                                    className="w-full font-mono text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-                                  />
-                                </div>
-
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    onClick={() => handleEvaluateCoding(cand.candidate_id)}
-                                    className="px-3 py-1.5 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-semibold rounded-lg"
-                                  >
-                                    Agent: Evaluate Submission
-                                  </button>
-                                  <button
-                                    onClick={() => handleRoundDecision(cand.candidate_id, 'coding', 'pass')}
-                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg"
-                                  >
-                                    Recruiter: Pass Coding Round
-                                  </button>
-                                  <button
-                                    onClick={() => handleRoundDecision(cand.candidate_id, 'coding', 'not_proceeding')}
-                                    className="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 text-xs font-semibold rounded-lg"
-                                  >
-                                    End Process
-                                  </button>
-                                </div>
-
-                                {codingRound.evaluation && (
-                                  <div className="p-3 bg-purple-50/50 border border-purple-200 rounded-lg space-y-1 text-slate-700">
-                                    <span className="font-bold text-purple-900 block">
-                                      AI Review: {codingRound.evaluation.score}/100 (Advisory)
+                              <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                <span>{cand.email}</span>
+                                <span>·</span>
+                                <span className="tabular-nums">
+                                  Tech {cand.dimension_scores.technical}%
+                                </span>
+                                {topSkills.length > 0 && (
+                                  <>
+                                    <span>·</span>
+                                    <span className="truncate">
+                                      {topSkills.map(([skill, val]) => `${skill} (${val}/10)`).join(', ')}
                                     </span>
-                                    <p><strong>Correctness:</strong> {codingRound.evaluation.correctness}</p>
-                                    <p><strong>Complexity:</strong> {codingRound.evaluation.complexity}</p>
-                                    <p><strong>Strengths:</strong> {codingRound.evaluation.strengths.join(", ")}</p>
-                                  </div>
+                                  </>
                                 )}
                               </div>
-                            )}
+                            </div>
                           </div>
 
-                          {/* Round 2: Technical Interview */}
-                          <div className="p-3 bg-white rounded-lg border border-slate-200 space-y-3">
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold text-slate-800">Technical Interview Round</span>
-                              {!techRound?.questions && (
-                                <button
-                                  onClick={() => handleGenerateTechnicalQuestions(cand.candidate_id)}
-                                  className="px-3 py-1 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-semibold rounded-lg"
-                                >
-                                  Agent: Generate Questions
-                                </button>
+                          {/* Focused Primary Actions + Selected Details Trigger */}
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex items-center gap-2 shrink-0 pl-7 sm:pl-0"
+                          >
+                            <CandidateStageDropdown
+                              currentStage={getCandidateStage(cand)}
+                              onStageChange={(newStage) =>
+                                handleStageChange(cand.candidate_id, newStage)
+                              }
+                              candidateName={cand.name}
+                              candidateId={cand.candidate_id}
+                            />
+
+                            <button
+                              type="button"
+                              onClick={() => handleOpenFeedbackModal(cand)}
+                              className="px-2.5 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 cursor-pointer"
+                            >
+                              {latestFeedback ? 'Evaluation' : 'Feedback'}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleOpenScheduler(cand)}
+                              className="px-2.5 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 cursor-pointer"
+                            >
+                              Schedule
+                            </button>
+
+                            {/* More Actions Menu */}
+                            <div className="relative">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setOpenMoreMenuId((prev) =>
+                                    prev === cand.candidate_id ? null : cand.candidate_id
+                                  )
+                                }
+                                className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg cursor-pointer"
+                                aria-label={`More actions for ${cand.name}`}
+                                title="More actions"
+                              >
+                                <MoreVertical className="w-4 h-4" />
+                              </button>
+
+                              {isMoreOpen && (
+                                <div className="absolute right-0 mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-md py-1.5 z-30 text-xs">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenPersona(cand)}
+                                    className="w-full px-3.5 py-2 text-left text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5 text-[#6743ee]" />
+                                    <span>Candidate Persona</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEmailDraftModal(cand)}
+                                    className="w-full px-3.5 py-2 text-left text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                                  >
+                                    <Mail className="w-3.5 h-3.5 text-slate-500" />
+                                    <span>Draft Follow-Up Email</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleCompareCandidate(cand.candidate_id)}
+                                    className="w-full px-3.5 py-2 text-left text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                                  >
+                                    <Scale className="w-3.5 h-3.5 text-slate-500" />
+                                    <span>
+                                      {selectedCompareIds.includes(cand.candidate_id)
+                                        ? 'Remove from Compare'
+                                        : 'Select to Compare'}
+                                    </span>
+                                  </button>
+                                  <div className="my-1 border-t border-slate-100" />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleRecruiterDecision(cand.candidate_id, 'advance')
+                                    }
+                                    className="w-full px-3.5 py-2 text-left text-emerald-700 hover:bg-emerald-50 flex items-center gap-2 cursor-pointer"
+                                  >
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>Advance Candidate</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleRecruiterDecision(cand.candidate_id, 'reject')
+                                    }
+                                    className="w-full px-3.5 py-2 text-left text-rose-700 hover:bg-rose-50 flex items-center gap-2 cursor-pointer"
+                                  >
+                                    <XCircle className="w-3.5 h-3.5" />
+                                    <span>Decline Candidate</span>
+                                  </button>
+                                </div>
                               )}
                             </div>
 
-                            {techRound?.questions && (
-                              <div className="space-y-3">
-                                {techRound.questions.map((q, idx) => (
-                                  <div key={idx} className="space-y-1">
-                                    <span className="font-semibold text-slate-800 block">Q{idx + 1}: {q}</span>
-                                    <textarea
-                                      value={techRound.answers?.[idx] || ""}
-                                      onChange={(e) => {
-                                        const newAns = [...(techRound.answers || [])];
-                                        newAns[idx] = e.target.value;
-                                        setCandidates(prev => prev.map(c => {
-                                          if (c.candidate_id !== cand.candidate_id) return c;
-                                          return {
+                            <button
+                              type="button"
+                              onClick={() => focusSelectedCandidateDetails(cand.candidate_id)}
+                              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+                                isSelectedCandidate
+                                  ? 'bg-[#6743ee] text-white'
+                                  : 'text-[#6743ee] hover:bg-purple-50'
+                              }`}
+                            >
+                              {isSelectedCandidate ? 'Selected' : 'View Details'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </>
+            )}
+          </section>
+
+          {/* 2. Selected Candidate Details Panel */}
+          {activeCandidate && (
+            <section
+              id="selected-candidate-panel"
+              aria-label="Selected Candidate Details"
+              className="bg-white border border-slate-200 rounded-xl overflow-hidden"
+            >
+              {/* Newly Uploaded Resume Confirmation Strip */}
+              {justUploadedCandidateId === activeCandidate.candidate_id && (
+                <div className="px-5 py-2.5 bg-emerald-50 border-b border-emerald-200 flex items-center justify-between gap-3 text-xs text-emerald-900">
+                  <span className="font-medium flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    Uploaded resume evaluated for <strong>{activeCandidate.name}</strong> — showing
+                    full candidate profile and competency breakdown below.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setJustUploadedCandidateId(null)}
+                    className="text-emerald-700 hover:text-emerald-900 font-medium shrink-0 cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
+              {/* Selected Candidate Header */}
+              <div className="px-5 py-4 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="space-y-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                    <span>Selected Candidate Details</span>
+                    <span>·</span>
+                    <span className="font-mono text-slate-500">{activeCandidate.candidate_id}</span>
+                    {activeCandidate.persona && (
+                      <>
+                        <span>·</span>
+                        <span className="text-[#6743ee] normal-case font-medium">
+                          {activeCandidate.persona.archetype}
+                        </span>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <h3 className="text-base font-semibold text-slate-900">
+                      {activeCandidate.name}
+                    </h3>
+                    <span className="text-slate-300">·</span>
+                    <span className="text-xs font-medium text-slate-700">
+                      Stage: {getCandidateStage(activeCandidate)}
+                    </span>
+                    <span className="text-slate-300">·</span>
+                    <span
+                      className={`text-xs font-medium ${
+                        activeCandidate.decision_status.includes('Not proceeding')
+                          ? 'text-rose-700'
+                          : activeCandidate.decision_status.includes('Advanced') ||
+                            activeCandidate.decision_status.includes('Hired')
+                          ? 'text-emerald-700'
+                          : 'text-amber-700'
+                      }`}
+                    >
+                      {activeCandidate.decision_status}
+                    </span>
+                  </div>
+
+                  <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span>{activeCandidate.email}</span>
+                    {activeCandidate.phone && (
+                      <>
+                        <span>·</span>
+                        <span>{activeCandidate.phone}</span>
+                      </>
+                    )}
+                    {activeCandidate.digital_profile_sources
+                      ?.filter((s) => s.source_location)
+                      .map((src, i) => (
+                        <React.Fragment key={i}>
+                          <span>·</span>
+                          <a
+                            href={src.source_location}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[#6743ee] hover:underline inline-flex items-center gap-1 font-medium"
+                          >
+                            <span>{src.source_type}</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        </React.Fragment>
+                      ))}
+                  </div>
+                </div>
+
+                {/* Right: Candidate Switcher, Overall Score & Actions */}
+                <div className="flex flex-wrap items-center gap-3 shrink-0">
+                  <select
+                    aria-label="Switch selected candidate"
+                    value={activeCandidate.candidate_id}
+                    onChange={(e) => selectCandidate(e.target.value)}
+                    className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-[#6743ee]"
+                  >
+                    {candidates.map((c) => (
+                      <option key={c.candidate_id} value={c.candidate_id}>
+                        {c.name} ({c.overall_score}%)
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="px-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-right">
+                    <div className="text-sm font-bold text-slate-900 tabular-nums leading-tight">
+                      {activeCandidate.overall_score}%
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      {activeCandidate.overall_score >= cutoffScore
+                        ? 'Meets cutoff'
+                        : 'Below cutoff'}
+                    </div>
+                  </div>
+
+                  {candidates.length >= 2 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const otherId =
+                          sortedCandidates.find((c) => c.candidate_id !== activeCandidate.candidate_id)
+                            ?.candidate_id ||
+                          candidates.find((c) => c.candidate_id !== activeCandidate.candidate_id)
+                            ?.candidate_id;
+                        handleLaunchCompare(activeCandidate.candidate_id, otherId);
+                      }}
+                      className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      <Scale className="w-3.5 h-3.5 text-[#6743ee]" />
+                      <span>Compare Side-by-Side</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenPersona(activeCandidate)}
+                    className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-[#6743ee]" />
+                    <span>Persona Summary</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEmailDraftModal(activeCandidate)}
+                    className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <Mail className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Draft Email</span>
+                  </button>
+
+                  {!activeCandidate.decision_status.includes('Advanced') &&
+                    !activeCandidate.decision_status.includes('Hired') && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleRecruiterDecision(activeCandidate.candidate_id, 'advance')
+                        }
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+                      >
+                        Advance
+                      </button>
+                    )}
+                </div>
+              </div>
+
+              {/* Detail Sub-Tabs */}
+              <div className="px-5 border-b border-slate-200 bg-slate-50/50 flex items-center gap-6">
+                {[
+                  { id: 'overview' as const, label: 'Overview & Competency Breakdown' },
+                  {
+                    id: 'rounds' as const,
+                    label: `Interview Rounds & Feedback (${
+                      activeCandidate.interview_feedback_reports?.length || 0
+                    })`,
+                  },
+                  { id: 'resume' as const, label: 'Full Resume, Labels & Notes' },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setSelectedDetailTab(tab.id)}
+                    className={`py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+                      selectedDetailTab === tab.id
+                        ? 'border-[#6743ee] text-[#6743ee]'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Detail Tab Content */}
+              <div className="p-5 text-xs space-y-5">
+                {selectedDetailTab === 'overview' && (
+                  <>
+                    {/* Executive Profile Summary */}
+                    <div className="p-4 bg-slate-50/80 border border-slate-200 rounded-lg space-y-1.5">
+                      <div className="font-semibold text-slate-900">Candidate Executive Summary</div>
+                      <p className="text-slate-700 leading-relaxed">
+                        {activeCandidate.resume_profile}
+                      </p>
+                      {activeCandidate.persona && (
+                        <p className="text-slate-600 pt-1">
+                          <strong className="text-slate-800">Core Strength:</strong>{' '}
+                          {activeCandidate.persona.superpower}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* 6-Dimension Evaluation Breakdown */}
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-semibold text-slate-900">
+                          6-Dimension Evaluation Breakdown
+                        </h4>
+                        <span className="text-[11px] text-slate-500">
+                          Weighted rubric across technical, experience, education, projects, domain & communication
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {Object.entries(activeCandidate.dimension_scores).map(([dim, score]) => {
+                          const evidenceText =
+                            activeCandidate.dimension_evidence?.[dim] ||
+                            activeCandidate.dimension_evidence?.[
+                              dim.charAt(0).toUpperCase() + dim.slice(1)
+                            ];
+                          return (
+                            <div
+                              key={dim}
+                              className="p-3 bg-white border border-slate-200 rounded-lg space-y-1.5"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-semibold text-slate-800 capitalize">
+                                  {dim}
+                                </span>
+                                <span className="font-bold text-slate-900 tabular-nums">
+                                  {score}%
+                                </span>
+                              </div>
+                              <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${
+                                    score >= cutoffScore ? 'bg-[#6743ee]' : 'bg-slate-400'
+                                  }`}
+                                  style={{ width: `${score}%` }}
+                                />
+                              </div>
+                              {evidenceText && (
+                                <p className="text-[11px] text-slate-500 leading-snug">
+                                  {evidenceText}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Evaluated Skills Matrix (0-10) + Optional Radar Toggle */}
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-semibold text-slate-900">
+                          Evaluated Skills & Proficiency ({Object.keys(activeCandidate.skill_scores || {}).length})
+                        </h4>
+                        <button
+                          type="button"
+                          onClick={() => setShowRadarInDetail((prev) => !prev)}
+                          className="text-xs font-medium text-[#6743ee] hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <Radar className="w-3.5 h-3.5" />
+                          <span>{showRadarInDetail ? 'Hide Radar Chart' : 'Show Radar Chart'}</span>
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                        {Object.entries(activeCandidate.skill_scores || {})
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([skill, val]) => (
+                            <div
+                              key={skill}
+                              className="px-3 py-2 bg-slate-50/70 border border-slate-200 rounded-lg space-y-1"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium text-slate-800">{skill}</span>
+                                <span
+                                  className={`font-semibold tabular-nums ${
+                                    val >= 7 ? 'text-emerald-700' : 'text-slate-500'
+                                  }`}
+                                >
+                                  {val}/10
+                                </span>
+                              </div>
+                              <div className="w-full h-1.5 bg-slate-200/70 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${
+                                    val >= 7 ? 'bg-emerald-600' : 'bg-amber-500'
+                                  }`}
+                                  style={{ width: `${val * 10}%` }}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+
+                      {showRadarInDetail && (
+                        <div className="pt-2">
+                          <SkillRadarChart
+                            skillScores={activeCandidate.skill_scores}
+                            overallScore={activeCandidate.overall_score}
+                            selected={
+                              activeCandidate.decision_status === 'Advanced by recruiter' ||
+                              activeCandidate.decision_status === 'Hired by recruiter'
+                            }
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Strengths & Missing Skills / Gaps */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 bg-white border border-slate-200 rounded-lg space-y-2">
+                        <h4 className="font-semibold text-slate-900 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>Verified Strengths & Highlights</span>
+                        </h4>
+                        <ul className="list-disc list-inside space-y-1.5 text-slate-600">
+                          {activeCandidate.strengths.map((s, i) => (
+                            <li key={i}>{s}</li>
+                          ))}
+                          {activeCandidate.persona?.highlightReel?.slice(0, 2).map((h, i) => (
+                            <li key={`hl-${i}`}>
+                              <strong className="text-slate-800">{h.title}:</strong> {h.description}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <div className="p-4 bg-white border border-slate-200 rounded-lg space-y-2">
+                        <h4 className="font-semibold text-slate-900 flex items-center gap-1.5">
+                          <AlertCircle className="w-4 h-4 text-amber-600" />
+                          <span>Missing Competencies & Interview Focus</span>
+                        </h4>
+                        {activeCandidate.missing_skills.length > 0 ? (
+                          <ul className="list-disc list-inside space-y-1.5 text-slate-600">
+                            {activeCandidate.missing_skills.map((s, i) => {
+                              const weakness = activeCandidate.detailed_weaknesses?.find(
+                                (w) => w.skill.toLowerCase() === s.toLowerCase()
+                              );
+                              return (
+                                <li key={i}>
+                                  <strong className="text-slate-800">{s}:</strong>{' '}
+                                  {weakness?.details ||
+                                    'Not directly evidenced in resume; probe during technical round.'}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        ) : (
+                          <p className="text-slate-600">
+                            All required role competencies are well-evidenced in {activeCandidate.name}&apos;s profile.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {selectedDetailTab === 'rounds' && (
+                  <div className="space-y-4">
+                    {/* Interview Feedback Reports */}
+                    <div className="p-4 bg-slate-50/70 border border-slate-200 rounded-lg space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-semibold text-slate-900 flex items-center gap-1.5">
+                          <ClipboardCheck className="w-4 h-4 text-[#6743ee]" />
+                          Standardized Interview Evaluations
+                        </h4>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenFeedbackModal(activeCandidate)}
+                          className="px-3 py-1.5 bg-[#6743ee] hover:bg-[#5637d2] text-white font-semibold rounded-lg cursor-pointer"
+                        >
+                          + Log Interview Feedback
+                        </button>
+                      </div>
+
+                      {activeCandidate.interview_feedback_reports &&
+                      activeCandidate.interview_feedback_reports.length > 0 ? (
+                        <div className="space-y-2.5">
+                          {activeCandidate.interview_feedback_reports.map((rep) => (
+                            <div
+                              key={rep.id}
+                              className="p-3.5 bg-white border border-slate-200 rounded-lg space-y-1.5"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-semibold text-slate-900">
+                                  {rep.roundName} — {rep.overallRecommendation}
+                                </span>
+                                <span className="text-slate-500 tabular-nums">
+                                  Score: {rep.evaluationReport?.compositeScore ?? 85}/100
+                                </span>
+                              </div>
+                              {rep.evaluationReport?.executiveSummary && (
+                                <p className="text-slate-600">
+                                  {rep.evaluationReport.executiveSummary}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-slate-500">
+                          No interview feedback logged yet for {activeCandidate.name}. Click &ldquo;+ Log
+                          Interview Feedback&rdquo; to generate a standardized evaluation report.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Coding Challenge Round */}
+                    <div className="p-4 bg-white border border-slate-200 rounded-lg space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-slate-900 flex items-center gap-1.5">
+                          <FileCode className="w-4 h-4 text-slate-500" />
+                          Adaptive Coding Challenge
+                        </span>
+                        {!activeCandidate.rounds.coding?.challenge && (
+                          <button
+                            type="button"
+                            onClick={() => handleGenerateCoding(activeCandidate.candidate_id)}
+                            className="px-3 py-1 bg-[#6743ee] hover:bg-[#5637d2] text-white font-semibold rounded-lg cursor-pointer"
+                          >
+                            Generate Coding Task
+                          </button>
+                        )}
+                      </div>
+
+                      {activeCandidate.rounds.coding?.challenge && (
+                        <div className="space-y-2.5">
+                          <div>
+                            <div className="font-semibold text-slate-900">
+                              {activeCandidate.rounds.coding.challenge.title}
+                            </div>
+                            <p className="text-slate-600 mt-0.5">
+                              {activeCandidate.rounds.coding.challenge.prompt}
+                            </p>
+                          </div>
+                          <textarea
+                            value={activeCandidate.rounds.coding.candidate_submission || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setCandidates((prev) =>
+                                prev.map((c) =>
+                                  c.candidate_id === activeCandidate.candidate_id
+                                    ? {
+                                        ...c,
+                                        rounds: {
+                                          ...c.rounds,
+                                          coding: {
+                                            ...c.rounds.coding,
+                                            candidate_submission: val,
+                                          },
+                                        },
+                                      }
+                                    : c
+                                )
+                              );
+                            }}
+                            rows={4}
+                            className="w-full font-mono text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
+                          />
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleEvaluateCoding(activeCandidate.candidate_id)}
+                              className="px-3 py-1.5 bg-[#6743ee] hover:bg-[#5637d2] text-white font-semibold rounded-lg cursor-pointer"
+                            >
+                              Evaluate Submission
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleRoundDecision(activeCandidate.candidate_id, 'coding', 'pass')
+                              }
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
+                            >
+                              Pass Coding Round
+                            </button>
+                          </div>
+                          {activeCandidate.rounds.coding.evaluation && (
+                            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-1 text-slate-700">
+                              <div className="font-semibold text-slate-900 tabular-nums">
+                                Evaluation Score: {activeCandidate.rounds.coding.evaluation.score}/100
+                              </div>
+                              <p>{activeCandidate.rounds.coding.evaluation.correctness}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Technical Q&A Round */}
+                    <div className="p-4 bg-white border border-slate-200 rounded-lg space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-slate-900">
+                          Technical Interview Questions
+                        </span>
+                        {!activeCandidate.rounds.technical?.questions && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleGenerateTechnicalQuestions(activeCandidate.candidate_id)
+                            }
+                            className="px-3 py-1 bg-[#6743ee] hover:bg-[#5637d2] text-white font-semibold rounded-lg cursor-pointer"
+                          >
+                            Generate Questions
+                          </button>
+                        )}
+                      </div>
+
+                      {activeCandidate.rounds.technical?.questions && (
+                        <div className="space-y-3">
+                          {activeCandidate.rounds.technical.questions.map((q, idx) => (
+                            <div key={idx} className="space-y-1">
+                              <div className="font-medium text-slate-800">
+                                Q{idx + 1}: {q}
+                              </div>
+                              <textarea
+                                value={activeCandidate.rounds.technical?.answers?.[idx] || ''}
+                                onChange={(e) => {
+                                  const newAns = [
+                                    ...(activeCandidate.rounds.technical?.answers || []),
+                                  ];
+                                  newAns[idx] = e.target.value;
+                                  setCandidates((prev) =>
+                                    prev.map((c) =>
+                                      c.candidate_id === activeCandidate.candidate_id
+                                        ? {
                                             ...c,
                                             rounds: {
                                               ...c.rounds,
-                                              technical: { ...c.rounds.technical, answers: newAns }
-                                            }
-                                          };
-                                        }));
-                                      }}
-                                      placeholder="Candidate response..."
-                                      rows={2}
-                                      className="w-full text-xs p-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-                                    />
-                                  </div>
-                                ))}
-
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    onClick={() => handleEvaluateTechnical(cand.candidate_id)}
-                                    className="px-3 py-1.5 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-semibold rounded-lg"
-                                  >
-                                    Agent: Reflect on Evidence
-                                  </button>
-                                  <button
-                                    onClick={() => handleRoundDecision(cand.candidate_id, 'technical', 'pass')}
-                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg"
-                                  >
-                                    Recruiter: Pass Technical Round
-                                  </button>
-                                </div>
-
-                                {techRound.evaluation && (
-                                  <div className="p-3 bg-purple-50/50 border border-purple-200 rounded-lg space-y-1 text-slate-700">
-                                    <span className="font-bold text-purple-900 block">AI Evidence Reflection:</span>
-                                    <p>{techRound.evaluation.evidence}</p>
-                                    <p><strong>Strengths:</strong> {techRound.evaluation.strengths.join(", ")}</p>
-                                  </div>
-                                )}
-                              </div>
-                            )}
+                                              technical: {
+                                                ...c.rounds.technical,
+                                                answers: newAns,
+                                              },
+                                            },
+                                          }
+                                        : c
+                                    )
+                                  );
+                                }}
+                                rows={2}
+                                placeholder="Record candidate response..."
+                                className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
+                              />
+                            </div>
+                          ))}
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleEvaluateTechnical(activeCandidate.candidate_id)}
+                              className="px-3 py-1.5 bg-[#6743ee] hover:bg-[#5637d2] text-white font-semibold rounded-lg cursor-pointer"
+                            >
+                              Evaluate Responses
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleRoundDecision(
+                                  activeCandidate.candidate_id,
+                                  'technical',
+                                  'pass'
+                                )
+                              }
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg cursor-pointer"
+                            >
+                              Pass Technical Round
+                            </button>
                           </div>
+                          {activeCandidate.rounds.technical.evaluation && (
+                            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-slate-700">
+                              {activeCandidate.rounds.technical.evaluation.evidence}
+                            </div>
+                          )}
                         </div>
-
-                        {/* Document Verification & Onboarding status */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                            <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                              <Shield className="w-3.5 h-3.5 text-indigo-600" />
-                              Verification & Document Validation
-                            </span>
-                            <div className="space-y-1.5 text-[11px]">
-                              {Object.entries(cand.verification_checks).map(([check, status]) => (
-                                <div key={check} className="flex justify-between py-1 border-b border-slate-200">
-                                  <span className="capitalize text-slate-600">{check} check:</span>
-                                  <span className={`font-semibold ${
-                                    status === 'verified' ? 'text-emerald-700' : 'text-amber-700'
-                                  }`}>
-                                    {status}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
-                          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                            <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                              <ListTodo className="w-3.5 h-3.5 text-purple-600" />
-                              Onboarding Agent Checklist
-                            </span>
-                            <p className="text-[11px] text-slate-500">
-                              Post-offer structured checklist (Contracts, IT accounts, Hardware delivery, Team intro).
-                            </p>
-                            <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-800">
-                              Status: {cand.decision_status === 'Hired by recruiter' ? 'In Progress' : 'Pending Formal Acceptance'}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* AI Follow-Up Email Generator Callout & Triggers */}
-                        <div className="p-4 bg-gradient-to-r from-purple-50/90 via-indigo-50/70 to-purple-50/90 border border-purple-200/90 rounded-xl space-y-3 shadow-2xs">
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                            <div className="flex items-center gap-2.5">
-                              <div className="p-2 bg-gradient-to-tr from-[#6743ee] to-[#8a72ff] text-white rounded-lg shadow-2xs shrink-0">
-                                <Sparkles className="w-4 h-4" />
-                              </div>
-                              <div>
-                                <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                                  <Mail className="w-3.5 h-3.5 text-[#6743ee]" />
-                                  <span>Automated AI Follow-Up Email Generator</span>
-                                  <span className="text-[10px] font-semibold px-2 py-0.2 rounded-full bg-purple-100 text-[#5b43d6] border border-purple-200">
-                                    Adaptive Reasons
-                                  </span>
-                                </h4>
-                                <p className="text-[11px] text-slate-500 mt-0.5">
-                                  Draft personalized emails tailored to {cand.name}'s specific strengths, evaluation scores ({cand.overall_score}%), or identified skill gaps with one click.
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-2 shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => handleOpenEmailDraftModal(cand, 'progress')}
-                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5"
-                                title="Draft personalized progression / interview invitation email"
-                              >
-                                <Mail className="w-3.5 h-3.5" />
-                                <span>Draft Progress Email</span>
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => handleOpenEmailDraftModal(cand, 'rejection')}
-                                className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5"
-                                title="Draft personalized constructive rejection email citing specific gaps"
-                              >
-                                <Mail className="w-3.5 h-3.5" />
-                                <span>Draft Rejection Email</span>
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-purple-200/60 text-[11px] text-slate-600">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span><strong>Active Candidate Context:</strong></span>
-                              <span className="px-1.5 py-0.5 rounded bg-white text-purple-900 border border-purple-200 font-medium">
-                                Technical: {cand.dimension_scores.technical}%
-                              </span>
-                              {cand.missing_skills.length > 0 ? (
-                                <span className="px-1.5 py-0.5 rounded bg-white text-rose-800 border border-rose-200 font-medium">
-                                  Gap: {cand.missing_skills.slice(0, 2).join(', ')}
-                                </span>
-                              ) : (
-                                <span className="px-1.5 py-0.5 rounded bg-white text-emerald-800 border border-emerald-200 font-medium">
-                                  All core competencies verified
-                                </span>
-                              )}
-                            </div>
-                            <span className="text-[10px] text-slate-400">Includes live phone touchpoint script & queue syncing</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
-                );
-              }))}
-            </div>
-          </>
-        )}
-      </div>
-    </section>
-  )}
+                )}
 
-      {/* 5. Outreach & Scheduling Draft Queue */}
-      {outreachQueue.length > 0 && (
-        <section className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-4">
-          <div className="flex items-center gap-2.5 pb-2 border-b border-slate-100">
-            <div className="p-2 bg-amber-50 text-amber-700 rounded-xl">
-              <Send className="w-5 h-5" />
-            </div>
+                {selectedDetailTab === 'resume' && (
+                  <div className="space-y-4">
+                    {/* Uploaded / Parsed Resume Text Viewer */}
+                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-semibold text-slate-900 flex items-center gap-1.5">
+                          <FileText className="w-4 h-4 text-[#6743ee]" />
+                          <span>Resume Document Content</span>
+                        </h4>
+                        <span className="text-[11px] text-slate-500">
+                          {activeCandidate.document_validation?.resume?.label || 'Resume Profile'}
+                        </span>
+                      </div>
+                      <pre className="whitespace-pre-wrap font-sans text-xs text-slate-700 bg-white p-3.5 border border-slate-200 rounded-lg max-h-72 overflow-y-auto leading-relaxed">
+                        {activeCandidate.resume_text || activeCandidate.resume_profile}
+                      </pre>
+                    </div>
+
+                    {/* Custom Labels / Tags Manager */}
+                    <div className="p-4 bg-white border border-slate-200 rounded-lg space-y-2.5">
+                      <div className="font-semibold text-slate-900 flex items-center gap-1.5">
+                        <Tag className="w-3.5 h-3.5 text-[#6743ee]" />
+                        <span>Candidate Labels</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {(activeCandidate.custom_tags || []).map((tag) => (
+                          <span
+                            key={tag}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-50 text-[#6743ee] rounded text-xs font-medium"
+                          >
+                            {tag}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleRemoveCustomTag(activeCandidate.candidate_id, tag)
+                              }
+                              className="hover:text-rose-600"
+                              aria-label={`Remove label ${tag}`}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        ))}
+                        {PRESET_CUSTOM_TAGS.filter(
+                          (preset) => !(activeCandidate.custom_tags || []).includes(preset)
+                        ).map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() =>
+                              handleAddCustomTag(activeCandidate.candidate_id, preset)
+                            }
+                            className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-xs cursor-pointer"
+                          >
+                            + {preset}
+                          </button>
+                        ))}
+                      </div>
+
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          handleAddCustomTag(activeCandidate.candidate_id, newTagInput);
+                        }}
+                        className="flex items-center gap-2 pt-1 max-w-xs"
+                      >
+                        <input
+                          type="text"
+                          value={newTagInput}
+                          onChange={(e) => setNewTagInput(e.target.value)}
+                          placeholder="Custom label..."
+                          className="flex-1 px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-md text-xs"
+                        />
+                        <button
+                          type="submit"
+                          className="px-2.5 py-1 bg-slate-900 text-white rounded-md text-xs font-medium cursor-pointer"
+                        >
+                          Add
+                        </button>
+                      </form>
+                    </div>
+
+                    <CandidatePrivateNotes
+                      candidate={activeCandidate}
+                      onSaveNotes={handleSaveCandidateNotes}
+                      auditHistory={events}
+                    />
+
+                    <div className="p-4 bg-white border border-slate-200 rounded-lg">
+                      <h4 className="font-semibold text-slate-900 mb-2">Verification Checks</h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                        {Object.entries(activeCandidate.verification_checks).map(
+                          ([check, status]) => (
+                            <div
+                              key={check}
+                              className="p-2 bg-slate-50 border border-slate-200 rounded-md"
+                            >
+                              <div className="capitalize text-slate-500">{check}</div>
+                              <div
+                                className={`font-semibold capitalize mt-0.5 ${
+                                  status === 'verified' ? 'text-emerald-700' : 'text-amber-700'
+                                }`}
+                              >
+                                {status.replace('_', ' ')}
+                              </div>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* 3. Candidate Score Distribution & Trajectory Line Chart */}
+          <CandidateScoreTrajectorySection
+            candidates={candidates}
+            cutoffScore={cutoffScore}
+            brief={brief}
+            onInspectCandidate={(id) => focusSelectedCandidateDetails(id)}
+            onQuickUploadClick={() => setWorkspaceSection('intake')}
+          />
+
+          {/* 4. Team Skills Gap Analysis */}
+          <TeamSkillsGapAnalysis
+            candidates={candidates}
+            brief={brief}
+            cutoffScore={cutoffScore}
+            onInspectCandidate={(id) => focusSelectedCandidateDetails(id)}
+            onFilterBySkill={(skill) => {
+              setSelectedSkillTag((prev) => (prev === skill ? null : skill));
+              setStatusFilter('all');
+              setPipelineViewMode('list');
+            }}
+            onOpenLinkedInImport={() => setShowLinkedInImportModal(true)}
+          />
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* TAB 2: UPLOAD / PASTE RESUME                                      */}
+      {/* ================================================================= */}
+      {workspaceSection === 'intake' && (
+        <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200">
             <div>
-              <h2 className="text-base font-bold text-slate-900">
-                5. Recruiter Review: Outreach & Scheduling Drafts ({outreachQueue.length})
+              <h2 className="text-base font-semibold text-slate-900">
+                Upload or Screen Candidate Resume
               </h2>
-              <p className="text-xs text-slate-500">
-                Review invitation and phone call scripts. Approval marks ready for recruiter dispatch.
+              <p className="text-xs text-slate-500 mt-0.5">
+                Upload a PDF, DOCX, TXT, or Markdown file, paste resume text, or load a sample profile to view full candidate details.
               </p>
             </div>
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              <label className="px-3.5 py-1.5 bg-[#6743ee] hover:bg-[#5637d2] text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
+                <Upload className="w-3.5 h-3.5" />
+                <span>
+                  {isReadingResumeFile ? 'Extracting...' : 'Quick Upload & View Details'}
+                </span>
+                <input
+                  type="file"
+                  accept=".pdf,.txt,.md,.docx,.doc,.rtf"
+                  onChange={handleQuickUploadResume}
+                  className="sr-only"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowLinkedInImportModal(true)}
+                className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+              >
+                <UserPlus className="w-3.5 h-3.5 text-[#0a66c2]" />
+                Import LinkedIn
+              </button>
+              {(resumeTextInput || candidateNameInput || candidateEmailInput) && (
+                <button
+                  type="button"
+                  onClick={handleClearScreeningForm}
+                  className="px-2.5 py-1.5 text-slate-500 hover:text-slate-800 text-xs font-medium flex items-center gap-1 cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="space-y-3">
-            {outreachQueue.map((draft) => (
-              <div key={draft.id} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3 text-xs">
-                <div className="flex items-center justify-between">
-                  <div className="font-bold text-slate-900">
-                    To: {draft.candidate_name} ({draft.candidate_email}) — <span className="capitalize">{draft.type} draft</span>
-                  </div>
-                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
-                    draft.status.includes('approved') ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
-                  }`}>
-                    {draft.status}
-                  </span>
-                </div>
+          {/* Quick-Load Sample Profiles */}
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-slate-700">
+              Quick-Load Sample Resume
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {SAMPLE_RESUME_PRESETS.map((preset) => {
+                const isSelected = selectedPresetId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => handleSelectSamplePreset(preset)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#6743ee] text-white border-[#6743ee]'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                    }`}
+                  >
+                    {preset.name} ({preset.title})
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-                <div className="space-y-1">
-                  <span className="font-semibold text-slate-700">Subject:</span>
+          {/* Resume Upload & Text Area */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-700">
+                Resume File or Text *{' '}
+                {uploadedFileName && (
+                  <span className="text-[#6743ee] font-normal ml-1">({uploadedFileName})</span>
+                )}
+              </label>
+              <div className="flex items-center gap-3">
+                <label className="text-xs font-medium text-[#6743ee] hover:underline cursor-pointer flex items-center gap-1">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Load file into form (.pdf, .docx, .txt)</span>
+                  <input
+                    type="file"
+                    accept=".pdf,.txt,.md,.docx,.doc,.rtf"
+                    onChange={handleFileUpload}
+                    className="sr-only"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={handleAutoExtractFromResume}
+                  className="text-xs font-semibold text-[#6743ee] hover:underline cursor-pointer"
+                >
+                  Auto-fill fields
+                </button>
+              </div>
+            </div>
+            <textarea
+              value={resumeTextInput}
+              onChange={(e) => setResumeTextInput(e.target.value)}
+              rows={7}
+              placeholder="Paste candidate resume text here or upload a file above..."
+              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-[#6743ee]"
+            />
+            {autoFillNotification && (
+              <p className="text-xs text-emerald-700 flex items-center gap-1.5">
+                <Check className="w-3.5 h-3.5" />
+                {autoFillNotification}
+              </p>
+            )}
+          </div>
+
+          {/* Live Skill Match Preview */}
+          {(() => {
+            const requiredSkillsList = brief
+              ? brief.requirements.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean)
+              : [];
+            const displayParsed =
+              lastParsedData ||
+              (resumeTextInput.trim().length > 30
+                ? parseResumeText(resumeTextInput, requiredSkillsList)
+                : null);
+
+            if (!displayParsed) return null;
+            return (
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg text-xs flex flex-wrap items-center justify-between gap-2">
+                <span className="font-medium text-slate-800">
+                  Detected {displayParsed.matchedSkills.length} of {requiredSkillsList.length} required
+                  skills ({displayParsed.matchRatePercent}% coverage)
+                </span>
+                <span className="text-slate-600">
+                  {displayParsed.matchedSkills.slice(0, 6).join(', ')}
+                </span>
+              </div>
+            );
+          })()}
+
+          {/* Candidate Details Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Full Name</label>
+              <input
+                type="text"
+                value={candidateNameInput}
+                onChange={(e) => setCandidateNameInput(e.target.value)}
+                placeholder="e.g. Jordan Lee"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Email</label>
+              <input
+                type="email"
+                value={candidateEmailInput}
+                onChange={(e) => setCandidateEmailInput(e.target.value)}
+                placeholder="jordan.lee@example.com"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Phone</label>
+              <input
+                type="text"
+                value={candidatePhoneInput}
+                onChange={(e) => setCandidatePhoneInput(e.target.value)}
+                placeholder="+1-555-010-2030"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">LinkedIn URL</label>
+              <input
+                type="url"
+                value={linkedinUrl}
+                onChange={(e) => setLinkedinUrl(e.target.value)}
+                placeholder="https://linkedin.com/in/..."
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">GitHub URL</label>
+              <input
+                type="url"
+                value={githubUrl}
+                onChange={(e) => setGithubUrl(e.target.value)}
+                placeholder="https://github.com/..."
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Work Highlights</label>
+              <input
+                type="text"
+                value={workHighlights}
+                onChange={(e) => setWorkHighlights(e.target.value)}
+                placeholder="Key project or impact metric..."
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2 pt-1 text-xs text-slate-600">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={processingConsent}
+                onChange={(e) => setProcessingConsent(e.target.checked)}
+              />
+              <span>Candidate consented to automated evaluation against the role rubric.</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={memoryConsent}
+                onChange={(e) => setMemoryConsent(e.target.checked)}
+              />
+              <span>Retain evaluation history for future role matching.</span>
+            </label>
+          </div>
+
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={handleScreenResume}
+              disabled={!resumeTextInput.trim() || !processingConsent}
+              className="px-5 py-2.5 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-semibold rounded-lg disabled:opacity-50 cursor-pointer"
+            >
+              Screen & View Candidate Details
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* TAB 3: JOB BRIEF & JD                                             */}
+      {/* ================================================================= */}
+      {workspaceSection === 'brief' && (
+        <div className="space-y-6">
+          <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <div className="flex items-center gap-2">
+                <Briefcase className="w-4 h-4 text-[#6743ee]" />
+                <h2 className="text-base font-semibold text-slate-900">Hiring Brief & Requirements</h2>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.keys(ROLE_REQUIREMENTS).map((role) => (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => handleRolePresetChange(role)}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
+                      selectedRolePreset === role
+                        ? 'bg-[#6743ee] text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {role}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <form onSubmit={handleGenerateJd} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Company</label>
                   <input
                     type="text"
-                    value={draft.subject}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setOutreachQueue(prev => prev.map(d => d.id === draft.id ? { ...d, subject: val } : d));
-                    }}
-                    className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800"
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
                   />
                 </div>
-
-                <div className="space-y-1">
-                  <span className="font-semibold text-slate-700">Email Body:</span>
-                  <textarea
-                    value={draft.body}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setOutreachQueue(prev => prev.map(d => d.id === draft.id ? { ...d, body: val } : d));
-                    }}
-                    rows={4}
-                    className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800"
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Job Title *</label>
+                  <input
+                    type="text"
+                    value={jobTitle}
+                    onChange={(e) => setJobTitle(e.target.value)}
+                    required
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
                   />
                 </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Location</label>
+                  <input
+                    type="text"
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Headcount</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={headcount}
+                    onChange={(e) => setHeadcount(Number(e.target.value))}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Salary Budget
+                  </label>
+                  <input
+                    type="text"
+                    value={salaryBudget}
+                    onChange={(e) => setSalaryBudget(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Timeline</label>
+                  <input
+                    type="text"
+                    value={timeline}
+                    onChange={(e) => setTimeline(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                  />
+                </div>
+              </div>
 
-                <div className="flex items-center gap-2 pt-1">
-                  {!draft.status.includes('approved') && (
-                    <button
-                      onClick={() => handleApproveDraft(draft.id)}
-                      className="px-3 py-1.5 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-semibold rounded-lg"
-                    >
-                      Approve Draft
-                    </button>
-                  )}
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Required Competencies (comma separated — used in Team Skills Gap Analysis) *
+                </label>
+                <textarea
+                  value={requirementsText}
+                  onChange={(e) => setRequirementsText(e.target.value)}
+                  rows={2}
+                  required
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="px-4 py-2 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-semibold rounded-lg cursor-pointer"
+              >
+                Update Brief & Regenerate JD
+              </button>
+            </form>
+          </section>
+
+          {brief && (
+            <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-900">Job Description Draft</h3>
+                {!isJdApproved ? (
                   <button
-                    onClick={() => handleDownloadDraft(draft)}
-                    className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold rounded-lg flex items-center gap-1.5"
+                    type="button"
+                    onClick={handleApproveJd}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg cursor-pointer"
                   >
-                    <Download className="w-3.5 h-3.5" />
-                    Download Draft (.txt)
+                    Approve JD
                   </button>
+                ) : (
+                  <span className="text-xs font-medium text-emerald-700 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Approved
+                  </span>
+                )}
+              </div>
+
+              <textarea
+                value={brief.jd}
+                onChange={(e) => setBrief({ ...brief, jd: e.target.value })}
+                rows={8}
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-800"
+              />
+
+              {brief.evaluation_rubric && (
+                <div className="pt-2">
+                  <div className="text-xs font-semibold text-slate-800 mb-2">
+                    Evaluation Rubric Weights
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
+                    {brief.evaluation_rubric.criteria.map((c, i) => (
+                      <div key={i} className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                        <div className="text-xs font-medium text-slate-800">{c.criterion}</div>
+                        <div className="text-xs font-semibold text-[#6743ee] tabular-nums mt-0.5">
+                          {c.weight_percent}%
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        </section>
+              )}
+            </section>
+          )}
+        </div>
       )}
 
-      {/* 6. Workforce Graph */}
-      <WorkforceGraph job={brief} candidates={candidates} />
+      {/* ================================================================= */}
+      {/* TAB 4: INTERVIEWS, OUTREACH DRAFTS & ACTIVITY LOG                 */}
+      {/* ================================================================= */}
+      {workspaceSection === 'activity' && (
+        <div className="space-y-6">
+          <ScheduledInterviewsSection
+            scheduledInterviews={scheduledInterviews}
+            onOpenScheduler={handleOpenScheduler}
+            candidates={candidates}
+          />
 
-      {/* 7. Workflow Activity Audit Log */}
-      {events.length > 0 && (
-        <section className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-3">
-          <h3 className="font-bold text-slate-900 text-sm">Workflow Activity Audit Log ({events.length})</h3>
-          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-2">
-            {[...events].reverse().map((evt, idx) => (
-              <div key={idx} className="text-xs text-slate-600 flex items-center justify-between py-1 border-b border-slate-100">
-                <span>
-                  <strong className="text-slate-800">{evt.actor}</strong>: {evt.action} — <span className="text-slate-500 font-mono text-[11px]">{evt.subject}</span>
-                </span>
-                <span className="text-[10px] text-slate-400 shrink-0 font-mono">{evt.timestamp}</span>
+          <OutreachQueueSection
+            outreachQueue={outreachQueue}
+            setOutreachQueue={setOutreachQueue}
+            candidates={candidates}
+            brief={brief}
+            onInspectCandidate={(id) => focusSelectedCandidateDetails(id)}
+            appendAudit={appendAudit}
+          />
+
+          <WorkforceGraph job={brief} candidates={candidates} />
+
+          {events.length > 0 && (
+            <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-3">
+              <h3 className="text-sm font-semibold text-slate-900">
+                Activity Log ({events.length})
+              </h3>
+              <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto text-xs">
+                {[...events].reverse().map((evt, idx) => (
+                  <div key={idx} className="py-2 flex items-center justify-between gap-4">
+                    <span className="text-slate-600">
+                      <strong className="text-slate-900 font-medium">{evt.actor}</strong>: {evt.action}{' '}
+                      <span className="text-slate-400">({evt.subject})</span>
+                    </span>
+                    <span className="text-[11px] text-slate-400 font-mono tabular-nums shrink-0">
+                      {evt.timestamp}
+                    </span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </section>
+            </section>
+          )}
+        </div>
       )}
 
-      {/* 8. Candidate Head-to-Head Side-by-Side Comparison Modal */}
+      {/* ================================================================= */}
+      {/* MODALS                                                            */}
+      {/* ================================================================= */}
       {showCompareModal && compareCandA && compareCandB && (
         <CandidateComparisonModal
           candidateA={compareCandA}
@@ -3317,7 +3300,6 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         />
       )}
 
-      {/* 9. Automated AI Email Template Generator Modal */}
       {showEmailModal && emailModalCandidate && (
         <EmailDraftModal
           isOpen={showEmailModal}
@@ -3329,7 +3311,6 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         />
       )}
 
-      {/* 10. LinkedIn Talent Sourcing Import Modal */}
       {showLinkedInImportModal && (
         <LinkedInImportModal
           isOpen={showLinkedInImportModal}
@@ -3339,7 +3320,6 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         />
       )}
 
-      {/* 11. AI Candidate Persona & Highlight Reel Modal */}
       {showPersonaModal && personaModalCandidate && (
         <CandidatePersonaModal
           isOpen={showPersonaModal}
@@ -3352,7 +3332,6 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         />
       )}
 
-      {/* 12. AI Interview Scheduler & Calendar Invites Modal */}
       {showSchedulerModal && schedulerCandidate && (
         <InterviewSchedulerModal
           isOpen={showSchedulerModal}
@@ -3362,6 +3341,17 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
           onSelectCandidate={(cand) => setSchedulerCandidate(cand)}
           brief={brief}
           onConfirmSchedule={handleConfirmScheduledInterview}
+        />
+      )}
+
+      {showFeedbackModal && feedbackCandidate && (
+        <InterviewFeedbackModal
+          isOpen={showFeedbackModal}
+          onClose={() => setShowFeedbackModal(false)}
+          candidate={feedbackCandidate}
+          brief={brief}
+          onSaveFeedback={handleSaveFeedbackReport}
+          onOpenEmailDraft={(cand) => handleOpenEmailDraftModal(cand)}
         />
       )}
     </div>

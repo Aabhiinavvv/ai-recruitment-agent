@@ -29,7 +29,8 @@ import {
   ChevronRight,
   Calendar,
   Briefcase,
-  Scale
+  Scale,
+  ClipboardCheck
 } from 'lucide-react';
 
 interface CandidateKanbanBoardProps {
@@ -45,6 +46,7 @@ interface CandidateKanbanBoardProps {
   onOpenPersona?: (candidate: Candidate) => void;
   onLaunchCompare?: (candidateAId?: string, candidateBId?: string) => void;
   onOpenScheduler?: (candidate: Candidate) => void;
+  onOpenFeedbackModal?: (candidate: Candidate) => void;
 }
 
 const STAGES: { stage: HiringStage; label: string; desc: string; color: string; badgeColor: string; headerBg: string }[] = [
@@ -103,6 +105,7 @@ export const CandidateKanbanBoard: React.FC<CandidateKanbanBoardProps> = ({
   onOpenPersona,
   onLaunchCompare,
   onOpenScheduler,
+  onOpenFeedbackModal
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [draggedCandidateId, setDraggedCandidateId] = useState<string | null>(null);
@@ -351,6 +354,19 @@ export const CandidateKanbanBoard: React.FC<CandidateKanbanBoardProps> = ({
                                 <span>LinkedIn</span>
                               </span>
                             )}
+                            {cand.interview_feedback_reports && cand.interview_feedback_reports.length > 0 && (
+                              <div 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenFeedbackModal?.(cand);
+                                }}
+                                className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer ml-1"
+                                title={`Standardized evaluation report available (${cand.interview_feedback_reports[0].overallRecommendation}). Click to open.`}
+                              >
+                                <ClipboardCheck className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                                <span>{cand.interview_feedback_reports[0].overallRecommendation}</span>
+                              </div>
+                            )}
                           </div>
 
                           {/* Score Badge */}
@@ -475,6 +491,28 @@ export const CandidateKanbanBoard: React.FC<CandidateKanbanBoardProps> = ({
                                 title={`Schedule interview with ${cand.name} using AI calendar availability`}
                               >
                                 <Calendar className="w-3 h-3 text-[#6743ee]" />
+                              </button>
+                            )}
+
+                            {onOpenFeedbackModal && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenFeedbackModal(cand);
+                                }}
+                                className={`p-1 rounded transition-colors ${
+                                  cand.interview_feedback_reports && cand.interview_feedback_reports.length > 0
+                                    ? 'text-emerald-700 hover:bg-emerald-50'
+                                    : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
+                                }`}
+                                title={
+                                  cand.interview_feedback_reports && cand.interview_feedback_reports.length > 0
+                                    ? `View standardized evaluation report for ${cand.name} (${cand.interview_feedback_reports[0].overallRecommendation})`
+                                    : `Interview feedback form & AI report for ${cand.name}`
+                                }
+                              >
+                                <ClipboardCheck className="w-3 h-3 text-emerald-600" />
                               </button>
                             )}
 
