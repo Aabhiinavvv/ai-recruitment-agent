@@ -271,3 +271,38 @@ The API returns a draft ID, recipient, subject, body, optional call script and w
 Sensitive personal/health information or references to automated scores/ranks in recruiter-provided context are omitted and surfaced as warnings. Non-progression text is neutral and does not invent a reason.
 
 No provider credentials or outbound delivery integrations are configured. Production still requires authenticated recruiter identity, auditable consent and approval records, secure provider integrations, delivery logs, bounce/error handling, rate limits, template versioning and retention controls.
+
+
+---
+
+# Agent 5 — AI Interview Agent
+
+Agent 5 prepares recruiter-led interview question plans and provides advisory, evidence-based review of consented text answers.
+
+## API
+
+- POST /api/v1/interviews/plan
+- POST /api/v1/interviews/evaluate
+
+The planning request requires:
+- An approved job and rubric (recruiter_approved=true).
+- An explicit recruiter decision to advance the candidate.
+- Candidate consent confirmation.
+- A job context or recruiter-approved rubric criteria.
+- A candidate ID only; no resume, candidate name, email, phone, location or profile URL is accepted by the API.
+
+The evaluation request requires a question, competency, answer text and explicit transcript-processing consent. Evidence excerpts returned by the model are checked against the answer and discarded if they are not verbatim.
+
+## Generation and evaluation
+
+- When the configured local Ollama model is available, it generates a structured question set and advisory answer analysis using Pydantic JSON schemas.
+- If question generation is disabled or unavailable, the API generates a deterministic, clearly labelled question set from approved rubric criteria.
+- If answer evaluation is disabled or unavailable, the API produces a manual-review checklist with no score. It does not invent an evaluation.
+- Any model-generated 1–5 score is advisory and must be independently reviewed by the recruiter.
+- Context sentences containing protected or personal selection attributes are omitted from the model prompt with a warning.
+
+## Scope and safety
+
+This prototype is a recruiter-led, text-only workflow. It does not autonomously interview candidates, record audio/video, analyse face/voice/emotion, proctor, store transcripts, make a pass/reject/hire decision, or dispatch interview invitations. The API is stateless; session data exists only in the client until the recruiter exports it.
+
+Before production, add authenticated recruiter permissions, persistent candidate consent records, encrypted and access-controlled transcript storage (only if necessary), retention/deletion controls, audit logs, and independent validation of interview questions and evaluation reliability across job families and candidate groups.

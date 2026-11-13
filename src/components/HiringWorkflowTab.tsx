@@ -26,6 +26,7 @@ import { CandidatePersonaModal } from './CandidatePersonaModal';
 import { generateCandidatePersona } from '../services/personaGenerator';
 import { InterviewSchedulerModal } from './InterviewSchedulerModal';
 import { CommunicationAgentPanel } from './CommunicationAgentPanel';
+import { InterviewAgentPanel } from './InterviewAgentPanel';
 import { ScheduledInterviewsSection } from './ScheduledInterviewsSection';
 import { generateInterviewEmailConfirmation } from '../services/interviewSchedulerService';
 import { generateJobDraft, type JobIntelligenceResponse } from '../services/jobIntelligenceApi';
@@ -1908,6 +1909,13 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         scheduledInterviews={scheduledInterviews}
         onOpenScheduler={handleOpenScheduler}
         candidates={candidates}
+      />
+
+      {/* Agent 5 — AI Interview Agent */}
+      <InterviewAgentPanel
+        brief={brief}
+        candidates={candidates}
+        onAudit={(action, subject) => appendAudit("AI Interview Agent", action, subject)}
       />
 
       {/* 4. Candidate Insights Radar & Overview */}
