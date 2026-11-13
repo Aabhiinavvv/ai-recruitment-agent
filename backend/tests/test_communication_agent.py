@@ -7,6 +7,7 @@ from app.communication.schemas import CommunicationDraftRequest
 
 def _request(**overrides):
     values = {
+
         "communication_type": "application_acknowledgement",
         "candidate_id": "CAND-001",
         "candidate_name": "Jordan Lee",
