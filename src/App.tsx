@@ -6,7 +6,7 @@ import { AIInterviewTab } from './components/AIInterviewTab';
 import { ArchitectureTab } from './components/ArchitectureTab';
 import { FairnessModal } from './components/FairnessModal';
 import { ResumeToolsModal } from './components/ResumeToolsModal';
-import { Candidate, HiringBrief, OutreachDraft, AuditEvent } from './types';
+import { Candidate, HiringBrief, OutreachDraft, AuditEvent, InterviewRoundFeedback } from './types';
 import { ROLE_REQUIREMENTS, SAMPLE_CANDIDATES } from './data/roles';
 import { recruitmentAgent } from './services/recruitmentAgent';
 
@@ -153,6 +153,30 @@ export function App() {
     setEvents(prev => [...prev, newEvent]);
   };
 
+  const appendAudit = (actor: string, action: string, subject: string) => {
+    const newEvent: AuditEvent = {
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      actor,
+      action,
+      subject,
+    };
+    setEvents((prev) => [...prev, newEvent]);
+  };
+
+  const handleSaveInterviewFeedback = (candidateId: string, feedback: InterviewRoundFeedback) => {
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.candidate_id !== candidateId) return c;
+        const currentReports = c.interview_feedback_reports || [];
+        return {
+          ...c,
+          interview_feedback_reports: [feedback, ...currentReports],
+          stage: c.stage === 'Screening' ? 'Interview' : c.stage,
+        };
+      })
+    );
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-[#f8fafc] text-slate-900">
       <Header
@@ -197,6 +221,12 @@ export function App() {
 
           {activeTab === 'interview' && (
             <AIInterviewTab
+              brief={brief}
+              candidates={candidates}
+              selectedCandidateId={selectedCandidateId}
+              onSelectCandidateId={setSelectedCandidateId}
+              onSaveFeedback={handleSaveInterviewFeedback}
+              onAppendAudit={appendAudit}
               resumeReadinessScore={selectedCandidate?.overall_score || 85}
             />
           )}

@@ -19,6 +19,7 @@ import { parseResumeText, ParsedResumeData } from '../services/resumeParser';
 import { extractTextFromResumeFile } from '../services/resumeFileReader';
 import { TeamSkillsGapAnalysis } from './TeamSkillsGapAnalysis';
 import { SkillRadarChart } from './SkillRadarChart';
+import { CandidateRubricRadarChart } from './CandidateRubricRadarChart';
 import { CandidateStageDropdown } from './CandidateStageDropdown';
 import { CandidateComparisonModal } from './CandidateComparisonModal';
 import { CandidatePrivateNotes } from './CandidatePrivateNotes';
@@ -35,6 +36,7 @@ import { InterviewFeedbackModal } from './InterviewFeedbackModal';
 import { SplitPaneComparisonView } from './SplitPaneComparisonView';
 import { CandidateScoreTrajectorySection } from './CandidateScoreTrajectorySection';
 import { OutreachQueueSection } from './OutreachQueueSection';
+import { ExportReportModal } from './ExportReportModal';
 import {
   Briefcase,
   Upload,
@@ -42,6 +44,7 @@ import {
   XCircle,
   Sparkles,
   Download,
+  FileSpreadsheet,
   AlertCircle,
   Mail,
   FileCode,
@@ -135,6 +138,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   const [isReadingResumeFile, setIsReadingResumeFile] = useState<boolean>(false);
   const [selectedDetailTab, setSelectedDetailTab] = useState<'overview' | 'rounds' | 'resume'>('overview');
   const [showRadarInDetail, setShowRadarInDetail] = useState<boolean>(false);
+  const [rubricViewMode, setRubricViewMode] = useState<'radar' | 'grid'>('radar');
 
   // Job Brief state
   const [selectedRolePreset, setSelectedRolePreset] = useState<string>(brief?.job_title || 'AI/ML Engineer');
@@ -232,6 +236,9 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
 
   // Bulk Action Selection State
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
+
+  // HR Report & Audit Log Export State
+  const [showExportModal, setShowExportModal] = useState<boolean>(false);
 
   const appendAudit = (actor: string, action: string, subject: string) => {
     const newEvent: AuditEvent = {
@@ -1453,6 +1460,16 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
             <Calendar className="w-3.5 h-3.5 text-slate-500" />
             Schedule
           </button>
+
+          <button
+            type="button"
+            onClick={() => setShowExportModal(true)}
+            className="px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer shadow-xs"
+            title="Export candidate evaluation summaries and recruitment workflow audit logs as formatted PDF or CSV report"
+          >
+            <Download className="w-3.5 h-3.5 text-[#6743ee]" />
+            <span>Export HR Report</span>
+          </button>
         </div>
       </div>
 
@@ -2313,16 +2330,61 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                       )}
                     </div>
 
-                    {/* 6-Dimension Evaluation Breakdown */}
-                    <div className="space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-semibold text-slate-900">
-                          6-Dimension Evaluation Breakdown
-                        </h4>
-                        <span className="text-[11px] text-slate-500">
-                          Weighted rubric across technical, experience, education, projects, domain & communication
-                        </span>
+                    {/* 6-Dimension Evaluation Rubric & Spider Radar Analysis */}
+                    <div className="space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-semibold text-slate-900">
+                              6-Dimension Evaluation Rubric
+                            </h4>
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-purple-100/80 text-[#6743ee] font-semibold">
+                              Target Alignment
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-slate-500 block mt-0.5">
+                            Weighted rubric across technical, experience, education, projects, domain &amp; communication vs target requirements
+                          </span>
+                        </div>
+
+                        {/* View Switcher: Spider Chart vs Matrix Cards */}
+                        <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs shrink-0 self-start sm:self-auto">
+                          <button
+                            type="button"
+                            onClick={() => setRubricViewMode('radar')}
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                              rubricViewMode === 'radar'
+                                ? 'bg-white text-[#6743ee] shadow-xs font-semibold'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                            title="Interactive Spider / Radar chart comparing candidate scores with target job requirements"
+                          >
+                            <Radar className="w-3.5 h-3.5" />
+                            <span>Spider Radar</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRubricViewMode('grid')}
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                              rubricViewMode === 'grid'
+                                ? 'bg-white text-[#6743ee] shadow-xs font-semibold'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                            title="Compact card grid view of individual dimension scores"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            <span>Card Matrix</span>
+                          </button>
+                        </div>
                       </div>
+
+                      {rubricViewMode === 'radar' ? (
+                        <CandidateRubricRadarChart
+                          candidate={activeCandidate}
+                          brief={brief}
+                          cutoffScore={cutoffScore}
+                        />
+                      ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                         {Object.entries(activeCandidate.dimension_scores).map(([dim, score]) => {
                           const evidenceText =
@@ -2360,6 +2422,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                           );
                         })}
                       </div>
+                      )}
                     </div>
 
                     {/* Evaluated Skills Matrix (0-10) + Optional Radar Toggle */}
@@ -3258,9 +3321,20 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
 
           {events.length > 0 && (
             <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-3">
-              <h3 className="text-sm font-semibold text-slate-900">
-                Activity Log ({events.length})
-              </h3>
+              <div className="flex items-center justify-between pb-1">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Activity Log ({events.length})
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowExportModal(true)}
+                  className="text-xs text-[#6743ee] hover:text-[#5233c7] hover:underline font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Export audit events and candidate logs"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>Export Audit Trail</span>
+                </button>
+              </div>
               <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto text-xs">
                 {[...events].reverse().map((evt, idx) => (
                   <div key={idx} className="py-2 flex items-center justify-between gap-4">
@@ -3352,6 +3426,19 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
           brief={brief}
           onSaveFeedback={handleSaveFeedbackReport}
           onOpenEmailDraft={(cand) => handleOpenEmailDraftModal(cand)}
+        />
+      )}
+
+      {showExportModal && (
+        <ExportReportModal
+          isOpen={showExportModal}
+          onClose={() => setShowExportModal(false)}
+          brief={brief}
+          candidates={candidates}
+          auditEvents={events}
+          outreachQueue={outreachQueue}
+          cutoffScore={cutoffScore}
+          appendAudit={appendAudit}
         />
       )}
     </div>
