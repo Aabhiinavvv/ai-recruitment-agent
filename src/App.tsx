@@ -174,8 +174,7 @@ function AppContent() {
 
   // AI settings
   const [provider, setProvider] = useState<'Groq' | 'Gemini'>('Gemini');
-  const [apiKey, setApiKey] = useState<string>('');
-  const [model, setModel] = useState<string>('gemini-3.8-flash');
+  const [model, setModel] = useState<string>('gemini-4-hydrogen');
   const [cutoffScore, setCutoffScore] = useState<number>(75);
 
   // Modals
@@ -204,8 +203,8 @@ function AppContent() {
 
   // Update agent config whenever settings change
   useEffect(() => {
-    recruitmentAgent.configure(apiKey, provider, model, cutoffScore);
-  }, [apiKey, provider, model, cutoffScore]);
+    recruitmentAgent.configure(undefined, provider, model, cutoffScore);
+  }, [provider, model, cutoffScore]);
 
   // Hydrate or seed authenticated user's persisted workspace
   useEffect(() => {
@@ -481,8 +480,6 @@ function AppContent() {
           setActiveTab={setActiveTab}
           provider={provider}
           setProvider={setProvider}
-          apiKey={apiKey}
-          setApiKey={setApiKey}
           model={model}
           setModel={setModel}
           cutoffScore={cutoffScore}

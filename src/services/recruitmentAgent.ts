@@ -35,19 +35,16 @@ const EXTRA_TECH_SKILLS = [
 ];
 
 export class RecruitmentAgentService {
-  private apiKey: string | null = null;
   private provider: 'Groq' | 'Gemini' = 'Gemini';
-  private model: string = 'gemini-3.8-flash';
+  private model: string = 'gemini-4-hydrogen';
   private cutoffScore: number = 75;
 
-  constructor(apiKey?: string, provider: 'Groq' | 'Gemini' = 'Gemini', model?: string) {
-    if (apiKey) this.apiKey = apiKey;
+  constructor(_apiKey?: string, provider: 'Groq' | 'Gemini' = 'Gemini', model?: string) {
     this.provider = provider;
     if (model) this.model = model;
   }
 
-  public configure(apiKey?: string, provider: 'Groq' | 'Gemini' = 'Gemini', model?: string, cutoff: number = 75) {
-    if (apiKey !== undefined) this.apiKey = apiKey;
+  public configure(_apiKey?: string, provider: 'Groq' | 'Gemini' = 'Gemini', model?: string, cutoff: number = 75) {
     this.provider = provider;
     if (model) this.model = model;
     this.cutoffScore = cutoff;

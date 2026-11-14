@@ -14,6 +14,7 @@ import {
   upsertOutreachDrafts,
   upsertScheduledInterview,
 } from './src/db/records.ts';
+import { analyzeResumeWithGemini } from './src/services/geminiResumeAnalyzer.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -156,6 +157,52 @@ async function startServer() {
     } catch (error) {
       console.error('POST /api/audit failed:', error);
       res.status(500).json({ error: 'Failed to save audit event' });
+    }
+  });
+
+  app.post('/api/ai/resume-insights', async (req, res) => {
+    try {
+      const {
+        candidateName,
+        resumeText,
+        targetRole,
+        jobDescription,
+        requiredSkills,
+        experienceYears,
+        educationSummary,
+        overallScore,
+      } = req.body || {};
+
+      if (!resumeText || typeof resumeText !== 'string' || !resumeText.trim()) {
+        res.status(400).json({ error: 'Resume text is required for AI analysis.' });
+        return;
+      }
+
+      const insights = await analyzeResumeWithGemini({
+        candidateName: typeof candidateName === 'string' ? candidateName : 'Candidate',
+        resumeText,
+        targetRole: typeof targetRole === 'string' ? targetRole : 'Software Engineer',
+        jobDescription: typeof jobDescription === 'string' ? jobDescription : undefined,
+        requiredSkills: Array.isArray(requiredSkills) ? requiredSkills : undefined,
+        experienceYears: typeof experienceYears === 'string' ? experienceYears : undefined,
+        educationSummary: typeof educationSummary === 'string' ? educationSummary : undefined,
+        overallScore: typeof overallScore === 'number' ? overallScore : undefined,
+      });
+
+      res.json({ insights });
+    } catch (error: unknown) {
+      console.error('POST /api/ai/resume-insights failed:', error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Failed to generate AI resume insights.';
+      const status =
+        message.includes('not configured')
+          ? 503
+          : message.includes('429') || message.includes('RESOURCE_EXHAUSTED')
+            ? 429
+            : 500;
+      res.status(status).json({ error: message });
     }
   });
 

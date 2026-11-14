@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Candidate,
   HiringBrief,
@@ -17,6 +17,9 @@ import { generateCandidatePersona } from '../services/personaGenerator';
 import { generateInterviewEmailConfirmation, getFormatDisplayLabel } from '../services/interviewSchedulerService';
 import { parseResumeText, ParsedResumeData, extractNameFromFileName } from '../services/resumeParser';
 import { extractTextFromResumeFile } from '../services/resumeFileReader';
+import { generateResumeAIInsights } from '../services/resumeInsightsApi';
+import { buildLocalResumeInsights } from '../services/localResumeInsights';
+import { CandidateResumeInsightsPanel } from './CandidateResumeInsightsPanel';
 import { TeamSkillsGapAnalysis } from './TeamSkillsGapAnalysis';
 import { SkillRadarChart } from './SkillRadarChart';
 import { CandidateRubricRadarChart } from './CandidateRubricRadarChart';
@@ -206,6 +209,11 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   const [showPersonaModal, setShowPersonaModal] = useState<boolean>(false);
   const [generatingPersonaId, setGeneratingPersonaId] = useState<string | null>(null);
 
+  // Gemini AI Resume Insights & Pattern Analysis State
+  const [analyzingInsightIds, setAnalyzingInsightIds] = useState<Record<string, boolean>>({});
+  const [insightErrors, setInsightErrors] = useState<Record<string, string>>({});
+  const autoAnalyzedIdsRef = useRef<Set<string>>(new Set());
+
   // LinkedIn Talent Import Modal state
   const [showLinkedInImportModal, setShowLinkedInImportModal] = useState<boolean>(false);
 
@@ -343,6 +351,94 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       null
     );
   }, [candidates, effectiveSelectedId, sortedCandidates]);
+
+  const runResumeAIAnalysis = async (cand: Candidate, forceRefresh = false) => {
+    const resumeText = (cand.resume_text || cand.resume_profile || '').trim();
+    if (!resumeText) return;
+    if (!forceRefresh && (cand.ai_insights || analyzingInsightIds[cand.candidate_id])) {
+      return;
+    }
+
+    autoAnalyzedIdsRef.current.add(cand.candidate_id);
+    setAnalyzingInsightIds((prev) => ({ ...prev, [cand.candidate_id]: true }));
+    setInsightErrors((prev) => {
+      const next = { ...prev };
+      delete next[cand.candidate_id];
+      return next;
+    });
+
+    try {
+      const reqSkills = (brief?.requirements || requirementsText)
+        .split(/[\n,;]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const insights = await generateResumeAIInsights({
+        candidateName: cand.name,
+        resumeText,
+        targetRole: brief?.job_title || cand.role || jobTitle,
+        jobDescription: brief?.jd,
+        requiredSkills: reqSkills,
+        experienceYears: cand.experience_years,
+        educationSummary: cand.education_summary,
+        overallScore: cand.overall_score,
+      });
+
+      setCandidates((prev) =>
+        prev.map((c) => {
+          if (c.candidate_id !== cand.candidate_id) return c;
+          return {
+            ...c,
+            ai_insights: insights,
+          };
+        })
+      );
+
+      setEvents((prev) => [
+        ...prev,
+        {
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          }),
+          actor: 'AI Brain',
+          action: `Synthesized brief summary & ${insights.careerPatterns.length} resume patterns`,
+          subject: `${cand.name} (${cand.candidate_id})`,
+        },
+      ]);
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Could not generate AI summary & pattern insights right now.';
+      setInsightErrors((prev) => ({ ...prev, [cand.candidate_id]: msg }));
+
+      const fallbackInsights = buildLocalResumeInsights(cand, brief);
+      setCandidates((prev) =>
+        prev.map((c) => {
+          if (c.candidate_id !== cand.candidate_id) return c;
+          return {
+            ...c,
+            ai_insights: fallbackInsights,
+          };
+        })
+      );
+    } finally {
+      setAnalyzingInsightIds((prev) => ({ ...prev, [cand.candidate_id]: false }));
+    }
+  };
+
+  useEffect(() => {
+    if (!activeCandidate) return;
+    if (
+      !activeCandidate.ai_insights &&
+      !autoAnalyzedIdsRef.current.has(activeCandidate.candidate_id) &&
+      !analyzingInsightIds[activeCandidate.candidate_id]
+    ) {
+      void runResumeAIAnalysis(activeCandidate, false);
+    }
+  }, [activeCandidate?.candidate_id]);
 
   const availableSkillTags = useMemo(() => {
     const map = new Map<string, number>();
@@ -505,6 +601,8 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         `Uploaded & evaluated ${extracted.fileType} resume "${file.name}" (Score: ${screenedCandidate.overall_score}%)`,
         `${screenedCandidate.role}: ${screenedCandidate.name} (${screenedCandidate.candidate_id})`
       );
+
+      void runResumeAIAnalysis(screenedCandidate, true);
     } finally {
       setIsReadingResumeFile(false);
     }
@@ -1175,6 +1273,8 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       `Screened resume (Score: ${screenedCandidate.overall_score}%)`,
       `${activeBrief.job_title}: ${screenedCandidate.name} (${screenedCandidate.candidate_id})`
     );
+
+    void runResumeAIAnalysis(screenedCandidate, true);
 
     handleClearScreeningForm();
 
@@ -2095,11 +2195,23 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                                 </div>
                               )}
 
-                              {/* Real Candidate Summary Excerpt */}
-                              {(cand.summary_excerpt || cand.resume_profile) && (
-                                <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
-                                  {cand.summary_excerpt || cand.resume_profile}
-                                </p>
+                              {/* AI Brief Summary or Grounded Resume Excerpt */}
+                              {cand.ai_insights ? (
+                                <div className="space-y-0.5">
+                                  <div className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+                                    <Sparkles className="w-3 h-3 text-[#6743ee] shrink-0" />
+                                    <span className="truncate">{cand.ai_insights.tldrHeadline}</span>
+                                  </div>
+                                  <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                                    {cand.ai_insights.briefSummary}
+                                  </p>
+                                </div>
+                              ) : (
+                                (cand.summary_excerpt || cand.resume_profile) && (
+                                  <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                                    {cand.summary_excerpt || cand.resume_profile}
+                                  </p>
+                                )
                               )}
 
                               {/* Real Contact & Extracted Skills */}
@@ -2494,53 +2606,13 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
               <div className="p-5 text-xs space-y-5">
                 {selectedDetailTab === 'overview' && (
                   <>
-                    {/* Real Resume-Grounded Candidate Summary */}
-                    <div className="p-4 bg-slate-50/80 border border-slate-200 rounded-lg space-y-2.5">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="font-semibold text-slate-900 flex items-center gap-2">
-                          <span>Candidate Summary</span>
-                          {activeCandidate.source_file_name && (
-                            <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
-                              Extracted from {activeCandidate.source_file_name}
-                            </span>
-                          )}
-                        </div>
-                        {(activeCandidate.experience_years || activeCandidate.education_summary) && (
-                          <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2">
-                            {activeCandidate.experience_years && (
-                              <span className="font-medium text-slate-700">
-                                Experience: {activeCandidate.experience_years}
-                              </span>
-                            )}
-                            {activeCandidate.experience_years && activeCandidate.education_summary && (
-                              <span>·</span>
-                            )}
-                            {activeCandidate.education_summary && (
-                              <span className="font-medium text-slate-700">
-                                {activeCandidate.education_summary}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      <p className="text-slate-700 leading-relaxed">
-                        {activeCandidate.summary_excerpt || activeCandidate.resume_profile}
-                      </p>
-
-                      {activeCandidate.work_highlights && activeCandidate.work_highlights.length > 0 && (
-                        <div className="pt-1.5 border-t border-slate-200/80 space-y-1">
-                          <div className="text-[11px] font-semibold text-slate-700">
-                            Extracted Resume Experience Highlights
-                          </div>
-                          <ul className="list-disc list-inside space-y-1 text-slate-600">
-                            {activeCandidate.work_highlights.slice(0, 4).map((hl, idx) => (
-                              <li key={idx}>{hl}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
+                    {/* Gemini AI Brief Summary, Career Patterns & Resume Insights */}
+                    <CandidateResumeInsightsPanel
+                      candidate={activeCandidate}
+                      isAnalyzing={Boolean(analyzingInsightIds[activeCandidate.candidate_id])}
+                      errorMessage={insightErrors[activeCandidate.candidate_id] || null}
+                      onAnalyze={(force = true) => void runResumeAIAnalysis(activeCandidate, force)}
+                    />
 
                     {/* 6-Dimension Evaluation Rubric & Spider Radar Analysis */}
                     <div className="space-y-3">

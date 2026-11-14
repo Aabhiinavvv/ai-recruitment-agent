@@ -15,8 +15,6 @@ interface SidebarProps {
   setActiveTab: (tab: 'workflow' | 'interview' | 'architecture') => void;
   provider: 'Groq' | 'Gemini';
   setProvider: (p: 'Groq' | 'Gemini') => void;
-  apiKey: string;
-  setApiKey: (k: string) => void;
   model: string;
   setModel: (m: string) => void;
   cutoffScore: number;
@@ -31,8 +29,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setActiveTab,
   provider,
   setProvider,
-  apiKey,
-  setApiKey,
   model,
   setModel,
   cutoffScore,
@@ -174,7 +170,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onChange={(e) => {
                   const p = e.target.value as 'Groq' | 'Gemini';
                   setProvider(p);
-                  setModel(p === 'Groq' ? 'llama-3.3-70b-versatile' : 'gemini-3.8-flash');
+                  setModel(p === 'Groq' ? 'llama-3.3-70b-versatile' : 'gemini-4-hydrogen');
                 }}
                 className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-600"
               >
@@ -196,22 +192,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <option value="llama-3.1-8b-instant">llama-3.1-8b-instant</option>
                   </>
                 ) : (
-                  <option value="gemini-3.8-flash">gemini-3.8-flash</option>
+                  <>
+                    <option value="gemini-4-hydrogen">gemini-4-hydrogen</option>
+                    <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+                  </>
                 )}
               </select>
-            </div>
-
-            <div>
-              <label className="block text-slate-600 font-medium mb-1">
-                API Key <span className="text-slate-400 font-normal">(Optional)</span>
-              </label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Uses built-in agent if blank"
-                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-600"
-              />
             </div>
           </div>
         )}

@@ -141,10 +141,39 @@ export interface Candidate {
   extracted_skills?: string[];
   source_file_name?: string;
   persona?: CandidatePersona;
+  ai_insights?: ResumeAIInsights;
   stage_dwell_times?: Partial<Record<HiringStage, number>>;
   interview_feedback_reports?: InterviewRoundFeedback[];
   custom_tags?: string[];
   processed_at?: string;
+}
+
+export interface ResumePatternInsight {
+  category: 'Trajectory' | 'Depth vs Breadth' | 'Ownership & Impact' | 'Specialization' | 'Consistency' | 'Leadership';
+  pattern: string;
+  insight: string;
+  evidence: string;
+  signal: 'positive' | 'neutral' | 'watch';
+}
+
+export interface ResumeProbeArea {
+  concern: string;
+  suggestedQuestion: string;
+}
+
+export interface ResumeAIInsights {
+  tldrHeadline: string;
+  briefSummary: string;
+  careerPatterns: ResumePatternInsight[];
+  keyInsights: string[];
+  riskOrProbeAreas: ResumeProbeArea[];
+  workStyleSignals: {
+    seniorityCalibration: string;
+    technicalDepthVsBreadth: string;
+    impactOrientation: string;
+  };
+  engine: string;
+  generatedAt: string;
 }
 
 export interface PersonaHighlight {
