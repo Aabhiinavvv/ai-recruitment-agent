@@ -129,12 +129,14 @@ Agent 2 provides batch resume upload and evidence-backed candidate profile extra
 - Use spaCy for optional named-entity annotations (ORG, GPE, LOC and DATE).
 - Use Presidio for optional PII redaction, with a basic email/phone regex fallback.
 - Produce Pydantic-validated candidate profiles, confidence values, evidence references and review flags.
+- Save each extracted candidate profile and its evidence-backed analysis in a local SQLite database. Re-uploading identical file content loads the existing profile instead of creating a duplicate.
 - Continue processing the remaining files if one file is corrupt or unsupported.
 
-It does not score role fit, rank candidates, make shortlisting decisions, or persist the uploaded documents.
+It does not score role fit, rank candidates, make shortlisting decisions, or persist the uploaded documents. Candidate profiles and analysis are stored in `backend/data/candidate_profiles.sqlite3` by default; set `CANDIDATE_DATABASE_PATH` to use another SQLite file. The original resume files are not retained.
 
 ## Agent 2 API
 
+GET /api/v1/candidate-intelligence/resumes
 POST /api/v1/candidate-intelligence/resumes/batch
 
 Send multipart/form-data with:
@@ -185,7 +187,7 @@ Each successful file contains:
 - The regex redaction fallback masks email and phone-like values only. Enable and configure Presidio for broader entity detection; validate language-specific recognisers before production.
 - The original extracted resume text is not returned; the response includes a redacted text representation. The structured contact fields remain visible to authorised workflow users and require access control.
 - Extraction is heuristic. Skill mentions are not proof of proficiency, and entity recognition is not verification. Recruiters must check the original resume.
-- There is no database persistence, authentication, tenant isolation, malware scanning, encrypted object storage, retention/deletion workflow or access audit yet.
+- Database persistence is local SQLite only; authentication, tenant isolation, malware scanning, encrypted object storage, retention/deletion workflow and access audit are not provided.
 - Do not use extraction outputs as an automated hiring decision or as a sole basis for rejecting a candidate.
 
 
@@ -241,3 +243,33 @@ Enable semantic retrieval or reranking only after installing sentence-transforme
 - Ranking quality depends on extraction quality, the skill vocabulary, rubric wording and lexical coverage. BM25 is not a full semantic understanding of every resume.
 - No calibrated prediction or hiring probability is produced. Validate the method against labelled, job-related evaluation data before considering operational use.
 - Protected attributes and direct identifiers are not used as ranking inputs. This does not replace a full independent bias, legal and privacy assessment.
+
+
+---
+
+# Agent 4 — Communication Agent
+
+Agent 4 prepares candidate-facing communication drafts based on recruiter-authorised workflow state.
+
+## API
+
+POST /api/v1/communication/drafts
+
+Supported `communication_type` values:
+- `application_acknowledgement`
+- `interview_invitation`
+- `scheduling_request`
+- `schedule_confirmation`
+- `status_update`
+- `not_selected`
+- `follow_up`
+
+The request must confirm candidate contact authorisation. Interview invitations, scheduling requests and schedule confirmations require `recruiter_decision="advanced"`. A `not_selected` draft requires `recruiter_decision="not_proceeding"`. Schedule confirmations require a date and time; only supplied schedule details are placed in the draft.
+
+## Human-review and delivery boundary
+
+The API returns a draft ID, recipient, subject, body, optional call script and warnings. Every result has `requires_recruiter_approval=true` and `delivery_enabled=false`. It does not send email, SMS, WhatsApp messages, calendar events or phone calls. The frontend adds drafts to the existing recruiter review queue; the queue's approve action marks them approved for a future delivery integration only.
+
+Sensitive personal/health information or references to automated scores/ranks in recruiter-provided context are omitted and surfaced as warnings. Non-progression text is neutral and does not invent a reason.
+
+No provider credentials or outbound delivery integrations are configured. Production still requires authenticated recruiter identity, auditable consent and approval records, secure provider integrations, delivery logs, bounce/error handling, rate limits, template versioning and retention controls.

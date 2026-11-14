@@ -54,9 +54,22 @@ export interface CandidateIntelligenceBatchResponse {
   results: ResumeFileResult[];
 }
 
+export interface SavedCandidateProfile {
+  candidate_profile: CandidateProfile;
+  uploaded_at: string;
+}
+
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 ).replace(/\/$/, '');
+
+export async function fetchSavedCandidateProfiles(): Promise<SavedCandidateProfile[]> {
+  const response = await fetch(API_BASE_URL + '/api/v1/candidate-intelligence/resumes');
+  if (!response.ok) {
+    throw new Error('Could not load saved candidates (HTTP ' + response.status + ').');
+  }
+  return response.json() as Promise<SavedCandidateProfile[]>;
+}
 
 export async function uploadResumeBatch(
   files: File[],

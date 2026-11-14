@@ -25,6 +25,7 @@ import { CandidatePersonaCard } from './CandidatePersonaCard';
 import { CandidatePersonaModal } from './CandidatePersonaModal';
 import { generateCandidatePersona } from '../services/personaGenerator';
 import { InterviewSchedulerModal } from './InterviewSchedulerModal';
+import { CommunicationAgentPanel } from './CommunicationAgentPanel';
 import { ScheduledInterviewsSection } from './ScheduledInterviewsSection';
 import { generateInterviewEmailConfirmation } from '../services/interviewSchedulerService';
 import { generateJobDraft, type JobIntelligenceResponse } from '../services/jobIntelligenceApi';
@@ -361,7 +362,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   };
 
   const handleSelectAboveCutoff = () => {
-    const above = candidates.filter(c => c.overall_score >= cutoffScore).map(c => c.candidate_id);
+    const above = candidates.filter(c => c.analysis_status !== 'unassessed' && c.overall_score >= cutoffScore).map(c => c.candidate_id);
     setSelectedCandidateIds(above);
     appendAudit("Recruiter", `Bulk selected ${above.length} candidates scoring above cutoff (>=${cutoffScore}%)`, `${above.length} Candidates`);
   };
@@ -1068,7 +1069,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         status: 'Recruiter approved — integration required; not sent or called'
       };
     }));
-    appendAudit("Recruiter", "Approved communication draft", draftId);
+    appendAudit("Recruiter", "Approved communication draft for future delivery integration; not sent", draftId);
   };
 
   const handleDownloadDraft = (draft: OutreachDraft) => {
@@ -1115,7 +1116,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                             c.email.toLowerCase().includes(q);
 
         // Match by skill tags in skill_scores
-        const skillKeys = Object.keys(c.skill_scores || {});
+        const skillKeys = [...Object.keys(c.skill_scores || {}), ...(c.extracted_skills ?? [])];
         const matchesSkills = skillKeys.some(skill => skill.toLowerCase().includes(q));
 
         // Match by strengths or weaknesses
@@ -1130,7 +1131,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     if (selectedSkillTag) {
       const targetSkill = selectedSkillTag.toLowerCase();
       result = result.filter(c => {
-        const skillKeys = Object.keys(c.skill_scores || {});
+        const skillKeys = [...Object.keys(c.skill_scores || {}), ...(c.extracted_skills ?? [])];
         return skillKeys.some(skill => skill.toLowerCase() === targetSkill);
       });
     }
@@ -1139,7 +1140,10 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     result.sort((a, b) => {
       let comparison = 0;
       if (sortField === 'score') {
-        comparison = b.overall_score - a.overall_score;
+        comparison = Number(b.analysis_status !== 'unassessed') - Number(a.analysis_status !== 'unassessed');
+        if (comparison === 0 && a.analysis_status !== 'unassessed' && b.analysis_status !== 'unassessed') {
+          comparison = b.overall_score - a.overall_score;
+        }
       } else if (sortField === 'technical') {
         comparison = (b.dimension_scores?.technical ?? 0) - (a.dimension_scores?.technical ?? 0);
       } else if (sortField === 'experience') {
@@ -1173,8 +1177,10 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
 
   // Aggregate stats of candidate score distribution
   const scoreStats = useMemo(() => {
-    if (candidates.length === 0) return { max: 0, min: 0, avg: 0 };
-    const scores = candidates.map(c => c.overall_score);
+    const scores = candidates
+      .filter(c => c.analysis_status !== 'unassessed')
+      .map(c => c.overall_score);
+    if (scores.length === 0) return { max: 0, min: 0, avg: 0 };
     const max = Math.max(...scores);
     const min = Math.min(...scores);
     const avg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
@@ -1912,11 +1918,26 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       {/* 4. Candidate Insights Radar & Overview */}
       {candidates.length > 0 && (
         <section className="space-y-6">
-          <SkillRadarChart
-            skillScores={activeCandidate?.skill_scores}
-            overallScore={activeCandidate?.overall_score}
-            selected={activeCandidate?.decision_status === 'Advanced by recruiter' || activeCandidate?.decision_status === 'Hired by recruiter'}
-          />
+          {activeCandidate?.analysis_status === 'unassessed' ? (
+            <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 className="font-bold text-slate-900">Extracted resume skills</h3>
+              <p className="mt-1 text-xs text-slate-500">
+                Resume extraction is available for {activeCandidate.name}. Role-fit scoring has not been run.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(activeCandidate.extracted_skills ?? []).map((skill) => (
+                  <span key={skill} className="rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-800">{skill}</span>
+                ))}
+                {!activeCandidate.extracted_skills?.length && <span className="text-xs text-slate-500">No skills detected in this resume.</span>}
+              </div>
+            </section>
+          ) : (
+            <SkillRadarChart
+              skillScores={activeCandidate?.skill_scores}
+              overallScore={activeCandidate?.overall_score}
+              selected={activeCandidate?.decision_status === 'Advanced by recruiter' || activeCandidate?.decision_status === 'Hired by recruiter'}
+            />
+          )}
 
           {/* 5. Candidate Ranking & Recruiter Supervision */}
           <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-5">
@@ -1929,7 +1950,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                   </span>
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Ranked by multi-dimensional AI evaluation scores. The recruiter oversees evidence and approves each decision.
+                  Resume uploads appear here with extracted details. Role-fit scores are shown only after an evaluation; recruiter review is required for every decision.
                 </p>
               </div>
 
@@ -1984,7 +2005,9 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                     {pipelineViewMode === 'kanban'
                       ? '5 Pipeline Stages'
                       : sortField === 'score'
-                        ? `Ranked by AI Score (${sortDirection === 'desc' ? 'Highest first' : 'Lowest first'})`
+                        ? candidates.some(candidate => candidate.analysis_status !== 'unassessed')
+                          ? `Scored candidates first (${sortDirection === 'desc' ? 'Highest first' : 'Lowest first'})`
+                          : 'Role-fit scoring pending'
                         : `Sorted by ${sortField}`}
                   </span>
                 </span>
@@ -2537,7 +2560,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                         >
                           <span className="font-bold text-[10px] uppercase">{isA ? 'Candidate A:' : 'Candidate B:'}</span>
                           <strong className="font-bold">{cand?.name || id}</strong>
-                          <span className="text-[10px] opacity-80">({cand?.overall_score}%)</span>
+                          <span className="text-[10px] opacity-80">({cand?.analysis_status === 'unassessed' ? 'Not scored' : `${cand?.overall_score}%`})</span>
                           <button
                             type="button"
                             onClick={() => handleToggleCompareCandidate(id)}
@@ -2595,7 +2618,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                   const isExpanded = !!expandedCandidates[cand.candidate_id];
                   const codingRound = cand.rounds.coding;
                   const techRound = cand.rounds.technical;
-                  const isTopRanked = index === 0 && sortField === 'score' && sortDirection === 'desc';
+                  const isTopRanked = index === 0 && sortField === 'score' && sortDirection === 'desc' && cand.analysis_status !== 'unassessed';
                   const isSelectedInRadar = cand.candidate_id === activeCandidate?.candidate_id;
                   const isSelectedForBulk = selectedCandidateIds.includes(cand.candidate_id);
 
@@ -2641,9 +2664,9 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                                 ? 'bg-gradient-to-tr from-[#6743ee] to-[#8a72ff] text-white'
                                 : 'bg-purple-100 text-purple-800'
                             }`}>
-                              {cand.overall_score}%
+                              {cand.analysis_status === 'unassessed' ? 'New' : `${cand.overall_score}%`}
                             </div>
-                            {sortField === 'score' && (
+                            {sortField === 'score' && cand.analysis_status !== 'unassessed' && (
                               <span className={`absolute -top-1.5 -left-1.5 px-1.5 py-0.2 rounded-full text-[9px] font-black border shadow-2xs ${
                                 isTopRanked
                                   ? 'bg-amber-400 text-slate-900 border-amber-300'
@@ -2658,6 +2681,14 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="font-bold text-slate-900 text-sm">{cand.name}</span>
                               <span className="text-xs text-slate-400 font-mono">({cand.candidate_id})</span>
+                              {cand.analysis_status === 'unassessed' && (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                                  Resume uploaded · not scored
+                                </span>
+                              )}
+                              {cand.source_file && (
+                                <span className="text-[10px] text-slate-500">{cand.source_file}</span>
+                              )}
                               {isTopRanked && (
                                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1">
                                   <Award className="w-3 h-3 text-amber-600" />
@@ -2739,12 +2770,12 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                               <span>•</span>
                               <span className="font-medium text-slate-600">Round: {cand.current_round.toUpperCase()}</span>
                               <span>•</span>
-                              <span className="text-slate-600">Tech Score: {cand.dimension_scores.technical}%</span>
+                              <span className="text-slate-600">{cand.analysis_status === 'unassessed' ? 'Role fit: Not assessed' : `Tech Score: ${cand.dimension_scores.technical}%`}</span>
                             </div>
 
                             {/* Candidate Verified Skill Tags with Instant Filtering */}
                             <div className="flex flex-wrap items-center gap-1 mt-1.5">
-                              {Object.entries(cand.skill_scores || {}).slice(0, 6).map(([skill, score]) => {
+                              {[...(cand.extracted_skills ?? []).map((skill) => [skill, null] as const), ...Object.entries(cand.skill_scores || {}).slice(0, 6)].slice(0, 6).map(([skill, score]) => {
                                 const isSkillMatch = searchQuery.trim() && skill.toLowerCase().includes(searchQuery.toLowerCase().trim());
                                 const isFilterMatch = selectedSkillTag && skill.toLowerCase() === selectedSkillTag.toLowerCase();
                                 const isHighlighted = isSkillMatch || isFilterMatch;
@@ -2771,7 +2802,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                                     <Tag className="w-2.5 h-2.5 opacity-60" />
                                     <span>{skill}</span>
                                     <span className={`text-[9px] font-bold ${isHighlighted ? 'text-white/90' : 'text-slate-400'}`}>
-                                      {score}/10
+                                      {score === null ? 'From resume' : `${score}/10`}
                                     </span>
                                   </button>
                                 );
@@ -2893,11 +2924,22 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                         </div>
                       </div>
 
+                    {cand.analysis_status === 'unassessed' && (
+                      <details className="mx-5 mb-4 rounded-lg border border-slate-200 p-3">
+                        <summary className="cursor-pointer text-xs font-semibold text-slate-800">
+                          Extracted resume details
+                        </summary>
+                        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-3 text-xs leading-5 text-slate-700">
+                          {cand.resume_profile || cand.resume_text || 'No resume text was extracted.'}
+                        </pre>
+                      </details>
+                    )}
+
                     {/* Expanded details */}
                     {isExpanded && (
                       <div className="p-5 space-y-6 text-xs">
-                        {/* 6 Dimension Radar Chart & Breakdown */}
-                        <div className="space-y-2">
+                    {/* 6 Dimension Radar Chart & Breakdown */}
+                    {cand.analysis_status !== 'unassessed' ? <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                               <Sparkles className="w-3.5 h-3.5 text-[#6743ee]" />
@@ -2926,7 +2968,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                             evidence={cand.dimension_evidence}
                             cutoffScore={cutoffScore}
                           />
-                        </div>
+                        </div> : null}
 
                         {/* AI Candidate Persona Summary Card & Highlight Reel */}
                         <div className="space-y-3">
@@ -3353,7 +3395,14 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     </section>
   )}
 
-      {/* 5. Outreach & Scheduling Draft Queue */}
+      {/* Agent 4 — Communication Drafting */}
+      <CommunicationAgentPanel
+        brief={brief}
+        candidates={candidates}
+        onQueueDraft={handleQueueEmailDraft}
+      />
+
+      {/* 5. Recruiter Communication Review Queue */}
       {outreachQueue.length > 0 && (
         <section className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-4">
           <div className="flex items-center gap-2.5 pb-2 border-b border-slate-100">
@@ -3391,7 +3440,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                     value={draft.subject}
                     onChange={(e) => {
                       const val = e.target.value;
-                      setOutreachQueue(prev => prev.map(d => d.id === draft.id ? { ...d, subject: val } : d));
+                      setOutreachQueue(prev => prev.map(d => d.id === draft.id ? { ...d, subject: val, status: 'Draft — not sent or scheduled' } : d));
                     }}
                     className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800"
                   />
@@ -3403,7 +3452,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                     value={draft.body}
                     onChange={(e) => {
                       const val = e.target.value;
-                      setOutreachQueue(prev => prev.map(d => d.id === draft.id ? { ...d, body: val } : d));
+                      setOutreachQueue(prev => prev.map(d => d.id === draft.id ? { ...d, body: val, status: 'Draft — not sent or scheduled' } : d));
                     }}
                     rows={4}
                     className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800"
@@ -3416,7 +3465,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                       onClick={() => handleApproveDraft(draft.id)}
                       className="px-3 py-1.5 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-semibold rounded-lg"
                     >
-                      Approve Draft
+                      Approve Draft (not sent)
                     </button>
                   )}
                   <button

@@ -255,8 +255,9 @@ export const CandidateKanbanBoard: React.FC<CandidateKanbanBoardProps> = ({
         {visibleStages.map(({ stage, label, desc, color, badgeColor, headerBg }) => {
           const stageCandidates = filteredCandidates.filter(c => getCandidateStage(c) === stage);
           const isOver = dragOverStage === stage;
-          const avgScore = stageCandidates.length > 0 
-            ? Math.round(stageCandidates.reduce((acc, c) => acc + c.overall_score, 0) / stageCandidates.length)
+          const scoredCandidates = stageCandidates.filter(c => c.analysis_status !== 'unassessed');
+          const avgScore = scoredCandidates.length > 0
+            ? Math.round(scoredCandidates.reduce((acc, c) => acc + c.overall_score, 0) / scoredCandidates.length)
             : 0;
 
           return (
@@ -305,7 +306,7 @@ export const CandidateKanbanBoard: React.FC<CandidateKanbanBoardProps> = ({
                   </div>
                 ) : (
                   stageCandidates.map((cand) => {
-                    const isTopScore = cand.overall_score >= cutoffScore;
+                    const isTopScore = cand.analysis_status !== 'unassessed' && cand.overall_score >= cutoffScore;
                     const isDragging = draggedCandidateId === cand.candidate_id;
                     const stageOrder = ['Screening', 'Technical', 'Interview', 'Offered'];
                     const currentIdx = stageOrder.indexOf(stage);
@@ -361,13 +362,18 @@ export const CandidateKanbanBoard: React.FC<CandidateKanbanBoardProps> = ({
                               ? 'bg-amber-50 text-amber-800 border-amber-200'
                               : 'bg-rose-50 text-rose-800 border-rose-200'
                           }`}>
-                            {cand.overall_score}%
+                            {cand.analysis_status === 'unassessed' ? 'New' : `${cand.overall_score}%`}
                           </div>
                         </div>
 
                         {/* Top Verified Skill Tags */}
-                        {cand.skill_scores && Object.keys(cand.skill_scores).length > 0 && (
+                        {((cand.extracted_skills?.length ?? 0) > 0 || Object.keys(cand.skill_scores || {}).length > 0) && (
                           <div className="flex flex-wrap gap-1">
+                            {(cand.extracted_skills ?? []).slice(0, 3).map((skill) => (
+                              <span key={skill} className="px-1.5 py-0.5 rounded text-[9px] bg-indigo-50 text-indigo-800 border border-indigo-100 font-medium">
+                                {skill}
+                              </span>
+                            ))}
                             {Object.entries(cand.skill_scores).slice(0, 3).map(([sk, sc]) => (
                               <span 
                                 key={sk}

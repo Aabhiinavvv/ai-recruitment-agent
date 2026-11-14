@@ -6,10 +6,12 @@ on:
       - main
       - feature/job-intelligence-agent
       - feature/candidate-intelligence-agent
+      - feature/matching-ranking-agent
   push:
     branches:
       - feature/candidate-intelligence-agent
       - feature/matching-ranking-agent
+      - feature/communication-agent
 
 permissions:
   contents: read

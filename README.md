@@ -136,3 +136,18 @@ Agent 3 compares Agent 2's structured profiles with an Agent 1 job rubric that t
 - The index is an advisory evidence summary, not a hiring probability or autonomous decision. Recruiters must review the original resume and source evidence.
 
 The approval gate in this prototype is enforced by the browser workflow and a client-supplied API field; it is not yet backed by authenticated user permissions or a persistent approval record. Production deployment must enforce approval server-side.
+
+
+## Agent 4 — Communication Agent
+
+Agent 4 generates candidate-facing email drafts and optional human call scripts using recruiter-approved workflow state.
+
+Supported draft types: application acknowledgement, interview invitation, scheduling request, schedule confirmation, status update, non-progression notice and follow-up.
+
+- API: POST /api/v1/communication/drafts
+- Requires explicit contact authorisation confirmation.
+- Interview invitation/scheduling drafts require the candidate to have an explicit recruiter-advanced decision.
+- A non-progression draft requires an explicit recruiter non-progression decision.
+- Sensitive personal/health information and score/rank references in free-text context are omitted with a warning.
+- Outputs remain drafts and join the existing recruiter approval queue.
+- No SMTP, email, SMS, WhatsApp, calendar dispatch or telephony integration is enabled. Approval does not mean the message was sent.
