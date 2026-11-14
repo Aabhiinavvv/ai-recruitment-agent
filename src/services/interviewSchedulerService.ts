@@ -300,6 +300,61 @@ export function generateAISlotSuggestions(
   return suggestions.sort((a, b) => b.matchScore - a.matchScore).slice(0, 6);
 }
 
+export function getFormatDisplayLabel(format: InterviewFormatType): string {
+  switch (format) {
+    case 'video_zoom':
+      return 'Zoom Video Meeting';
+    case 'video_meet':
+      return 'Google Meet Video Conference';
+    case 'onsite':
+      return 'On-Site In-Person Interview';
+    case 'phone':
+      return 'Phone Call Screen';
+    default:
+      return 'Online Video Interview';
+  }
+}
+
+export function generateZoomCredentials(candidateName: string): {
+  link: string;
+  meetingId: string;
+  passcode: string;
+} {
+  // Deterministic-feeling yet fresh 10-digit Zoom meeting ID + 6-char passcode
+  const seed = candidateName
+    .split('')
+    .reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const randA = String(810 + (seed % 180));
+  const randB = String(1000 + Math.floor(1000 + Math.random() * 8999)).slice(0, 4);
+  const randC = String(1000 + Math.floor(1000 + Math.random() * 8999)).slice(0, 4);
+  const rawId = `${randA}${randB}${randC}`;
+  const meetingId = `${randA} ${randB} ${randC}`;
+  const cleanName = candidateName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase() || 'ZOM';
+  const passcode = `${cleanName}${Math.floor(100 + Math.random() * 899)}`;
+  const link = `https://zoom.us/j/${rawId}?pwd=${passcode}`;
+  return { link, meetingId, passcode };
+}
+
+/**
+ * Generates a realistic Zoom or Google Meet URL (or room label) for the interview.
+ */
+export function generateMeetingLink(
+  candidateName: string,
+  format: InterviewFormatType = 'video_zoom'
+): string {
+  if (format === 'video_zoom') {
+    return generateZoomCredentials(candidateName).link;
+  }
+  if (format === 'onsite') {
+    return 'HQ Executive Conference Room B (On-Site)';
+  }
+  if (format === 'phone') {
+    return 'Direct Candidate Phone Bridge';
+  }
+  const clean = candidateName.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 6) || 'eval';
+  return `https://meet.google.com/${clean}-eval-recr`;
+}
+
 /**
  * Creates standard RFC 5545 iCalendar (.ics) content for email invites or calendar import.
  */
@@ -313,10 +368,20 @@ export function generateICalendarFile(interview: ScheduledInterview): string {
   const dtStart = formatDateToICS(interview.dateStr, interview.startTime);
   const dtEnd = formatDateToICS(interview.dateStr, interview.endTime);
   const now = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+  const formatLabel = getFormatDisplayLabel(interview.format);
 
   const attendeeLines = interview.panelInterviewerNames
     .map((name, i) => `ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;CN=${name}:mailto:panel${i + 1}@anthropictech.io`)
     .join('\r\n');
+
+  const candidateAttendeeLine = interview.candidateEmail?.trim()
+    ? `ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;CN=${interview.candidateName}:mailto:${interview.candidateEmail.trim()}`
+    : '';
+
+  const zoomExtra =
+    interview.format === 'video_zoom' && interview.zoomMeetingId
+      ? `\\nZoom Meeting ID: ${interview.zoomMeetingId}${interview.zoomPasscode ? `\\nPasscode: ${interview.zoomPasscode}` : ''}`
+      : '';
 
   return [
     'BEGIN:VCALENDAR',
@@ -330,10 +395,10 @@ export function generateICalendarFile(interview: ScheduledInterview): string {
     `DTSTART:${dtStart}`,
     `DTEND:${dtEnd}`,
     `SUMMARY:Interview: ${interview.roundName} - ${interview.candidateName} (${interview.companyName})`,
-    `DESCRIPTION:Interview with ${interview.candidateName} for the ${interview.jobTitle} position at ${interview.companyName}.\\n\\nMeeting Link: ${interview.meetingLink}\\n\\nAgenda: Technical evaluation, coding exercise, and team discussion.`,
+    `DESCRIPTION:Interview with ${interview.candidateName} for the ${interview.jobTitle} position at ${interview.companyName}.\\n\\nFormat: ${formatLabel}\\nMeeting Link: ${interview.meetingLink}${zoomExtra}\\n\\nAgenda: Technical evaluation, coding exercise, and team discussion.`,
     `LOCATION:${interview.meetingLink}`,
     `ORGANIZER;CN=Recruitment Team:mailto:recruiting@anthropictech.io`,
-    `ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;CN=${interview.candidateName}:mailto:${interview.candidateEmail}`,
+    ...(candidateAttendeeLine ? [candidateAttendeeLine] : []),
     attendeeLines,
     'STATUS:CONFIRMED',
     'TRANSP:OPAQUE',
@@ -353,19 +418,28 @@ export function generateGoogleCalendarUrl(interview: ScheduledInterview): string
 
   const startIso = formatDateForGoogle(interview.dateStr, interview.startTime);
   const endIso = formatDateForGoogle(interview.dateStr, interview.endTime);
+  const formatLabel = getFormatDisplayLabel(interview.format);
+
+  const zoomExtra =
+    interview.format === 'video_zoom' && interview.zoomMeetingId
+      ? `\nZoom Meeting ID: ${interview.zoomMeetingId}${interview.zoomPasscode ? `\nPasscode: ${interview.zoomPasscode}` : ''}`
+      : '';
 
   const title = encodeURIComponent(`Interview: ${interview.roundName} - ${interview.candidateName} (${interview.companyName})`);
   const details = encodeURIComponent(
     `Position: ${interview.jobTitle} at ${interview.companyName}\n` +
-    `Candidate: ${interview.candidateName} (${interview.candidateEmail})\n` +
+    `Candidate: ${interview.candidateName}${interview.candidateEmail ? ` (${interview.candidateEmail})` : ''}\n` +
     `Panel: ${interview.panelInterviewerNames.join(', ')}\n\n` +
-    `Video Meeting Link: ${interview.meetingLink}\n\n` +
+    `Format: ${formatLabel}\n` +
+    `Meeting Link: ${interview.meetingLink}${zoomExtra}\n\n` +
     `Agenda: Multi-axial competency evaluation, problem-solving, and Q&A.`
   );
   const location = encodeURIComponent(interview.meetingLink);
-  const addAttendees = encodeURIComponent(`${interview.candidateEmail}`);
+  const addParam = interview.candidateEmail?.trim()
+    ? `&add=${encodeURIComponent(interview.candidateEmail.trim())}`
+    : '';
 
-  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startIso}/${endIso}&details=${details}&location=${location}&add=${addAttendees}`;
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startIso}/${endIso}&details=${details}&location=${location}${addParam}`;
 }
 
 /**
@@ -386,14 +460,6 @@ export function downloadICSFile(interview: ScheduledInterview): void {
 }
 
 /**
- * Generates a realistic Google Meet URL for the interview.
- */
-export function generateMeetingLink(candidateName: string): string {
-  const clean = candidateName.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 4) || 'eval';
-  return `https://meet.google.com/${clean}-eval-recr`;
-}
-
-/**
  * Generates comprehensive calendar confirmation email text.
  */
 export function generateInterviewEmailConfirmation(interview: ScheduledInterview): {
@@ -401,8 +467,13 @@ export function generateInterviewEmailConfirmation(interview: ScheduledInterview
   body: string;
 } {
   const formattedDualTime = formatTimezoneDual(interview.startTime, interview.durationMinutes);
+  const formatLabel = getFormatDisplayLabel(interview.format);
+  const zoomDetails =
+    interview.format === 'video_zoom' && interview.zoomMeetingId
+      ? `\n• Zoom Meeting ID: ${interview.zoomMeetingId}${interview.zoomPasscode ? `\n• Zoom Passcode: ${interview.zoomPasscode}` : ''}`
+      : '';
 
-  const subject = `Confirmed: ${interview.roundName} with ${interview.companyName} on ${interview.dateStr}`;
+  const subject = `Confirmed (${interview.format === 'video_zoom' ? 'Zoom' : 'Online'}): ${interview.roundName} with ${interview.companyName} on ${interview.dateStr}`;
   const body = `Dear ${interview.candidateName},
 
 We are pleased to confirm your upcoming ${interview.roundName} for the ${interview.jobTitle} position at ${interview.companyName}!
@@ -413,14 +484,14 @@ We are pleased to confirm your upcoming ${interview.roundName} for the ${intervi
 • Date: ${interview.dateStr}
 • Time: ${formattedDualTime}
 • Duration: ${interview.durationMinutes} minutes
-• Meeting Format: Google Meet Video Conference
-• Video Link: ${interview.meetingLink}
+• Meeting Format: ${formatLabel}
+• Join Link: ${interview.meetingLink}${zoomDetails}
 • Interview Panel: ${interview.panelInterviewerNames.join(', ')}
 
 ========================================
 💡 WHAT TO EXPECT & PREPARATION
 ========================================
-1. Please join the video room 2-3 minutes early to verify audio and video connections.
+1. Please join the online room 2-3 minutes early to verify your camera, audio, and connection.
 2. The session will include a technical deep dive, problem-solving evaluation, and an open Q&A segment with the panel.
 3. Have your development environment or code editor open if you'd like to share practical examples.
 

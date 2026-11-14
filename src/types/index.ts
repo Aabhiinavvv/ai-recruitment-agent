@@ -325,6 +325,8 @@ export interface ScheduledInterview {
   durationMinutes: number;
   format: InterviewFormatType;
   meetingLink: string;
+  zoomMeetingId?: string;
+  zoomPasscode?: string;
   dateStr: string;
   startTime: string;
   endTime: string;

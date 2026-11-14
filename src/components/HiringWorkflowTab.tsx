@@ -14,7 +14,7 @@ import { ROLE_REQUIREMENTS } from '../data/roles';
 import { SAMPLE_RESUME_PRESETS, SampleResumePreset } from '../data/sampleResumes';
 import { recruitmentAgent } from '../services/recruitmentAgent';
 import { generateCandidatePersona } from '../services/personaGenerator';
-import { generateInterviewEmailConfirmation } from '../services/interviewSchedulerService';
+import { generateInterviewEmailConfirmation, getFormatDisplayLabel } from '../services/interviewSchedulerService';
 import { parseResumeText, ParsedResumeData, extractNameFromFileName } from '../services/resumeParser';
 import { extractTextFromResumeFile } from '../services/resumeFileReader';
 import { TeamSkillsGapAnalysis } from './TeamSkillsGapAnalysis';
@@ -85,6 +85,9 @@ interface HiringWorkflowTabProps {
   cutoffScore?: number;
   selectedCandidateId?: string | null;
   onSelectCandidateId?: (id: string | null) => void;
+  scheduledInterviews?: ScheduledInterview[];
+  onConfirmScheduledInterview?: (scheduled: ScheduledInterview) => void;
+  onLaunchOnlineInterview?: (interview: ScheduledInterview) => void;
 }
 
 const PRESET_CUSTOM_TAGS = ['High Priority', 'Referred', 'Internal', 'Domain Specialist', 'Fast Track'];
@@ -118,6 +121,9 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   cutoffScore = 75,
   selectedCandidateId: controlledSelectedId,
   onSelectCandidateId,
+  scheduledInterviews: controlledScheduledInterviews,
+  onConfirmScheduledInterview: onExternalConfirmScheduledInterview,
+  onLaunchOnlineInterview,
 }) => {
   // Top-level workspace section
   const [workspaceSection, setWorkspaceSection] = useState<'pipeline' | 'intake' | 'brief' | 'activity'>('pipeline');
@@ -204,7 +210,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   const [showLinkedInImportModal, setShowLinkedInImportModal] = useState<boolean>(false);
 
   // AI Interview Scheduler State & Handlers
-  const [scheduledInterviews, setScheduledInterviews] = useState<ScheduledInterview[]>([
+  const [localScheduledInterviews, setLocalScheduledInterviews] = useState<ScheduledInterview[]>([
     {
       id: 'interview-init-1',
       candidateId: 'CAN-9821',
@@ -216,8 +222,10 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       roundName: 'Technical Live Coding Round',
       roundType: 'coding',
       durationMinutes: 45,
-      format: 'video_meet',
-      meetingLink: 'https://meet.google.com/ari-eval-recr',
+      format: 'video_zoom',
+      meetingLink: 'https://zoom.us/j/84291043721?pwd=ALE492',
+      zoomMeetingId: '842 9104 3721',
+      zoomPasscode: 'ALE492',
       dateStr: '2026-11-04',
       startTime: '14:00',
       endTime: '14:45',
@@ -230,6 +238,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       createdAt: new Date().toISOString(),
     },
   ]);
+  const scheduledInterviews = controlledScheduledInterviews ?? localScheduledInterviews;
   const [showSchedulerModal, setShowSchedulerModal] = useState<boolean>(false);
   const [schedulerCandidate, setSchedulerCandidate] = useState<Candidate | null>(null);
 
@@ -592,7 +601,12 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   };
 
   const handleConfirmScheduledInterview = (scheduled: ScheduledInterview) => {
-    setScheduledInterviews((prev) => [scheduled, ...prev]);
+    if (onExternalConfirmScheduledInterview) {
+      onExternalConfirmScheduledInterview(scheduled);
+      return;
+    }
+
+    setLocalScheduledInterviews((prev) => [scheduled, ...prev]);
     setCandidates((prev) =>
       prev.map((c) => {
         if (c.candidate_id !== scheduled.candidateId) return c;
@@ -607,6 +621,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     );
 
     const { subject, body } = generateInterviewEmailConfirmation(scheduled);
+    const platformLabel = getFormatDisplayLabel(scheduled.format);
     const draft: OutreachDraft = {
       id: `draft-${Date.now()}`,
       type: 'round',
@@ -615,10 +630,10 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       candidate_email: scheduled.candidateEmail,
       candidate_phone: scheduled.candidatePhone,
       round_name: scheduled.roundType,
-      interview_format: `${scheduled.format.replace('_', ' ').toUpperCase()} (${scheduled.meetingLink})`,
+      interview_format: `${platformLabel} (${scheduled.meetingLink})`,
       subject,
       body,
-      call_script: `Hi ${scheduled.candidateName}, calling from ${scheduled.companyName} to confirm your upcoming ${scheduled.roundName} on ${scheduled.dateStr}. Google Meet and calendar invite have been dispatched.`,
+      call_script: `Hi ${scheduled.candidateName}, calling from ${scheduled.companyName} to confirm your upcoming ${scheduled.roundName} on ${scheduled.dateStr} via ${platformLabel}. Calendar invite and meeting link have been dispatched.`,
       availability: `${scheduled.dateStr} at ${scheduled.startTime} EST`,
       status: 'Sent / Dispatched',
       sent_at: new Date().toISOString(),
@@ -628,7 +643,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     setOutreachQueue((prev) => [draft, ...prev]);
     appendAudit(
       'Scheduler',
-      `Scheduled ${scheduled.durationMinutes}m ${scheduled.roundName} on ${scheduled.dateStr} at ${scheduled.startTime} EST`,
+      `Scheduled ${scheduled.durationMinutes}m ${scheduled.roundName} (${platformLabel}) on ${scheduled.dateStr} at ${scheduled.startTime} EST`,
       `${scheduled.candidateName} (${scheduled.candidateId})`
     );
   };
@@ -1073,7 +1088,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     }
   };
 
-  const handleScreenResume = () => {
+  const handleScreenResume = (openSchedulerAfter: boolean = false) => {
     if (!resumeTextInput.trim()) return;
 
     const activeBrief: HiringBrief = brief || {
@@ -1162,6 +1177,10 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     );
 
     handleClearScreeningForm();
+
+    if (openSchedulerAfter) {
+      handleOpenScheduler(screenedCandidate);
+    }
   };
 
   const handleRecruiterDecision = (candidateId: string, decision: 'advance' | 'reject') => {
@@ -1601,6 +1620,18 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
               </div>
 
               <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                {activeCandidate && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenScheduler(activeCandidate)}
+                    className="px-3 py-1.5 bg-[#2d8cff] hover:bg-[#1a7ae8] text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer shadow-2xs"
+                    title={`Schedule Zoom online interview for ${activeCandidate.name}`}
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>Schedule Zoom: {activeCandidate.name.split(' ')[0]}</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => {
@@ -2227,19 +2258,29 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
             >
               {/* Newly Uploaded Resume Confirmation Strip */}
               {justUploadedCandidateId === activeCandidate.candidate_id && (
-                <div className="px-5 py-2.5 bg-emerald-50 border-b border-emerald-200 flex items-center justify-between gap-3 text-xs text-emerald-900">
+                <div className="px-5 py-2.5 bg-emerald-50 border-b border-emerald-200 flex flex-wrap items-center justify-between gap-3 text-xs text-emerald-900">
                   <span className="font-medium flex items-center gap-1.5">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                     Uploaded resume evaluated for <strong>{activeCandidate.name}</strong> — showing
                     full candidate profile and competency breakdown below.
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setJustUploadedCandidateId(null)}
-                    className="text-emerald-700 hover:text-emerald-900 font-medium shrink-0 cursor-pointer"
-                  >
-                    Dismiss
-                  </button>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenScheduler(activeCandidate)}
+                      className="px-3 py-1 bg-[#2d8cff] hover:bg-[#1a7ae8] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                    >
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span>Schedule Zoom Interview</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setJustUploadedCandidateId(null)}
+                      className="text-emerald-700 hover:text-emerald-900 font-medium cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -2387,6 +2428,15 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                   >
                     <Sparkles className="w-3.5 h-3.5 text-[#6743ee]" />
                     <span>Persona Summary</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenScheduler(activeCandidate)}
+                    className="px-3 py-1.5 bg-[#2d8cff] hover:bg-[#1a7ae8] text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer shadow-2xs"
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>Schedule Zoom</span>
                   </button>
 
                   <button
@@ -3317,14 +3367,23 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
             </label>
           </div>
 
-          <div className="pt-2">
+          <div className="pt-2 flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={handleScreenResume}
+              onClick={() => handleScreenResume(false)}
               disabled={!resumeTextInput.trim() || !processingConsent}
               className="px-5 py-2.5 bg-[#6743ee] hover:bg-[#5637d2] text-white text-xs font-semibold rounded-lg disabled:opacity-50 cursor-pointer"
             >
-              Screen & View Candidate Details
+              Screen &amp; View Candidate Details
+            </button>
+            <button
+              type="button"
+              onClick={() => handleScreenResume(true)}
+              disabled={!resumeTextInput.trim() || !processingConsent}
+              className="px-5 py-2.5 bg-[#2d8cff] hover:bg-[#1a7ae8] text-white text-xs font-semibold rounded-lg disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-2xs"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Screen &amp; Schedule Zoom Interview</span>
             </button>
           </div>
         </div>
@@ -3501,6 +3560,8 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
             scheduledInterviews={scheduledInterviews}
             onOpenScheduler={handleOpenScheduler}
             candidates={candidates}
+            selectedCandidateId={activeCandidate?.candidate_id}
+            onLaunchOnlineInterview={onLaunchOnlineInterview}
           />
 
           <OutreachQueueSection
@@ -3610,6 +3671,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
           onSelectCandidate={(cand) => setSchedulerCandidate(cand)}
           brief={brief}
           onConfirmSchedule={handleConfirmScheduledInterview}
+          onLaunchOnlineInterview={onLaunchOnlineInterview}
         />
       )}
 

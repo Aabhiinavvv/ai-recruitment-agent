@@ -50,8 +50,9 @@ import {
   Pause,
   AlertCircle,
   TrendingUp,
+  Calendar,
 } from 'lucide-react';
-import { Candidate, HiringBrief, InterviewRoundFeedback, AuditEvent } from '../types';
+import { Candidate, HiringBrief, InterviewRoundFeedback, ScheduledInterview } from '../types';
 import {
   onlineInterviewService,
   OnlineInterviewQuestion,
@@ -63,6 +64,8 @@ import {
   IntegrityReport,
 } from '../services/onlineInterviewService';
 import { PracticeInterviewMode } from './PracticeInterviewMode';
+import { InterviewSchedulerModal } from './InterviewSchedulerModal';
+import { formatTime12h, getFormatDisplayLabel } from '../services/interviewSchedulerService';
 
 interface AIInterviewTabProps {
   brief?: HiringBrief | null;
@@ -72,6 +75,9 @@ interface AIInterviewTabProps {
   onSaveFeedback?: (candidateId: string, feedback: InterviewRoundFeedback) => void;
   onAppendAudit?: (actor: string, action: string, subject: string) => void;
   resumeReadinessScore?: number;
+  scheduledInterviews?: ScheduledInterview[];
+  activeScheduledSessionId?: string | null;
+  onConfirmSchedule?: (scheduled: ScheduledInterview) => void;
 }
 
 type InterviewPhase = 'lobby' | 'in_progress' | 'completed';
@@ -87,6 +93,9 @@ export const AIInterviewTab: React.FC<AIInterviewTabProps> = ({
   onSaveFeedback,
   onAppendAudit,
   resumeReadinessScore = 85,
+  scheduledInterviews = [],
+  activeScheduledSessionId,
+  onConfirmSchedule,
 }) => {
   // Top-level View Mode: Recruiter Console vs Asynchronous Candidate Self-Serve Portal
   const [viewMode, setViewMode] = useState<ViewMode>('recruiter_console');
@@ -95,6 +104,13 @@ export const AIInterviewTab: React.FC<AIInterviewTabProps> = ({
   const [activeCandId, setActiveCandId] = useState<string>(
     selectedCandidateId || candidates[0]?.candidate_id || 'CAN-9821'
   );
+
+  // Sync external candidate selection (e.g. when launching from Hiring Workflow / Scheduled Zoom card)
+  useEffect(() => {
+    if (selectedCandidateId) {
+      setActiveCandId(selectedCandidateId);
+    }
+  }, [selectedCandidateId]);
 
   const activeCandidate = useMemo(() => {
     return candidates.find((c) => c.candidate_id === activeCandId) || candidates[0] || null;
@@ -162,9 +178,33 @@ export const AIInterviewTab: React.FC<AIInterviewTabProps> = ({
 
   // Modals & UI Controls
   const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
+  const [showSchedulerModal, setShowSchedulerModal] = useState<boolean>(false);
   const [showIdeasDrawer, setShowIdeasDrawer] = useState<boolean>(false);
   const [linkCopied, setLinkCopied] = useState<boolean>(false);
+  const [zoomLinkCopied, setZoomLinkCopied] = useState<boolean>(false);
   const [feedbackSaved, setFeedbackSaved] = useState<boolean>(false);
+
+  const activeCandidateScheduledSession = useMemo(() => {
+    if (activeScheduledSessionId) {
+      const exact = scheduledInterviews.find(
+        (s) => s.id === activeScheduledSessionId && s.candidateId === activeCandidate?.candidate_id
+      );
+      if (exact) return exact;
+    }
+    return scheduledInterviews.find((s) => s.candidateId === activeCandidate?.candidate_id) || null;
+  }, [scheduledInterviews, activeScheduledSessionId, activeCandidate?.candidate_id]);
+
+  // Sync roundType when a scheduled session is launched
+  useEffect(() => {
+    if (!activeScheduledSessionId) return;
+    const launched = scheduledInterviews.find((s) => s.id === activeScheduledSessionId);
+    if (launched) {
+      setViewMode('recruiter_console');
+      if (launched.roundType === 'coding') setRoundType('coding');
+      else if (launched.roundType === 'hr') setRoundType('behavioral');
+      else setRoundType('technical');
+    }
+  }, [activeScheduledSessionId, scheduledInterviews]);
 
   // Media Refs
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -856,6 +896,19 @@ export const AIInterviewTab: React.FC<AIInterviewTabProps> = ({
             </select>
           </div>
 
+          {/* Schedule Zoom Interview CTA */}
+          {activeCandidate && (
+            <button
+              type="button"
+              onClick={() => setShowSchedulerModal(true)}
+              className="px-3 py-1.5 bg-[#2d8cff] hover:bg-[#1a7ae8] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+              title="Schedule a Zoom or Google Meet interview for the selected candidate"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Schedule Zoom</span>
+            </button>
+          )}
+
           {/* Share Candidate Invite Link */}
           <button
             type="button"
@@ -878,6 +931,116 @@ export const AIInterviewTab: React.FC<AIInterviewTabProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Scheduled Zoom / Online Session Bar */}
+      {activeCandidate && (
+        <div className="bg-white rounded-2xl px-5 py-3.5 border border-slate-200 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs">
+          {activeCandidateScheduledSession ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+                <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-[#2d8cff] border border-blue-200 font-bold flex items-center gap-1.5 shrink-0">
+                  <Video className="w-3.5 h-3.5" />
+                  <span>
+                    {activeCandidateScheduledSession.format === 'video_zoom' ||
+                    activeCandidateScheduledSession.meetingLink.includes('zoom.us')
+                      ? 'Scheduled Zoom Session'
+                      : getFormatDisplayLabel(activeCandidateScheduledSession.format)}
+                  </span>
+                </span>
+                <span className="font-bold text-slate-900">
+                  {activeCandidateScheduledSession.candidateName}
+                </span>
+                <span className="text-slate-300">·</span>
+                <span className="text-slate-700 font-medium">
+                  {activeCandidateScheduledSession.roundName}
+                </span>
+                <span className="text-slate-300">·</span>
+                <span className="text-slate-600 font-semibold">
+                  {activeCandidateScheduledSession.dateStr} at {formatTime12h(activeCandidateScheduledSession.startTime)} EST
+                </span>
+                {activeCandidateScheduledSession.zoomMeetingId && (
+                  <span className="font-mono text-[11px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">
+                    ID: {activeCandidateScheduledSession.zoomMeetingId}
+                    {activeCandidateScheduledSession.zoomPasscode ? ` · Pass: ${activeCandidateScheduledSession.zoomPasscode}` : ''}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <a
+                  href={activeCandidateScheduledSession.meetingLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 bg-[#2d8cff] hover:bg-[#1a7ae8] text-white rounded-lg font-bold flex items-center gap-1.5 shadow-2xs transition-colors"
+                >
+                  <Video className="w-3.5 h-3.5" />
+                  <span>
+                    {activeCandidateScheduledSession.meetingLink.includes('zoom.us')
+                      ? 'Launch Zoom Room'
+                      : 'Join Online Meeting'}
+                  </span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(activeCandidateScheduledSession.meetingLink);
+                    setZoomLinkCopied(true);
+                    setTimeout(() => setZoomLinkCopied(false), 2000);
+                  }}
+                  className="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg font-semibold flex items-center gap-1 cursor-pointer"
+                >
+                  {zoomLinkCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{zoomLinkCopied ? 'Copied' : 'Copy URL'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowSchedulerModal(true)}
+                  className="px-2.5 py-1.5 bg-white hover:bg-slate-50 text-[#6743ee] border border-purple-200 rounded-lg font-semibold cursor-pointer"
+                >
+                  Reschedule / New
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-2 text-slate-600">
+                <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold">
+                  Not Yet Scheduled
+                </span>
+                <span>
+                  Set up an online Zoom interview for <strong className="text-slate-900">{activeCandidate.name}</strong> ({activeCandidate.detected_title || activeCandidate.role}) with calendar invite &amp; meeting passcode.
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {scheduledInterviews.length > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-slate-400">Jump to scheduled:</span>
+                    {scheduledInterviews.slice(0, 3).map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => handleSelectCandidate(s.candidateId)}
+                        className="px-2 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-[#2d8cff] border border-blue-200 text-[11px] font-semibold cursor-pointer"
+                      >
+                        {s.candidateName.split(' ')[0]} ({s.dateStr})
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowSchedulerModal(true)}
+                  className="px-3.5 py-1.5 bg-[#2d8cff] hover:bg-[#1a7ae8] text-white rounded-lg font-bold flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Schedule Zoom for {activeCandidate.name.split(' ')[0]}</span>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* =================================================================== */}
       {/* VOICE-TO-TEXT PRACTICE INTERVIEW MODE                               */}
@@ -2068,6 +2231,25 @@ export const AIInterviewTab: React.FC<AIInterviewTabProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* MODAL: ZOOM & ONLINE INTERVIEW SCHEDULER                            */}
+      {/* =================================================================== */}
+      {showSchedulerModal && activeCandidate && (
+        <InterviewSchedulerModal
+          isOpen={showSchedulerModal}
+          onClose={() => setShowSchedulerModal(false)}
+          candidate={activeCandidate}
+          candidatesList={candidates}
+          onSelectCandidate={(cand) => handleSelectCandidate(cand.candidate_id)}
+          brief={brief || null}
+          onConfirmSchedule={(scheduled) => {
+            if (onConfirmSchedule) {
+              onConfirmSchedule(scheduled);
+            }
+          }}
+        />
       )}
     </div>
   );

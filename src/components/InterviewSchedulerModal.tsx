@@ -16,6 +16,8 @@ import {
   generateGoogleCalendarUrl, 
   downloadICSFile, 
   generateMeetingLink, 
+  generateZoomCredentials,
+  getFormatDisplayLabel,
   generateInterviewEmailConfirmation,
   formatTime12h,
   formatTimezoneDual
@@ -54,6 +56,7 @@ interface InterviewSchedulerModalProps {
   onSelectCandidate?: (candidate: Candidate) => void;
   brief: HiringBrief | null;
   onConfirmSchedule: (scheduledInterview: ScheduledInterview) => void;
+  onLaunchOnlineInterview?: (scheduledInterview: ScheduledInterview) => void;
 }
 
 export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = ({
@@ -64,26 +67,31 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
   onSelectCandidate,
   brief,
   onConfirmSchedule,
+  onLaunchOnlineInterview,
 }) => {
   // Wizard steps: 1 = Config & Panel, 2 = AI Slot Selection, 3 = Confirmation & Dispatch
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
 
-  // Selected candidate
+  // Selected candidate & optional email verification
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>(candidate.candidate_id);
   const activeCandidate = useMemo(() => {
     return candidatesList.find(c => c.candidate_id === selectedCandidateId) || candidate;
   }, [candidatesList, selectedCandidateId, candidate]);
+  const [candidateEmailOverride, setCandidateEmailOverride] = useState<string>(candidate.email || '');
 
   // Interview round configuration
   const [selectedRoundKey, setSelectedRoundKey] = useState<RoundType>(
     candidate.current_round === 'hr' ? 'hr' : candidate.current_round === 'technical' ? 'technical' : 'coding'
   );
   const [durationMinutes, setDurationMinutes] = useState<number>(45);
-  const [formatType, setFormatType] = useState<InterviewFormatType>('video_meet');
-  const [customMeetingLink, setCustomMeetingLink] = useState<string>(() => generateMeetingLink(candidate.name));
+  const [formatType, setFormatType] = useState<InterviewFormatType>('video_zoom');
+  const [customMeetingLink, setCustomMeetingLink] = useState<string>(() => generateMeetingLink(candidate.name, 'video_zoom'));
+  const [zoomMeetingId, setZoomMeetingId] = useState<string>(() => generateZoomCredentials(candidate.name).meetingId);
+  const [zoomPasscode, setZoomPasscode] = useState<string>(() => generateZoomCredentials(candidate.name).passcode);
+  const [isCustomLinkEdited, setIsCustomLinkEdited] = useState<boolean>(false);
 
   // Panel Interviewers selection
-  const [interviewers, setInterviewers] = useState<InterviewerMember[]>(DEFAULT_INTERVIEWERS);
+  const [interviewers] = useState<InterviewerMember[]>(DEFAULT_INTERVIEWERS);
   const [selectedInterviewerIds, setSelectedInterviewerIds] = useState<string[]>(['int-2']); // Default to David Chen (Tech Lead)
 
   // Custom date/time picker option vs AI Slot
@@ -106,11 +114,37 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
   const [copiedEmailText, setCopiedEmailText] = useState<boolean>(false);
   const [autoSendEmailNotice, setAutoSendEmailNotice] = useState<boolean>(true);
 
-  // Sync when candidate prop changes
+  const applyGeneratedRoomForCandidate = (candName: string, format: InterviewFormatType) => {
+    if (format === 'video_zoom') {
+      const creds = generateZoomCredentials(candName);
+      setCustomMeetingLink(creds.link);
+      setZoomMeetingId(creds.meetingId);
+      setZoomPasscode(creds.passcode);
+    } else {
+      setCustomMeetingLink(generateMeetingLink(candName, format));
+    }
+    setIsCustomLinkEdited(false);
+  };
+
+  // Reset modal wizard cleanly whenever opened or when the target candidate prop changes
   useEffect(() => {
+    if (!isOpen) return;
+    setCurrentStep(1);
+    setConfirmedInterview(null);
+    setIsCustomTimeOverride(false);
     setSelectedCandidateId(candidate.candidate_id);
-    setCustomMeetingLink(generateMeetingLink(candidate.name));
-  }, [candidate]);
+    setCandidateEmailOverride(candidate.email || '');
+    const initialRound: RoundType =
+      candidate.current_round === 'hr' ? 'hr' : candidate.current_round === 'technical' ? 'technical' : 'coding';
+    setSelectedRoundKey(initialRound);
+    const roundCfg = ROUND_CONFIGS.find(r => r.key === initialRound);
+    if (roundCfg) {
+      setDurationMinutes(roundCfg.defaultDuration);
+      setSelectedInterviewerIds(roundCfg.recommendedInterviewers);
+    }
+    setFormatType('video_zoom');
+    applyGeneratedRoomForCandidate(candidate.name, 'video_zoom');
+  }, [isOpen, candidate.candidate_id]);
 
   // Round config details
   const activeRoundConfig = useMemo(() => {
@@ -124,6 +158,28 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
     if (config) {
       setDurationMinutes(config.defaultDuration);
       setSelectedInterviewerIds(config.recommendedInterviewers);
+    }
+  };
+
+  const handleFormatChange = (nextFormat: InterviewFormatType) => {
+    setFormatType(nextFormat);
+    if (!isCustomLinkEdited) {
+      applyGeneratedRoomForCandidate(activeCandidate.name, nextFormat);
+    } else if (
+      (nextFormat === 'video_zoom' && !customMeetingLink.includes('zoom.us')) ||
+      (nextFormat === 'video_meet' && !customMeetingLink.includes('meet.google.com'))
+    ) {
+      applyGeneratedRoomForCandidate(activeCandidate.name, nextFormat);
+    }
+  };
+
+  const handleCandidateSwitch = (nextCandidateId: string) => {
+    setSelectedCandidateId(nextCandidateId);
+    const target = candidatesList.find(c => c.candidate_id === nextCandidateId);
+    if (target) {
+      setCandidateEmailOverride(target.email || '');
+      applyGeneratedRoomForCandidate(target.name, formatType);
+      if (onSelectCandidate) onSelectCandidate(target);
     }
   };
 
@@ -182,15 +238,21 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
       id: `interview-${Date.now()}`,
       candidateId: activeCandidate.candidate_id,
       candidateName: activeCandidate.name,
-      candidateEmail: activeCandidate.email,
+      candidateEmail: candidateEmailOverride.trim() || activeCandidate.email || '',
       candidatePhone: activeCandidate.phone,
-      jobTitle: brief?.job_title || activeCandidate.role || 'AI/ML Engineer',
+      jobTitle: brief?.job_title || activeCandidate.detected_title || activeCandidate.role || 'AI/ML Engineer',
       companyName: brief?.company_name || 'Anthropic Tech',
       roundName: activeRoundConfig.name,
       roundType: selectedRoundKey,
       durationMinutes,
       format: formatType,
-      meetingLink: customMeetingLink,
+      meetingLink: customMeetingLink.trim() || generateMeetingLink(activeCandidate.name, formatType),
+      ...(formatType === 'video_zoom'
+        ? {
+            zoomMeetingId: zoomMeetingId.trim() || undefined,
+            zoomPasscode: zoomPasscode.trim() || undefined,
+          }
+        : {}),
       dateStr,
       startTime,
       endTime,
@@ -291,26 +353,31 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
                       {activeCandidate.overall_score}%
                     </div>
                     <div>
-                      <span className="text-xs font-bold text-slate-900 block">{activeCandidate.name}</span>
-                      <span className="text-[11px] text-slate-500">{activeCandidate.email} · {activeCandidate.candidate_id}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-900">{activeCandidate.name}</span>
+                        {activeCandidate.source_file_name && (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
+                            Resume: {activeCandidate.source_file_name}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[11px] text-slate-500">
+                        {candidateEmailOverride || activeCandidate.email || 'Email not listed in resume'} · {activeCandidate.candidate_id}
+                      </span>
                     </div>
                   </div>
 
-                  {candidatesList.length > 1 && (
+                  {candidatesList.length > 0 && (
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-500 font-medium">Switch Candidate:</span>
+                      <span className="text-xs text-slate-600 font-semibold whitespace-nowrap">Candidate:</span>
                       <select
                         value={selectedCandidateId}
-                        onChange={(e) => {
-                          setSelectedCandidateId(e.target.value);
-                          const target = candidatesList.find(c => c.candidate_id === e.target.value);
-                          if (target && onSelectCandidate) onSelectCandidate(target);
-                        }}
-                        className="text-xs font-bold bg-white border border-purple-200 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+                        onChange={(e) => handleCandidateSwitch(e.target.value)}
+                        className="text-xs font-bold bg-white border border-purple-200 rounded-lg px-2.5 py-1.5 text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee] max-w-[260px]"
                       >
                         {candidatesList.map(c => (
                           <option key={c.candidate_id} value={c.candidate_id}>
-                            {c.name} ({c.overall_score}%) — {c.candidate_id}
+                            {c.name} ({c.overall_score}%){c.source_file_name ? ` — ${c.source_file_name}` : ''}
                           </option>
                         ))}
                       </select>
@@ -320,8 +387,10 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                   <div className="p-2 bg-white rounded-lg border border-purple-100">
-                    <span className="text-slate-400 text-[10px] block">Target Role</span>
-                    <span className="font-bold text-slate-800 truncate block">{brief?.job_title || activeCandidate.role}</span>
+                    <span className="text-slate-400 text-[10px] block">Candidate Role / Target</span>
+                    <span className="font-bold text-slate-800 truncate block">
+                      {activeCandidate.detected_title || brief?.job_title || activeCandidate.role}
+                    </span>
                   </div>
                   <div className="p-2 bg-white rounded-lg border border-purple-100">
                     <span className="text-slate-400 text-[10px] block">Technical Competency</span>
@@ -332,8 +401,14 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
                     <span className="font-bold text-slate-800 block">{activeCandidate.stage || 'Screening'}</span>
                   </div>
                   <div className="p-2 bg-white rounded-lg border border-purple-100">
-                    <span className="text-slate-400 text-[10px] block">Candidate Timezone</span>
-                    <span className="font-bold text-slate-800 block">Eastern / Pacific</span>
+                    <span className="text-slate-400 text-[10px] block">Invite Email</span>
+                    <input
+                      type="email"
+                      value={candidateEmailOverride}
+                      onChange={(e) => setCandidateEmailOverride(e.target.value)}
+                      placeholder="Enter email for invite..."
+                      className="w-full text-[11px] font-semibold text-slate-800 bg-transparent border-b border-slate-200 focus:border-[#6743ee] focus:outline-none"
+                    />
                   </div>
                 </div>
               </div>
@@ -401,25 +476,13 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Meeting Format & Virtual Room
+                    Meeting Format & Online Platform
                   </label>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setFormatType('video_meet')}
-                      className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                        formatType === 'video_meet'
-                          ? 'bg-[#00897b] text-white shadow-2xs'
-                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      <Video className="w-3.5 h-3.5" />
-                      <span>Google Meet</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFormatType('video_zoom')}
-                      className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                      onClick={() => handleFormatChange('video_zoom')}
+                      className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                         formatType === 'video_zoom'
                           ? 'bg-[#2d8cff] text-white shadow-2xs'
                           : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
@@ -428,15 +491,38 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
                       <Video className="w-3.5 h-3.5" />
                       <span>Zoom Meeting</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => handleFormatChange('video_meet')}
+                      className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        formatType === 'video_meet'
+                          ? 'bg-[#00897b] text-white shadow-2xs'
+                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Video className="w-3.5 h-3.5" />
+                      <span>Google Meet</span>
+                    </button>
                   </div>
                 </div>
               </div>
 
-              {/* Meeting Link input */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
-                  <span>Auto-Generated Video Conference Link</span>
-                  <span className="text-[10px] text-emerald-600 font-medium">Ready for calendar invite</span>
+              {/* Meeting Link & Zoom Credentials input */}
+              <div className="space-y-3 p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+                <label className="block text-xs font-semibold text-slate-800 flex items-center justify-between">
+                  <span>
+                    {formatType === 'video_zoom'
+                      ? 'Zoom Meeting Link & Credentials (Auto-Generated or Paste Custom URL)'
+                      : 'Google Meet Link (Auto-Generated or Paste Custom URL)'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => applyGeneratedRoomForCandidate(activeCandidate.name, formatType)}
+                    className="text-[11px] font-semibold text-[#6743ee] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Regenerate Link</span>
+                  </button>
                 </label>
                 <div className="flex items-center gap-2">
                   <div className="relative flex-1">
@@ -446,19 +532,56 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
                     <input
                       type="text"
                       value={customMeetingLink}
-                      onChange={(e) => setCustomMeetingLink(e.target.value)}
-                      className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
+                      onChange={(e) => {
+                        setCustomMeetingLink(e.target.value);
+                        setIsCustomLinkEdited(true);
+                      }}
+                      placeholder={formatType === 'video_zoom' ? 'https://zoom.us/j/...' : 'https://meet.google.com/...'}
+                      className="w-full pl-8 pr-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#6743ee]"
                     />
                   </div>
                   <button
                     type="button"
                     onClick={handleCopyMeetingLink}
-                    className="px-3 py-2 bg-white text-slate-700 border border-slate-300 hover:bg-slate-100 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 shadow-2xs"
+                    className="px-3 py-2 bg-white text-slate-700 border border-slate-300 hover:bg-slate-100 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 shadow-2xs cursor-pointer"
                   >
                     {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copiedLink ? 'Copied' : 'Copy'}</span>
                   </button>
                 </div>
+
+                {formatType === 'video_zoom' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Zoom Meeting ID
+                      </label>
+                      <input
+                        type="text"
+                        value={zoomMeetingId}
+                        onChange={(e) => {
+                          setZoomMeetingId(e.target.value);
+                          setIsCustomLinkEdited(true);
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#2d8cff]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Zoom Passcode
+                      </label>
+                      <input
+                        type="text"
+                        value={zoomPasscode}
+                        onChange={(e) => {
+                          setZoomPasscode(e.target.value);
+                          setIsCustomLinkEdited(true);
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#2d8cff]"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Hiring Team Shared Panel Selection */}
@@ -708,7 +831,7 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
                         Selected Slot: {isCustomTimeOverride ? customDate : selectedSlot?.dayLabel} at {formatTime12h(isCustomTimeOverride ? customTime : selectedSlot?.startTime || '')} EST
                       </span>
                       <span className="text-[11px] text-emerald-800">
-                        {durationMinutes} min session · Google Meet room prepared · {selectedPanelMembers.length} panel members confirmed
+                        {durationMinutes} min session · {getFormatDisplayLabel(formatType)} prepared · {selectedPanelMembers.length} panel members confirmed
                       </span>
                     </div>
                   </div>
@@ -747,7 +870,9 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <span className="text-[10px] text-slate-400 block">Candidate</span>
-                          <span className="font-bold text-slate-900">{activeCandidate.name} ({activeCandidate.email})</span>
+                          <span className="font-bold text-slate-900">
+                            {activeCandidate.name} ({candidateEmailOverride || activeCandidate.email || 'No email listed'})
+                          </span>
                         </div>
                         <div>
                           <span className="text-[10px] text-slate-400 block">Interview Round</span>
@@ -760,8 +885,15 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
                           </span>
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-400 block">Video Meeting Room</span>
-                          <span className="font-bold text-emerald-700 font-mono truncate block">{customMeetingLink}</span>
+                          <span className="text-[10px] text-slate-400 block">
+                            {getFormatDisplayLabel(formatType)}
+                          </span>
+                          <span className="font-bold text-[#2d8cff] font-mono truncate block">{customMeetingLink}</span>
+                          {formatType === 'video_zoom' && zoomMeetingId && (
+                            <span className="text-[11px] text-slate-600 font-mono block mt-0.5">
+                              ID: {zoomMeetingId} {zoomPasscode ? `· Passcode: ${zoomPasscode}` : ''}
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -788,7 +920,9 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
                         onChange={(e) => setAutoSendEmailNotice(e.target.checked)}
                         className="accent-[#6743ee] rounded"
                       />
-                      <span>Automatically dispatch calendar invite email and agenda to candidate ({activeCandidate.email})</span>
+                      <span>
+                        Prepare & queue {getFormatDisplayLabel(formatType)} calendar invite email for candidate ({candidateEmailOverride || activeCandidate.email || 'manual copy ready'})
+                      </span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer text-slate-700">
                       <input
@@ -876,21 +1010,62 @@ export const InterviewSchedulerModal: React.FC<InterviewSchedulerModalProps> = (
                   <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs">
                     <span className="font-bold text-slate-900 block">Meeting & Dial-in Credentials:</span>
                     <div className="text-[11px] text-slate-600 space-y-1 font-mono">
-                      <div>Video Link: <a href={confirmedInterview.meetingLink} target="_blank" rel="noreferrer" className="text-[#6743ee] underline">{confirmedInterview.meetingLink}</a></div>
-                      <div>Format: {confirmedInterview.format.replace('_', ' ').toUpperCase()}</div>
+                      <div>
+                        Join URL:{' '}
+                        <a href={confirmedInterview.meetingLink} target="_blank" rel="noreferrer" className="text-[#2d8cff] underline font-semibold">
+                          {confirmedInterview.meetingLink}
+                        </a>
+                      </div>
+                      {confirmedInterview.zoomMeetingId && (
+                        <div>
+                          Zoom Meeting ID: <strong className="text-slate-900">{confirmedInterview.zoomMeetingId}</strong>
+                          {confirmedInterview.zoomPasscode ? ` · Passcode: ${confirmedInterview.zoomPasscode}` : ''}
+                        </div>
+                      )}
+                      <div>Platform: {getFormatDisplayLabel(confirmedInterview.format)}</div>
                       <div>Panel: {confirmedInterview.panelInterviewerNames.join(', ')}</div>
-                      <div>Candidate: {confirmedInterview.candidateName} ({confirmedInterview.candidateEmail})</div>
+                      <div>Candidate: {confirmedInterview.candidateName}{confirmedInterview.candidateEmail ? ` (${confirmedInterview.candidateEmail})` : ''}</div>
                     </div>
                   </div>
 
-                  <div className="flex justify-end pt-2">
-                    <button
-                      type="button"
-                      onClick={onClose}
-                      className="px-5 py-2 bg-[#6743ee] hover:bg-[#5637d2] text-white rounded-xl text-xs font-bold shadow-2xs transition-colors"
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                    <a
+                      href={confirmedInterview.meetingLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`px-4 py-2 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-colors ${
+                        confirmedInterview.format === 'video_zoom'
+                          ? 'bg-[#2d8cff] hover:bg-[#1a7ae8]'
+                          : 'bg-emerald-600 hover:bg-emerald-700'
+                      }`}
                     >
-                      Done & Return to Workflow
-                    </button>
+                      <Video className="w-3.5 h-3.5" />
+                      <span>{confirmedInterview.format === 'video_zoom' ? 'Open Zoom Meeting' : 'Open Google Meet'}</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+
+                    <div className="flex items-center gap-2">
+                      {onLaunchOnlineInterview && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onClose();
+                            onLaunchOnlineInterview(confirmedInterview);
+                          }}
+                          className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-purple-300" />
+                          <span>Setup AI Online Interview Room</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={onClose}
+                        className="px-5 py-2 bg-[#6743ee] hover:bg-[#5637d2] text-white rounded-xl text-xs font-bold shadow-2xs transition-colors cursor-pointer"
+                      >
+                        Done & Return
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
