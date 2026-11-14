@@ -15,7 +15,7 @@ import { SAMPLE_RESUME_PRESETS, SampleResumePreset } from '../data/sampleResumes
 import { recruitmentAgent } from '../services/recruitmentAgent';
 import { generateCandidatePersona } from '../services/personaGenerator';
 import { generateInterviewEmailConfirmation } from '../services/interviewSchedulerService';
-import { parseResumeText, ParsedResumeData } from '../services/resumeParser';
+import { parseResumeText, ParsedResumeData, extractNameFromFileName } from '../services/resumeParser';
 import { extractTextFromResumeFile } from '../services/resumeFileReader';
 import { TeamSkillsGapAnalysis } from './TeamSkillsGapAnalysis';
 import { SkillRadarChart } from './SkillRadarChart';
@@ -69,6 +69,8 @@ import {
   ExternalLink,
   Radar,
   TrendingUp,
+  MapPin,
+  GraduationCap,
 } from 'lucide-react';
 
 interface HiringWorkflowTabProps {
@@ -166,6 +168,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   const [memoryConsent, setMemoryConsent] = useState<boolean>(true);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [autoFillNotification, setAutoFillNotification] = useState<string | null>(null);
+  const [uploadErrorMessage, setUploadErrorMessage] = useState<string | null>(null);
   const [lastParsedData, setLastParsedData] = useState<ParsedResumeData | null>(null);
 
   // Candidate list sorting & filtering state
@@ -418,8 +421,30 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     if (!file) return;
 
     setIsReadingResumeFile(true);
+    setUploadErrorMessage(null);
     try {
       const extracted = await extractTextFromResumeFile(file);
+
+      if (extracted.usedFallback || !extracted.text.trim()) {
+        setUploadedFileName(file.name);
+        setResumeTextInput('');
+        setCandidateNameInput(extractNameFromFileName(file.name));
+        setCandidateEmailInput('');
+        setCandidatePhoneInput('');
+        setGithubUrl('');
+        setLinkedinUrl('');
+        setPortfolioUrl('');
+        setWorkHighlights('');
+        setLastParsedData(null);
+        setAutoFillNotification(null);
+        setUploadErrorMessage(
+          extracted.errorReason ||
+            `Could not extract text from "${file.name}". Please paste the resume text below instead.`
+        );
+        setWorkspaceSection('intake');
+        return;
+      }
+
       const activeBrief: HiringBrief = brief || {
         company_name: companyName,
         job_title: jobTitle,
@@ -443,7 +468,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
         .split(/[\n,;]+/)
         .map((s) => s.trim())
         .filter(Boolean);
-      const parsed = parseResumeText(extracted.text, requiredSkills);
+      const parsed = parseResumeText(extracted.text, requiredSkills, file.name);
 
       const screenedCandidate = recruitmentAgent.screenResume(
         parsed.candidateName,
@@ -469,7 +494,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       appendAudit(
         'AI Screener',
         `Uploaded & evaluated ${extracted.fileType} resume "${file.name}" (Score: ${screenedCandidate.overall_score}%)`,
-        `${activeBrief.job_title}: ${screenedCandidate.name} (${screenedCandidate.candidate_id})`
+        `${screenedCandidate.role}: ${screenedCandidate.name} (${screenedCandidate.candidate_id})`
       );
     } finally {
       setIsReadingResumeFile(false);
@@ -931,10 +956,11 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       return;
     }
 
+    setUploadErrorMessage(null);
     const requiredSkills = brief
       ? brief.requirements.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean)
       : [];
-    const parsed = parseResumeText(resumeTextInput, requiredSkills);
+    const parsed = parseResumeText(resumeTextInput, requiredSkills, uploadedFileName || undefined);
     setLastParsedData(parsed);
 
     let filledCount = 0;
@@ -968,7 +994,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     }
 
     setAutoFillNotification(
-      `Extracted ${filledCount} fields and matched ${parsed.matchedSkills.length} required skills.`
+      `Extracted ${filledCount} real fields (${parsed.extractedSkills.length} skills found in resume, ${parsed.matchedSkills.length} matching role brief).`
     );
   };
 
@@ -985,35 +1011,62 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     setSelectedPresetId(null);
     setLastParsedData(null);
     setAutoFillNotification(null);
+    setUploadErrorMessage(null);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
     setIsReadingResumeFile(true);
+    setUploadErrorMessage(null);
+    setAutoFillNotification(null);
     try {
       const extracted = await extractTextFromResumeFile(file);
-      setResumeTextInput(extracted.text);
       setUploadedFileName(file.name);
       setSelectedPresetId(null);
+
+      // Clear previous candidate form fields so stale data never leaks
+      setCandidateNameInput('');
+      setCandidateEmailInput('');
+      setCandidatePhoneInput('');
+      setGithubUrl('');
+      setLinkedinUrl('');
+      setPortfolioUrl('');
+      setWorkHighlights('');
+
+      if (extracted.usedFallback || !extracted.text.trim()) {
+        setResumeTextInput('');
+        setLastParsedData(null);
+        setCandidateNameInput(extractNameFromFileName(file.name));
+        setUploadErrorMessage(
+          extracted.errorReason ||
+            `No readable text layer found in "${file.name}". Please paste the resume text below.`
+        );
+        return;
+      }
+
+      setResumeTextInput(extracted.text);
 
       const requiredSkills = brief
         ? brief.requirements.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean)
         : [];
-      const parsed = parseResumeText(extracted.text, requiredSkills);
+      const parsed = parseResumeText(extracted.text, requiredSkills, file.name);
       setLastParsedData(parsed);
 
-      setCandidateNameInput(parsed.candidateName || file.name.replace(/\.[^/.]+$/, ''));
-      if (parsed.candidateEmail) setCandidateEmailInput(parsed.candidateEmail);
-      if (parsed.candidatePhone) setCandidatePhoneInput(parsed.candidatePhone);
-      if (parsed.githubUrl) setGithubUrl(parsed.githubUrl);
-      if (parsed.linkedinUrl) setLinkedinUrl(parsed.linkedinUrl);
-      if (parsed.portfolioUrl) setPortfolioUrl(parsed.portfolioUrl);
-      if (parsed.workHighlights) setWorkHighlights(parsed.workHighlights);
+      setCandidateNameInput(parsed.candidateName || extractNameFromFileName(file.name));
+      setCandidateEmailInput(parsed.candidateEmail || '');
+      setCandidatePhoneInput(parsed.candidatePhone || '');
+      setGithubUrl(parsed.githubUrl || '');
+      setLinkedinUrl(parsed.linkedinUrl || '');
+      setPortfolioUrl(parsed.portfolioUrl || '');
+      setWorkHighlights(parsed.workHighlights || '');
 
       setAutoFillNotification(
-        `Extracted ${extracted.fileType} resume "${file.name}" (${parsed.matchedSkills.length} matched skills). Click "Screen & View Candidate Details" to add & inspect.`
+        `Extracted ${extracted.fileType} resume "${file.name}" for ${
+          parsed.candidateName || 'candidate'
+        } (${parsed.extractedSkills.length} skills extracted). Click "Screen & View Candidate Details" to add to pipeline.`
       );
     } finally {
       setIsReadingResumeFile(false);
@@ -1923,7 +1976,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                               </div>
                             </div>
 
-                            {/* Name, Explicit Status & Quiet Metadata */}
+                            {/* Name, Explicit Status & Real Resume Summary */}
                             <div className="min-w-0 space-y-1">
                               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                                 <span
@@ -1960,7 +2013,14 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                                   </>
                                 )}
 
-                                {(cand.custom_tags || []).map((tag) => (
+                                {cand.source_file_name && (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-1.5 py-0.5 rounded">
+                                    <FileText className="w-3 h-3 shrink-0" />
+                                    <span className="max-w-[160px] truncate">{cand.source_file_name}</span>
+                                  </span>
+                                )}
+
+                                {(cand.custom_tags || []).filter((tag) => tag !== 'Uploaded Resume' || !cand.source_file_name).map((tag) => (
                                   <button
                                     key={tag}
                                     type="button"
@@ -1976,16 +2036,58 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                                 ))}
                               </div>
 
-                              <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                                <span>{cand.email}</span>
+                              {/* Verified Role / Experience / Education / Location */}
+                              {(cand.detected_title || cand.role || cand.experience_years || cand.education_summary || cand.location) && (
+                                <div className="text-xs font-medium text-slate-700 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                  <span>{cand.detected_title || cand.role}</span>
+                                  {cand.experience_years && (
+                                    <>
+                                      <span className="text-slate-300">·</span>
+                                      <span className="text-slate-600">{cand.experience_years}</span>
+                                    </>
+                                  )}
+                                  {cand.education_summary && (
+                                    <>
+                                      <span className="text-slate-300">·</span>
+                                      <span className="text-slate-600 truncate max-w-[260px]">{cand.education_summary}</span>
+                                    </>
+                                  )}
+                                  {cand.location && (
+                                    <>
+                                      <span className="text-slate-300">·</span>
+                                      <span className="text-slate-500 inline-flex items-center gap-0.5">
+                                        <MapPin className="w-3 h-3 text-slate-400" />
+                                        {cand.location}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Real Candidate Summary Excerpt */}
+                              {(cand.summary_excerpt || cand.resume_profile) && (
+                                <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                                  {cand.summary_excerpt || cand.resume_profile}
+                                </p>
+                              )}
+
+                              {/* Real Contact & Extracted Skills */}
+                              <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                <span>{cand.email || 'Email not listed in resume'}</span>
+                                {cand.phone && (
+                                  <>
+                                    <span>·</span>
+                                    <span>{cand.phone}</span>
+                                  </>
+                                )}
                                 <span>·</span>
-                                <span className="tabular-nums">
+                                <span className="tabular-nums font-medium text-slate-700">
                                   Tech {cand.dimension_scores.technical}%
                                 </span>
                                 {topSkills.length > 0 && (
                                   <>
                                     <span>·</span>
-                                    <span className="truncate">
+                                    <span className="truncate text-slate-600">
                                       {topSkills.map(([skill, val]) => `${skill} (${val}/10)`).join(', ')}
                                     </span>
                                   </>
@@ -2162,6 +2264,14 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                     <h3 className="text-base font-semibold text-slate-900">
                       {activeCandidate.name}
                     </h3>
+                    {(activeCandidate.detected_title || activeCandidate.role) && (
+                      <>
+                        <span className="text-slate-300">·</span>
+                        <span className="text-xs font-medium text-slate-800">
+                          {activeCandidate.detected_title || activeCandidate.role}
+                        </span>
+                      </>
+                    )}
                     <span className="text-slate-300">·</span>
                     <span className="text-xs font-medium text-slate-700">
                       Stage: {getCandidateStage(activeCandidate)}
@@ -2182,11 +2292,29 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                   </div>
 
                   <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <span>{activeCandidate.email}</span>
+                    <span>{activeCandidate.email || 'Email not listed in resume'}</span>
                     {activeCandidate.phone && (
                       <>
                         <span>·</span>
                         <span>{activeCandidate.phone}</span>
+                      </>
+                    )}
+                    {activeCandidate.location && (
+                      <>
+                        <span>·</span>
+                        <span className="inline-flex items-center gap-1">
+                          <MapPin className="w-3 h-3 text-slate-400" />
+                          {activeCandidate.location}
+                        </span>
+                      </>
+                    )}
+                    {activeCandidate.education_summary && (
+                      <>
+                        <span>·</span>
+                        <span className="inline-flex items-center gap-1">
+                          <GraduationCap className="w-3.5 h-3.5 text-slate-400" />
+                          {activeCandidate.education_summary}
+                        </span>
                       </>
                     )}
                     {activeCandidate.digital_profile_sources
@@ -2316,17 +2444,51 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
               <div className="p-5 text-xs space-y-5">
                 {selectedDetailTab === 'overview' && (
                   <>
-                    {/* Executive Profile Summary */}
-                    <div className="p-4 bg-slate-50/80 border border-slate-200 rounded-lg space-y-1.5">
-                      <div className="font-semibold text-slate-900">Candidate Executive Summary</div>
+                    {/* Real Resume-Grounded Candidate Summary */}
+                    <div className="p-4 bg-slate-50/80 border border-slate-200 rounded-lg space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-semibold text-slate-900 flex items-center gap-2">
+                          <span>Candidate Summary</span>
+                          {activeCandidate.source_file_name && (
+                            <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              Extracted from {activeCandidate.source_file_name}
+                            </span>
+                          )}
+                        </div>
+                        {(activeCandidate.experience_years || activeCandidate.education_summary) && (
+                          <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2">
+                            {activeCandidate.experience_years && (
+                              <span className="font-medium text-slate-700">
+                                Experience: {activeCandidate.experience_years}
+                              </span>
+                            )}
+                            {activeCandidate.experience_years && activeCandidate.education_summary && (
+                              <span>·</span>
+                            )}
+                            {activeCandidate.education_summary && (
+                              <span className="font-medium text-slate-700">
+                                {activeCandidate.education_summary}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
                       <p className="text-slate-700 leading-relaxed">
-                        {activeCandidate.resume_profile}
+                        {activeCandidate.summary_excerpt || activeCandidate.resume_profile}
                       </p>
-                      {activeCandidate.persona && (
-                        <p className="text-slate-600 pt-1">
-                          <strong className="text-slate-800">Core Strength:</strong>{' '}
-                          {activeCandidate.persona.superpower}
-                        </p>
+
+                      {activeCandidate.work_highlights && activeCandidate.work_highlights.length > 0 && (
+                        <div className="pt-1.5 border-t border-slate-200/80 space-y-1">
+                          <div className="text-[11px] font-semibold text-slate-700">
+                            Extracted Resume Experience Highlights
+                          </div>
+                          <ul className="list-disc list-inside space-y-1 text-slate-600">
+                            {activeCandidate.work_highlights.slice(0, 4).map((hl, idx) => (
+                              <li key={idx}>{hl}</li>
+                            ))}
+                          </ul>
+                        </div>
                       )}
                     </div>
 
@@ -2496,11 +2658,12 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                           {activeCandidate.strengths.map((s, i) => (
                             <li key={i}>{s}</li>
                           ))}
-                          {activeCandidate.persona?.highlightReel?.slice(0, 2).map((h, i) => (
-                            <li key={`hl-${i}`}>
-                              <strong className="text-slate-800">{h.title}:</strong> {h.description}
-                            </li>
-                          ))}
+                          {(!activeCandidate.work_highlights || activeCandidate.work_highlights.length === 0) &&
+                            activeCandidate.persona?.highlightReel?.slice(0, 2).map((h, i) => (
+                              <li key={`hl-${i}`}>
+                                <strong className="text-slate-800">{h.title}:</strong> {h.description}
+                              </li>
+                            ))}
                         </ul>
                       </div>
 
@@ -3006,6 +3169,21 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
               placeholder="Paste candidate resume text here or upload a file above..."
               className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-[#6743ee]"
             />
+            {uploadErrorMessage && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 flex items-start justify-between gap-2">
+                <span className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{uploadErrorMessage}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setUploadErrorMessage(null)}
+                  className="text-rose-600 hover:text-rose-900 font-semibold shrink-0 cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
             {autoFillNotification && (
               <p className="text-xs text-emerald-700 flex items-center gap-1.5">
                 <Check className="w-3.5 h-3.5" />
@@ -3014,27 +3192,44 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
             )}
           </div>
 
-          {/* Live Skill Match Preview */}
+          {/* Live Extracted Profile & Skill Match Preview */}
           {(() => {
             const requiredSkillsList = brief
               ? brief.requirements.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean)
               : [];
             const displayParsed =
               lastParsedData ||
-              (resumeTextInput.trim().length > 30
-                ? parseResumeText(resumeTextInput, requiredSkillsList)
+              (resumeTextInput.trim().length > 20
+                ? parseResumeText(resumeTextInput, requiredSkillsList, uploadedFileName || undefined)
                 : null);
 
             if (!displayParsed) return null;
             return (
-              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg text-xs flex flex-wrap items-center justify-between gap-2">
-                <span className="font-medium text-slate-800">
-                  Detected {displayParsed.matchedSkills.length} of {requiredSkillsList.length} required
-                  skills ({displayParsed.matchRatePercent}% coverage)
-                </span>
-                <span className="text-slate-600">
-                  {displayParsed.matchedSkills.slice(0, 6).join(', ')}
-                </span>
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-semibold text-slate-900">
+                    Extracted Candidate: {candidateNameInput || displayParsed.candidateName || 'Not detected'}
+                    {(displayParsed.detectedTitle || displayParsed.location) && (
+                      <span className="font-normal text-slate-600 ml-2">
+                        {[displayParsed.detectedTitle, displayParsed.detectedExperienceYears, displayParsed.location]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-medium text-[#6743ee]">
+                    {displayParsed.extractedSkills.length} resume skills · {displayParsed.matchedSkills.length}/{requiredSkillsList.length} brief match ({displayParsed.matchRatePercent}%)
+                  </span>
+                </div>
+                {displayParsed.summaryText && (
+                  <p className="text-slate-600 line-clamp-2">{displayParsed.summaryText}</p>
+                )}
+                {displayParsed.extractedSkills.length > 0 && (
+                  <div className="text-slate-600">
+                    <strong className="text-slate-800">Resume Skills:</strong>{' '}
+                    {displayParsed.extractedSkills.slice(0, 12).join(', ')}
+                  </div>
+                )}
               </div>
             );
           })()}

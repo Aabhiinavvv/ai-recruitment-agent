@@ -1,8 +1,22 @@
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import JSZip from 'jszip';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
 export interface ExtractedResumeFileResult {
   text: string;
   fileName: string;
   fileType: string;
   usedFallback: boolean;
+  errorReason?: string;
+}
+
+interface PdfTextItemLike {
+  str?: string;
+  transform?: number[];
+  width?: number;
+  hasEOL?: boolean;
 }
 
 function decodeXmlEntities(str: string): string {
@@ -15,14 +29,118 @@ function decodeXmlEntities(str: string): string {
     .replace(/&apos;/g, "'")
     .replace(/&#x([0-9A-Fa-f]+);/g, (_, hex) => {
       const code = parseInt(hex, 16);
-      return Number.isFinite(code) ? String.fromCharCode(code) : '';
+      return Number.isFinite(code) ? String.fromCodePoint(code) : '';
     })
     .replace(/&#(\d+);/g, (_, dec) => {
       const code = parseInt(dec, 10);
-      return Number.isFinite(code) ? String.fromCharCode(code) : '';
+      return Number.isFinite(code) ? String.fromCodePoint(code) : '';
     });
 }
 
+function normalizeExtractedText(raw: string): string {
+  return raw
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * Reconstruct clean reading-order lines from PDF text items by grouping into Y bands
+ * and sorting left-to-right within each band.
+ */
+function reconstructPdfPageLines(items: PdfTextItemLike[]): string {
+  const positioned = items
+    .filter((item) => typeof item.str === 'string' && item.str.trim().length > 0 && Array.isArray(item.transform))
+    .map((item) => ({
+      str: item.str as string,
+      x: Number(item.transform?.[4] ?? 0),
+      y: Number(item.transform?.[5] ?? 0),
+      width: Number(item.width ?? 0),
+      hasEOL: Boolean(item.hasEOL),
+    }));
+
+  if (positioned.length === 0) return '';
+
+  // Sort top-to-bottom (higher Y first in PDF coordinates), then left-to-right
+  positioned.sort((a, b) => {
+    const yDiff = b.y - a.y;
+    if (Math.abs(yDiff) > 3.5) return yDiff;
+    return a.x - b.x;
+  });
+
+  // Group into lines using 3.5pt Y tolerance
+  const lines: Array<{ y: number; tokens: typeof positioned }> = [];
+  for (const token of positioned) {
+    const existingLine = lines.find((line) => Math.abs(line.y - token.y) <= 3.5);
+    if (existingLine) {
+      existingLine.tokens.push(token);
+    } else {
+      lines.push({ y: token.y, tokens: [token] });
+    }
+  }
+
+  // Sort lines top-to-bottom, and sort tokens left-to-right inside each line
+  lines.sort((a, b) => b.y - a.y);
+
+  const renderedLines = lines.map((line) => {
+    line.tokens.sort((a, b) => a.x - b.x);
+    let lineText = '';
+    let prevEndX = -Infinity;
+
+    for (const tok of line.tokens) {
+      const piece = tok.str.trim();
+      if (!piece) continue;
+
+      if (!lineText) {
+        lineText = piece;
+      } else {
+        const gap = tok.x - prevEndX;
+        if (gap > 28) {
+          lineText += `  |  ${piece}`;
+        } else if (gap > 1.5 || (!lineText.endsWith(' ') && !piece.startsWith(' '))) {
+          lineText += ` ${piece}`;
+        } else {
+          lineText += piece;
+        }
+      }
+      prevEndX = tok.x + Math.max(tok.width, piece.length * 4);
+    }
+
+    return lineText.trim();
+  });
+
+  return renderedLines.filter(Boolean).join('\n');
+}
+
+async function extractTextWithPdfJs(buffer: ArrayBuffer): Promise<string> {
+  const uint8 = new Uint8Array(buffer);
+  const loadingTask = pdfjsLib.getDocument({
+    data: uint8,
+    useSystemFonts: true,
+    disableFontFace: true,
+  });
+
+  const pdfDoc = await loadingTask.promise;
+  const pageTexts: string[] = [];
+
+  for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+    const page = await pdfDoc.getPage(pageNum);
+    const content = await page.getTextContent();
+    const reconstructed = reconstructPdfPageLines(content.items as PdfTextItemLike[]);
+    if (reconstructed) {
+      pageTexts.push(reconstructed);
+    }
+  }
+
+  await loadingTask.destroy();
+  return normalizeExtractedText(pageTexts.join('\n\n'));
+}
+
+// Secondary low-level fallback in case PDF.js worker fails in a restricted context
 function unescapePdfLiteral(raw: string): string {
   let out = '';
   for (let i = 0; i < raw.length; i++) {
@@ -37,249 +155,96 @@ function unescapePdfLiteral(raw: string): string {
     if (next === 'n') out += '\n';
     else if (next === 'r') out += '\r';
     else if (next === 't') out += '\t';
-    else if (next === 'b') out += '\b';
-    else if (next === 'f') out += '\f';
     else if (next === '(' || next === ')' || next === '\\') out += next;
-    else if (next >= '0' && next <= '7') {
-      const octMatch = raw.slice(i, i + 3).match(/^[0-7]{1,3}/);
-      if (octMatch) {
-        out += String.fromCharCode(parseInt(octMatch[0], 8));
-        i += octMatch[0].length - 1;
-      }
-    } else {
-      out += next;
-    }
+    else out += next;
   }
   return out;
 }
 
-function decodePdfHexString(hex: string): string {
-  const clean = hex.replace(/\s+/g, '');
-  if (clean.length < 2) return '';
-  // Check UTF-16BE BOM FEFF
-  if (clean.toUpperCase().startsWith('FEFF') && clean.length >= 8) {
-    let result = '';
-    for (let i = 4; i + 3 < clean.length; i += 4) {
-      const code = parseInt(clean.slice(i, i + 4), 16);
-      if (code >= 32 || code === 10 || code === 13 || code === 9) {
-        result += String.fromCharCode(code);
-      }
-    }
-    return result;
-  }
-  let result = '';
-  for (let i = 0; i + 1 < clean.length; i += 2) {
-    const code = parseInt(clean.slice(i, i + 2), 16);
-    if (code >= 32 && code <= 126) {
-      result += String.fromCharCode(code);
-    }
-  }
-  return result;
-}
-
-function extractPdfOperatorsText(content: string): string {
-  const chunks: string[] = [];
-  // Match BT ... ET text blocks or standalone Tj / TJ operators
-  const btRegex = /BT\b([\s\S]*?)ET\b/g;
-  let btMatch: RegExpExecArray | null;
-  const blocks: string[] = [];
-
-  while ((btMatch = btRegex.exec(content)) !== null) {
-    blocks.push(btMatch[1]);
-  }
-
-  const targets = blocks.length > 0 ? blocks : [content];
-
-  for (const block of targets) {
-    // Tokenize TJ arrays, Tj strings, hex strings, and line-break operators
-    const tokenRegex =
-      /\[((?:[^\[\]]|\((?:\\.|[^\\()])*\))*)\]\s*TJ|\(((?:\\.|[^\\()])*)\)\s*(?:Tj|'|")|<([0-9A-Fa-f\s]{2,})>\s*(?:Tj|'|")|\b(T\*|Td|TD)\b/g;
-    let tok: RegExpExecArray | null;
-    while ((tok = tokenRegex.exec(block)) !== null) {
-      if (tok[1] !== undefined) {
-        // TJ array
-        const innerRegex = /\(((?:\\.|[^\\()])*)\)|<([0-9A-Fa-f\s]{2,})>|(-?\d+(?:\.\d+)?)/g;
-        let inner: RegExpExecArray | null;
-        let linePart = '';
-        while ((inner = innerRegex.exec(tok[1])) !== null) {
-          if (inner[1] !== undefined) {
-            linePart += unescapePdfLiteral(inner[1]);
-          } else if (inner[2] !== undefined) {
-            linePart += decodePdfHexString(inner[2]);
-          } else if (inner[3] !== undefined) {
-            const kern = parseFloat(inner[3]);
-            if (kern < -140 && !linePart.endsWith(' ')) {
-              linePart += ' ';
-            }
-          }
-        }
-        if (linePart.trim()) chunks.push(linePart);
-      } else if (tok[2] !== undefined) {
-        const s = unescapePdfLiteral(tok[2]);
-        if (s) chunks.push(s);
-      } else if (tok[3] !== undefined) {
-        const s = decodePdfHexString(tok[3]);
-        if (s) chunks.push(s);
-      } else if (tok[4] !== undefined) {
-        chunks.push('\n');
-      }
-    }
-    if (blocks.length > 0) {
-      chunks.push('\n');
-    }
-  }
-
-  return chunks
-    .join(' ')
-    .replace(/ *\n */g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim();
-}
-
-async function inflateBytes(bytes: Uint8Array): Promise<string | null> {
-  if (typeof DecompressionStream === 'undefined') return null;
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-
-  for (const format of ['deflate', 'deflate-raw'] as const) {
-    try {
-      const stream = new Blob([copy.buffer]).stream().pipeThrough(new DecompressionStream(format));
-      const outBuf = await new Response(stream).arrayBuffer();
-      return new TextDecoder('latin1').decode(outBuf);
-    } catch {
-      // try next format
-    }
-  }
-  return null;
-}
-
-async function extractTextFromPdfBuffer(buffer: ArrayBuffer): Promise<string> {
+async function extractLegacyPdfText(buffer: ArrayBuffer): Promise<string> {
   const bytes = new Uint8Array(buffer);
   const latinText = new TextDecoder('latin1').decode(bytes);
-  const extractedSegments: string[] = [];
+  const chunks: string[] = [];
 
-  // Find stream ... endstream blocks
   const streamRegex = /stream\r?\n([\s\S]*?)\r?\n?endstream/g;
   let match: RegExpExecArray | null;
-
   while ((match = streamRegex.exec(latinText)) !== null) {
-    const streamStartOffset = match.index + match[0].indexOf(match[1]);
-    const streamLen = match[1].length;
-    const rawSlice = bytes.slice(streamStartOffset, streamStartOffset + streamLen);
-
-    // Check if zlib compressed (0x78 header) or dictionary specifies FlateDecode
-    const dictWindow = latinText.slice(Math.max(0, match.index - 220), match.index);
-    const isFlate =
-      dictWindow.includes('/FlateDecode') ||
-      (rawSlice.length >= 2 && rawSlice[0] === 0x78);
-
-    let decodedStream: string | null = null;
-    if (isFlate) {
-      decodedStream = await inflateBytes(rawSlice);
-    } else {
-      decodedStream = match[1];
-    }
-
-    if (decodedStream && (decodedStream.includes('Tj') || decodedStream.includes('TJ') || decodedStream.includes('BT'))) {
-      const parsed = extractPdfOperatorsText(decodedStream);
-      if (parsed.length > 0) {
-        extractedSegments.push(parsed);
+    const start = match.index + match[0].indexOf(match[1]);
+    const rawSlice = bytes.slice(start, start + match[1].length);
+    let content = match[1];
+    if (rawSlice.length >= 2 && rawSlice[0] === 0x78 && typeof DecompressionStream !== 'undefined') {
+      for (const fmt of ['deflate', 'deflate-raw'] as const) {
+        try {
+          const copy = new Uint8Array(rawSlice.byteLength);
+          copy.set(rawSlice);
+          const stream = new Blob([copy.buffer]).stream().pipeThrough(new DecompressionStream(fmt));
+          const out = await new Response(stream).arrayBuffer();
+          content = new TextDecoder('latin1').decode(out);
+          break;
+        } catch {
+          // try next format
+        }
       }
     }
-  }
-
-  // Fallback: check uncompressed operators across the whole file
-  if (extractedSegments.length === 0) {
-    const directParsed = extractPdfOperatorsText(latinText);
-    if (directParsed.length > 0) {
-      extractedSegments.push(directParsed);
+    const litRegex = /\(((?:\\.|[^\\()])*)\)\s*Tj/g;
+    let m: RegExpExecArray | null;
+    while ((m = litRegex.exec(content)) !== null) {
+      const val = unescapePdfLiteral(m[1]).trim();
+      if (val) chunks.push(val);
     }
   }
 
-  const combined = extractedSegments.join('\n').trim();
-  // Verify extracted string looks like actual human-readable resume text
-  const alphaCount = (combined.match(/[a-zA-Z0-9]/g) || []).length;
-  if (alphaCount >= 35) {
-    return combined;
-  }
+  return normalizeExtractedText(chunks.join('\n'));
+}
 
-  return '';
+function extractWordXmlText(xmlString: string): string {
+  return normalizeExtractedText(
+    decodeXmlEntities(
+      xmlString
+        .replace(/<w:tab\b[^>]*\/>/g, '  ')
+        .replace(/<w:br\b[^>]*\/>/g, '\n')
+        .replace(/<w:cr\b[^>]*\/>/g, '\n')
+        .replace(/<\/w:tc>/g, '  |  ')
+        .replace(/<\/w:p>/g, '\n')
+        .replace(/<\/w:tr>/g, '\n')
+        .replace(/<[^>]+>/g, '')
+    )
+  );
 }
 
 async function extractTextFromDocxBuffer(buffer: ArrayBuffer): Promise<string> {
-  const bytes = new Uint8Array(buffer);
-  const view = new DataView(buffer);
-  let offset = 0;
+  try {
+    const zip = await JSZip.loadAsync(buffer);
+    const orderedNames: string[] = [];
 
-  while (offset + 30 < bytes.length) {
-    // ZIP Local File Header signature: 0x04034b50
-    if (view.getUint32(offset, true) !== 0x04034b50) {
-      offset++;
-      continue;
-    }
-    const compressionMethod = view.getUint16(offset + 8, true);
-    const compressedSize = view.getUint32(offset + 18, true);
-    const fileNameLen = view.getUint16(offset + 26, true);
-    const extraFieldLen = view.getUint16(offset + 28, true);
-    const nameStart = offset + 30;
-    const dataStart = nameStart + fileNameLen + extraFieldLen;
-    const entryName = new TextDecoder('utf-8').decode(bytes.slice(nameStart, nameStart + fileNameLen));
+    // Headers often contain the candidate's name & contact info in Word templates
+    const headerFiles = Object.keys(zip.files)
+      .filter((name) => /^word\/header\d*\.xml$/i.test(name))
+      .sort();
+    orderedNames.push(...headerFiles);
 
-    if (entryName === 'word/document.xml' && compressedSize > 0 && dataStart + compressedSize <= bytes.length) {
-      const entryBytes = bytes.slice(dataStart, dataStart + compressedSize);
-      let xmlString = '';
-      if (compressionMethod === 0) {
-        xmlString = new TextDecoder('utf-8').decode(entryBytes);
-      } else if (compressionMethod === 8 && typeof DecompressionStream !== 'undefined') {
-        try {
-          const copy = new Uint8Array(entryBytes.byteLength);
-          copy.set(entryBytes);
-          const stream = new Blob([copy.buffer])
-            .stream()
-            .pipeThrough(new DecompressionStream('deflate-raw'));
-          const outBuf = await new Response(stream).arrayBuffer();
-          xmlString = new TextDecoder('utf-8').decode(outBuf);
-        } catch {
-          xmlString = '';
-        }
-      }
-
-      if (xmlString) {
-        const plain = decodeXmlEntities(
-          xmlString
-            .replace(/<w:tab\b[^>]*\/>/g, '  ')
-            .replace(/<w:br\b[^>]*\/>/g, '\n')
-            .replace(/<\/w:p>/g, '\n')
-            .replace(/<\/w:tr>/g, '\n')
-            .replace(/<[^>]+>/g, '')
-        )
-          .replace(/\n{3,}/g, '\n\n')
-          .trim();
-        return plain;
-      }
+    if (zip.files['word/document.xml']) {
+      orderedNames.push('word/document.xml');
     }
 
-    offset = dataStart + Math.max(1, compressedSize);
+    const footerFiles = Object.keys(zip.files)
+      .filter((name) => /^word\/footer\d*\.xml$/i.test(name))
+      .sort();
+    orderedNames.push(...footerFiles);
+
+    const sections: string[] = [];
+    for (const filePath of orderedNames) {
+      const entry = zip.files[filePath];
+      if (!entry || entry.dir) continue;
+      const xml = await entry.async('string');
+      const text = extractWordXmlText(xml);
+      if (text) sections.push(text);
+    }
+
+    return normalizeExtractedText(sections.join('\n'));
+  } catch {
+    return '';
   }
-
-  return '';
-}
-
-function buildNameFromFilename(fileName: string): string {
-  const stem = fileName
-    .replace(/\.[^/.]+$/, '')
-    .replace(/[-_]+/g, ' ')
-    .replace(/\b(resume|cv|profile|final|updated|v\d+|\d{4})\b/gi, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-
-  if (!stem) return 'Uploaded Candidate';
-  return stem
-    .split(' ')
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
 }
 
 export async function extractTextFromResumeFile(file: File): Promise<ExtractedResumeFileResult> {
@@ -288,8 +253,15 @@ export async function extractTextFromResumeFile(file: File): Promise<ExtractedRe
 
   if (ext === 'pdf') {
     const buffer = await file.arrayBuffer();
-    const pdfText = await extractTextFromPdfBuffer(buffer);
-    if (pdfText) {
+    let pdfText = '';
+    try {
+      pdfText = await extractTextWithPdfJs(buffer);
+    } catch {
+      pdfText = await extractLegacyPdfText(buffer);
+    }
+
+    const alphaCount = (pdfText.match(/[\p{L}\p{N}]/gu) || []).length;
+    if (alphaCount >= 20) {
       return {
         text: pdfText,
         fileName,
@@ -298,19 +270,22 @@ export async function extractTextFromResumeFile(file: File): Promise<ExtractedRe
       };
     }
 
-    const inferredName = buildNameFromFilename(fileName);
     return {
-      text: `${inferredName}\nUploaded Resume Document: ${fileName}\nSummary: Candidate submitted PDF resume (${fileName}). Core background includes software engineering, problem solving, and technical project delivery.`,
+      text: '',
       fileName,
       fileType: 'PDF',
       usedFallback: true,
+      errorReason:
+        'Could not find selectable text inside this PDF (it may be a scanned image PDF). Please upload a text-based PDF/DOCX or paste the resume text below.',
     };
   }
 
   if (ext === 'docx') {
     const buffer = await file.arrayBuffer();
     const docxText = await extractTextFromDocxBuffer(buffer);
-    if (docxText) {
+    const alphaCount = (docxText.match(/[\p{L}\p{N}]/gu) || []).length;
+
+    if (alphaCount >= 20) {
       return {
         text: docxText,
         fileName,
@@ -318,28 +293,43 @@ export async function extractTextFromResumeFile(file: File): Promise<ExtractedRe
         usedFallback: false,
       };
     }
+
+    return {
+      text: '',
+      fileName,
+      fileType: 'DOCX',
+      usedFallback: true,
+      errorReason:
+        'Could not extract readable text from this DOCX file. Please verify the file is not corrupted or paste the resume text below.',
+    };
   }
 
-  // Plain text / Markdown / RTF fallback
+  // Plain text / Markdown / RTF
   const rawText = await file.text();
   if (ext === 'rtf' || rawText.startsWith('{\\rtf')) {
-    const stripped = rawText
-      .replace(/\\par[d]?/g, '\n')
-      .replace(/\\[a-z]+-?\d* ?/g, '')
-      .replace(/[{}]/g, '')
-      .trim();
+    const stripped = normalizeExtractedText(
+      rawText
+        .replace(/\\par[d]?/g, '\n')
+        .replace(/\\[a-z]+-?\d* ?/g, '')
+        .replace(/[{}]/g, '')
+    );
     return {
       text: stripped,
       fileName,
       fileType: 'RTF',
-      usedFallback: false,
+      usedFallback: stripped.length < 20,
+      errorReason:
+        stripped.length < 20 ? 'The uploaded RTF document appears empty or unreadable.' : undefined,
     };
   }
 
+  const normalized = normalizeExtractedText(rawText);
   return {
-    text: rawText.trim(),
+    text: normalized,
     fileName,
     fileType: ext.toUpperCase(),
-    usedFallback: false,
+    usedFallback: normalized.length < 20,
+    errorReason:
+      normalized.length < 20 ? 'The uploaded text file contains too little text to parse.' : undefined,
   };
 }

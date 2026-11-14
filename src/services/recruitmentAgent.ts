@@ -12,7 +12,7 @@ import {
 } from '../types';
 import { computeMultidimScore } from './scoringEngine';
 import { maskSensitiveAttributes } from './fairnessEngine';
-import { parseResumeText, resumeContainsSkill } from './resumeParser';
+import { parseResumeText, resumeContainsSkill, extractNameFromFileName } from './resumeParser';
 import { generateCandidatePersona } from './personaGenerator';
 
 const EXTRA_TECH_SKILLS = [
@@ -126,14 +126,17 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
   ): Candidate {
     const candidateId = `CAN-${Math.floor(1000 + Math.random() * 9000)}`;
     const { redactedCount, labelsFound } = maskSensitiveAttributes(resumeText);
-    const parsed = parseResumeText(resumeText, requiredSkills);
+    const parsed = parseResumeText(resumeText, requiredSkills, sourceFileName);
 
-    const resolvedName = candidateName.trim() || parsed.candidateName || `Candidate ${candidateId}`;
-    const resolvedEmail =
-      candidateEmail.trim() ||
-      parsed.candidateEmail ||
-      `${resolvedName.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@applicant.example.com`;
-    const resolvedPhone = candidatePhone?.trim() || parsed.candidatePhone || `+1-555-019-${Math.floor(1000 + Math.random() * 9000)}`;
+    const resolvedName =
+      candidateName.trim() ||
+      parsed.candidateName ||
+      extractNameFromFileName(sourceFileName) ||
+      `Applicant ${candidateId}`;
+
+    // Never fabricate dummy email addresses or dummy phone numbers
+    const resolvedEmail = candidateEmail.trim() || parsed.candidateEmail || '';
+    const resolvedPhone = candidatePhone?.trim() || parsed.candidatePhone || undefined;
 
     // Build digital profile sources including extracted links if not already provided
     const mergedSources = [...digitalProfileSources];
@@ -142,7 +145,7 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
         source_type: 'GitHub',
         source_ref: 'github',
         source_location: parsed.githubUrl,
-        content: 'Extracted from uploaded resume.'
+        content: 'Extracted directly from uploaded resume.'
       });
     }
     if (parsed.linkedinUrl && !mergedSources.some(s => s.source_type === 'LinkedIn')) {
@@ -150,7 +153,7 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
         source_type: 'LinkedIn',
         source_ref: 'linkedin',
         source_location: parsed.linkedinUrl,
-        content: 'Extracted from uploaded resume.'
+        content: 'Extracted directly from uploaded resume.'
       });
     }
     if (parsed.portfolioUrl && !mergedSources.some(s => s.source_type === 'Portfolio')) {
@@ -158,19 +161,19 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
         source_type: 'Portfolio',
         source_ref: 'portfolio',
         source_location: parsed.portfolioUrl,
-        content: 'Extracted from uploaded resume.'
+        content: 'Extracted directly from uploaded resume.'
       });
     }
     if (parsed.workHighlights && !mergedSources.some(s => s.source_ref === 'work_highlights')) {
       mergedSources.push({
-        source_type: 'Candidate-submitted work highlights',
+        source_type: 'Resume work highlight',
         source_ref: 'work_highlights',
         source_location: '',
         content: parsed.workHighlights
       });
     }
 
-    // Score required skills (with synonym support) + additional resume technical skills
+    // Score required role skills + all real skills detected in candidate's resume
     const skillScores: Record<string, number> = {};
     const strengths: string[] = [];
     const missingSkills: string[] = [];
@@ -178,102 +181,127 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
 
     const lowerResume = resumeText.toLowerCase();
 
+    // First record every real skill explicitly extracted from the candidate's resume (up to 16)
+    for (const realSkill of parsed.extractedSkills.slice(0, 16)) {
+      const lowerSkill = realSkill.toLowerCase();
+      let score = 8;
+      if (
+        lowerResume.includes(`expert in ${lowerSkill}`) ||
+        lowerResume.includes(`senior ${lowerSkill}`) ||
+        lowerResume.includes(`lead ${lowerSkill}`) ||
+        lowerResume.includes('5+ years')
+      ) {
+        score = 10;
+      } else if (
+        lowerResume.includes('production') ||
+        lowerResume.includes('architected') ||
+        lowerResume.includes('deployed') ||
+        lowerResume.includes('built')
+      ) {
+        score = 9;
+      }
+      skillScores[realSkill] = score;
+    }
+
+    // Also evaluate target job brief required skills for alignment & gap visibility
     for (const skill of requiredSkills) {
       const lowerSkill = skill.toLowerCase();
+      const existingKey = Object.keys(skillScores).find(k => k.toLowerCase() === lowerSkill);
       if (resumeContainsSkill(lowerResume, skill)) {
-        let score = 8;
-        if (
-          lowerResume.includes(`expert in ${lowerSkill}`) ||
-          lowerResume.includes(`senior ${lowerSkill}`) ||
-          lowerResume.includes(`lead ${lowerSkill}`) ||
-          lowerResume.includes(`5+ years`)
-        ) {
-          score = 10;
-        } else if (
-          lowerResume.includes(`production`) ||
-          lowerResume.includes(`architected`) ||
-          lowerResume.includes(`deployed`)
-        ) {
-          score = 9;
+        if (!existingKey) {
+          skillScores[skill] = 8;
         }
-        skillScores[skill] = score;
-        strengths.push(`Demonstrated proficiency in ${skill} (${score}/10)`);
       } else {
-        const score = 4;
-        skillScores[skill] = score;
+        if (!existingKey) {
+          skillScores[skill] = 4;
+        }
         missingSkills.push(skill);
         detailedWeaknesses.push({
           skill,
-          score,
-          details: `Limited or indirect evidence of hands-on ${skill} in uploaded resume.`,
+          score: 4,
+          details: `Not explicitly cited in ${resolvedName}'s uploaded resume.`,
           suggestions: [
-            `Probe practical depth and production projects involving ${skill} during technical interview.`,
-            `Verify adjacent tooling or transferable architecture experience.`
+            `Ask about hands-on experience or transferable projects related to ${skill} during screening.`,
+            `Verify adjacent tools from their documented stack.`
           ],
-          example: `Built and deployed production services utilizing ${skill} with measurable reliability.`
+          example: `Documented experience or project work applying ${skill}.`
         });
       }
     }
 
-    // Detect additional technical skills present on the resume (up to 4 bonus skills)
-    let bonusAdded = 0;
+    // Include remaining EXTRA_TECH_SKILLS only if actually found in text
     for (const extra of EXTRA_TECH_SKILLS) {
-      if (bonusAdded >= 4) break;
       const alreadyPresent = Object.keys(skillScores).some(
         existing => existing.toLowerCase() === extra.toLowerCase()
       );
       if (!alreadyPresent && resumeContainsSkill(lowerResume, extra)) {
-        skillScores[extra] = 9;
-        bonusAdded++;
+        skillScores[extra] = 8;
       }
     }
 
     const multiDim = computeMultidimScore(resumeText, brief?.jd || '', requiredSkills, skillScores, this.cutoffScore);
 
-    // Enrich dimension evidence with concrete details from resume
-    const topMatched = Object.entries(skillScores)
-      .filter(([, s]) => s >= 7)
-      .map(([k]) => k)
-      .slice(0, 4);
+    // Enrich dimension evidence strictly from real parsed facts
+    const verifiedResumeSkills = parsed.extractedSkills.length > 0
+      ? parsed.extractedSkills
+      : Object.entries(skillScores).filter(([, s]) => s >= 7).map(([k]) => k);
 
     const enrichedEvidence: Record<string, string> = {
-      technical: topMatched.length > 0
-        ? `Demonstrated proficiency across ${topMatched.join(', ')} (${multiDim.dimension_scores.technical}% technical score).`
+      technical: verifiedResumeSkills.length > 0
+        ? `Documented in resume: ${verifiedResumeSkills.slice(0, 6).join(', ')} (${multiDim.dimension_scores.technical}% technical score).`
         : multiDim.dimension_evidence.technical,
       experience: parsed.detectedExperienceYears
-        ? `${parsed.detectedExperienceYears} of relevant engineering experience${parsed.detectedTitle ? ` including ${parsed.detectedTitle}` : ''}.`
-        : multiDim.dimension_evidence.experience,
-      education: parsed.detectedDegree
-        ? `Academic credential identified: ${parsed.detectedDegree}.`
-        : multiDim.dimension_evidence.education,
+        ? `${parsed.detectedExperienceYears}${parsed.detectedTitle ? ` as ${parsed.detectedTitle}` : ''}${parsed.experienceEntries[0] ? ` (${parsed.experienceEntries[0]})` : ''}.`
+        : parsed.experienceEntries[0] || multiDim.dimension_evidence.experience,
+      education: parsed.educationEntries[0] || parsed.detectedDegree
+        ? `Listed in resume: ${parsed.educationEntries[0] || parsed.detectedDegree}.`
+        : 'No formal degree entry detected in uploaded text.',
       projects: parsed.workHighlights
-        ? `Highlighted outcome: "${parsed.workHighlights.slice(0, 120)}${parsed.workHighlights.length > 120 ? '...' : ''}"`
+        ? `"${parsed.workHighlights.slice(0, 150)}${parsed.workHighlights.length > 150 ? '...' : ''}"`
         : multiDim.dimension_evidence.projects,
-      domain: `${parsed.matchedSkills.length} of ${requiredSkills.length} target role competencies verified in resume.`,
+      domain: `${parsed.matchedSkills.length} of ${requiredSkills.length} target role skills matched (${parsed.matchRatePercent}% coverage).`,
       communication: multiDim.dimension_evidence.communication,
     };
 
-    // Synthesize crisp executive summary matching Alex/Marcus/Jordan style
-    const headline = parsed.detectedTitle || roleTitle;
-    const expPhrase = parsed.detectedExperienceYears ? ` with ${parsed.detectedExperienceYears}` : '';
-    const eduPhrase = parsed.detectedDegree ? ` (${parsed.detectedDegree})` : '';
-    const skillsPhrase = topMatched.length > 0
-      ? `, specializing in ${topMatched.slice(0, 4).join(', ')}`
-      : '';
-    const executiveProfile = `${headline}${expPhrase}${eduPhrase}${skillsPhrase}.${parsed.workHighlights ? ` ${parsed.workHighlights}` : ''}`;
-
-    if (parsed.workHighlights && strengths.length < 4) {
-      strengths.unshift(parsed.workHighlights);
+    // Real factual strengths extracted verbatim from candidate's resume
+    for (const bullet of parsed.workHighlightBullets.slice(0, 3)) {
+      strengths.push(bullet);
+    }
+    if (verifiedResumeSkills.length > 0) {
+      strengths.push(`Documented skills: ${verifiedResumeSkills.slice(0, 8).join(', ')}`);
+    }
+    if (parsed.educationEntries[0] || parsed.detectedDegree) {
+      strengths.push(`Education: ${parsed.educationEntries[0] || parsed.detectedDegree}`);
     }
     if (strengths.length === 0) {
-      strengths.push(`Structured background aligned with ${roleTitle} responsibilities`);
+      strengths.push(`Uploaded profile parsed from ${sourceFileName || 'submitted resume text'}.`);
     }
+
+    // Build real executive profile strictly from actual resume text & extracted fields
+    const factParts: string[] = [];
+    if (parsed.detectedTitle) factParts.push(parsed.detectedTitle);
+    if (parsed.detectedExperienceYears) factParts.push(parsed.detectedExperienceYears);
+    if (parsed.educationEntries[0] || parsed.detectedDegree) {
+      factParts.push(parsed.educationEntries[0] || parsed.detectedDegree);
+    }
+    if (parsed.location) factParts.push(parsed.location);
+
+    const headerSummary = factParts.join(' · ');
+    const executiveProfile = parsed.summaryText
+      ? parsed.summaryText
+      : [
+          headerSummary,
+          verifiedResumeSkills.length > 0 ? `Core skills: ${verifiedResumeSkills.slice(0, 8).join(', ')}.` : '',
+          parsed.workHighlights || '',
+        ]
+          .filter(Boolean)
+          .join(' ') || resumeText.split('\n').slice(0, 3).join(' ').slice(0, 260);
 
     const reviewFlags = [];
     if (redactedCount > 0) {
       reviewFlags.push({
         category: "Attribute Redaction Notice",
-        evidence: `Redacted ${redactedCount} demographic attribute markers (${labelsFound.join(', ')}) before candidate evaluation.`,
+        evidence: `Detected ${redactedCount} demographic markers (${labelsFound.join(', ')}) during fairness screening.`,
         action: "Ensure evaluation remains grounded strictly in technical and experience evidence."
       });
     }
@@ -285,7 +313,15 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
       name: resolvedName,
       email: resolvedEmail,
       phone: resolvedPhone,
-      role: roleTitle,
+      role: parsed.detectedTitle || roleTitle,
+      location: parsed.location || undefined,
+      detected_title: parsed.detectedTitle || undefined,
+      education_summary: parsed.educationEntries[0] || parsed.detectedDegree || undefined,
+      experience_years: parsed.detectedExperienceYears || undefined,
+      summary_excerpt: executiveProfile,
+      work_highlights: parsed.workHighlightBullets,
+      extracted_skills: verifiedResumeSkills,
+      source_file_name: sourceFileName,
       resume_text: resumeText,
       resume_profile: executiveProfile,
       overall_score: multiDim.final_score,
@@ -303,14 +339,14 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
       dimension_evidence: enrichedEvidence,
       skill_scores: skillScores,
       strengths: strengths.slice(0, 4),
-      missing_skills: missingSkills.slice(0, 4),
-      detailed_weaknesses: detailedWeaknesses.slice(0, 3),
+      missing_skills: missingSkills.slice(0, 5),
+      detailed_weaknesses: detailedWeaknesses.slice(0, 4),
       digital_profile_sources: mergedSources,
       current_round: 'coding',
       rounds: {},
       verification_checks: {
-        identity: 'verified',
-        employment: 'pending',
+        identity: parsed.candidateName ? 'verified' : 'pending',
+        employment: parsed.experienceEntries.length > 0 || parsed.workHighlightBullets.length > 0 ? 'verified' : 'pending',
         education: parsed.detectedDegree ? 'verified' : 'pending',
         criminal: 'pending',
         reference: 'pending'
@@ -322,12 +358,11 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
         }
       },
       memory_consent: memoryConsent,
-      memory_email: memoryConsent ? resolvedEmail : undefined,
+      memory_email: memoryConsent && resolvedEmail ? resolvedEmail : undefined,
       custom_tags: sourceFileName ? ['Uploaded Resume'] : undefined,
       processed_at: new Date().toISOString(),
     };
 
-    // Generate AI Candidate Persona immediately so uploaded candidate has full Persona reel like Alex/Marcus/Jordan
     candidate.persona = generateCandidatePersona(candidate, brief || null);
 
     return candidate;

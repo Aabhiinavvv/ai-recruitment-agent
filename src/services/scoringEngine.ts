@@ -62,12 +62,22 @@ export function computeMultidimScore(
   }
 
   // 2. Experience score (20%)
-  // Regex search for years of experience
-  const expMatch = lowerResume.match(/(\d+)\+?\s*(?:years?|yrs?)(?:\s+of)?\s+experience/i);
-  let years = expMatch ? parseInt(expMatch[1], 10) : 3;
-  if (isNaN(years)) years = 3;
-  
-  let expScore = Math.min(100, Math.max(40, years * 16));
+  // Regex search for years of experience or career start year
+  const expMatch = lowerResume.match(/(\d+(?:\.\d+)?)\+?\s*(?:years?|yrs?)(?:\s+of)?(?:\s+(?:production|industry|professional|hands-on|relevant))?\s*(?:experience)?/i);
+  let years = expMatch ? Math.round(parseFloat(expMatch[1])) : 0;
+  if (!years || isNaN(years)) {
+    const yearTokens = lowerResume.match(/\b(199\d|20[0-2]\d)\b/g);
+    if (yearTokens && yearTokens.length >= 2) {
+      const nums = yearTokens.map(Number).filter((y) => y <= new Date().getFullYear() + 1);
+      const minYear = Math.min(...nums);
+      const diff = new Date().getFullYear() - minYear;
+      years = diff > 0 && diff <= 30 ? diff : 3;
+    } else {
+      years = 3;
+    }
+  }
+
+  let expScore = Math.min(100, Math.max(40, years * 15));
   
   // 3. Education score (10%)
   let maxDegree = 3; // default Bachelor

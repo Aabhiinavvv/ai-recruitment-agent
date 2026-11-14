@@ -132,6 +132,14 @@ export interface Candidate {
       snapshot_json: string;
     }>;
   };
+  location?: string;
+  detected_title?: string;
+  education_summary?: string;
+  experience_years?: string;
+  summary_excerpt?: string;
+  work_highlights?: string[];
+  extracted_skills?: string[];
+  source_file_name?: string;
   persona?: CandidatePersona;
   stage_dwell_times?: Partial<Record<HiringStage, number>>;
   interview_feedback_reports?: InterviewRoundFeedback[];
