@@ -1,9 +1,27 @@
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from starlette.concurrency import run_in_threadpool
 
-from app.candidate_intelligence.schemas import CandidateIntelligenceBatchResponse
+from app.candidate_intelligence.schemas import (
+    CandidateIntelligenceBatchResponse,
+    SavedCandidateProfile,
+)
 from app.candidate_intelligence.service import process_resume_batch
+from app.candidate_intelligence.storage import list_candidate_profiles
 
 router = APIRouter(prefix="/api/v1/candidate-intelligence", tags=["Candidate Intelligence"])
+
+
+@router.get(
+    "/resumes",
+    response_model=list[SavedCandidateProfile],
+    summary="List saved candidate profiles",
+)
+async def get_saved_resumes() -> list[SavedCandidateProfile]:
+    records = await run_in_threadpool(list_candidate_profiles)
+    return [
+        SavedCandidateProfile(candidate_profile=profile, uploaded_at=uploaded_at)
+        for profile, uploaded_at in records
+    ]
 
 
 @router.post(

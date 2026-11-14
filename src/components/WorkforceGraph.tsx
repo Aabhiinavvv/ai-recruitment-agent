@@ -84,7 +84,9 @@ export const WorkforceGraph: React.FC<WorkforceGraphProps> = ({ job, candidates 
                   <div key={c.candidate_id} className="p-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs flex items-center justify-between">
                     <div>
                       <div className="font-semibold text-slate-800">{c.name}</div>
-                      <div className="text-[10px] text-slate-500">{c.candidate_id} · Score: {c.overall_score}%</div>
+                      <div className="text-[10px] text-slate-500">
+                        {c.candidate_id} · {c.analysis_status === 'unassessed' ? 'Not scored' : `Score: ${c.overall_score}%`}
+                      </div>
                     </div>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                       c.decision_status.includes('Advanced') || c.decision_status.includes('Hired')

@@ -1,11 +1,16 @@
 import io
 
 import pytest
-from fastapi import UploadFile
+from fastapi import FastAPI, UploadFile
+from fastapi.testclient import TestClient
 
-from app.candidate_intelligence.extractors import build_candidate_profile, extract_document
+from app.candidate_intelligence.extractors import (
+    build_candidate_profile,
+    extract_document,
+)
+from app.candidate_intelligence.router import router as candidate_intelligence_router
 from app.candidate_intelligence.service import process_resume_batch
-
+from app.candidate_intelligence.storage import list_candidate_profiles
 
 SAMPLE = """Asha Sharma
 Machine Learning Engineer | Pune
@@ -27,6 +32,13 @@ B.Tech Computer Science, Example University | 2022
 PROJECTS
 Resume parser using Python and FastAPI
 """
+
+
+@pytest.fixture(autouse=True)
+def isolate_candidate_database(tmp_path, monkeypatch):
+    monkeypatch.setenv(
+        "CANDIDATE_DATABASE_PATH", str(tmp_path / "candidate_profiles.sqlite3")
+    )
 
 
 def test_candidate_profile_has_evidence_and_privacy_redaction():
@@ -77,3 +89,29 @@ async def test_batch_requires_consent():
             [UploadFile(filename="resume.txt", file=io.BytesIO(SAMPLE.encode()))],
             consent_confirmed=False,
         )
+
+
+@pytest.mark.asyncio
+async def test_batch_saves_profiles_and_reuses_identical_resume():
+    first_upload = UploadFile(filename="asha_resume.txt", file=io.BytesIO(SAMPLE.encode()))
+    first_result = await process_resume_batch([first_upload], consent_confirmed=True)
+    saved_records = list_candidate_profiles()
+
+    assert first_result.succeeded_count == 1
+    assert len(saved_records) == 1
+    assert saved_records[0][0].full_name == "Asha Sharma"
+    assert saved_records[0][0].skills
+    assert saved_records[0][0].evidence
+
+    app = FastAPI()
+    app.include_router(candidate_intelligence_router)
+    response = TestClient(app).get("/api/v1/candidate-intelligence/resumes")
+    assert response.status_code == 200
+    assert response.json()[0]["candidate_profile"]["full_name"] == "Asha Sharma"
+
+    repeated_upload = UploadFile(filename="asha_resume.txt", file=io.BytesIO(SAMPLE.encode()))
+    repeated_result = await process_resume_batch([repeated_upload], consent_confirmed=True)
+
+    assert repeated_result.succeeded_count == 1
+    assert repeated_result.results[0].candidate_profile.candidate_id == saved_records[0][0].candidate_id
+    assert len(list_candidate_profiles()) == 1

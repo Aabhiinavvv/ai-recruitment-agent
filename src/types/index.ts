@@ -96,6 +96,9 @@ export interface Candidate {
   resume_text: string;
   resume_profile: string;
   overall_score: number;
+  analysis_status?: 'unassessed' | 'evaluated';
+  source_file?: string;
+  extracted_skills?: string[];
   stage?: HiringStage;
   recruiter_decision?: 'advance' | 'reject' | 'hold';
   decision_status: CandidateDecisionStatus;

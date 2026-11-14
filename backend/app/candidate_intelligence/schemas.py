@@ -111,3 +111,8 @@ class CandidateIntelligenceBatchResponse(BaseModel):
     failed_count: int
     consent_confirmed: bool
     results: list[ResumeFileResult]
+
+
+class SavedCandidateProfile(BaseModel):
+    candidate_profile: CandidateProfile
+    uploaded_at: str
