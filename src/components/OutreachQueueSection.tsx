@@ -1,6 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { OutreachDraft, Candidate, HiringBrief } from '../types';
 import { recruitmentAgent } from '../services/recruitmentAgent';
+import { useAuth } from '../contexts/AuthContext';
+import {
+  GmailAuthError,
+  isValidEmailAddress,
+  sendCandidateEmailViaGmail,
+} from '../services/gmailService';
 import {
   Mail,
   Clock,
@@ -21,6 +27,7 @@ import {
   Eye,
   Trash2,
   Filter,
+  X,
 } from 'lucide-react';
 
 interface OutreachQueueSectionProps {
@@ -40,6 +47,8 @@ export const OutreachQueueSection: React.FC<OutreachQueueSectionProps> = ({
   onInspectCandidate,
   appendAudit,
 }) => {
+  const { user, gmailAccessToken, connectGmail, clearGmailAccessToken, isSigningIn } = useAuth();
+
   // Global HR Default Follow-Up SLA window (default: 3 days)
   const [globalReminderDays, setGlobalReminderDays] = useState<number>(3);
   const [activeFilter, setActiveFilter] = useState<'all' | 'overdue' | 'waiting' | 'responded' | 'drafts'>('all');
@@ -47,9 +56,27 @@ export const OutreachQueueSection: React.FC<OutreachQueueSectionProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Explicit confirmation dialog state for Gmail dispatch
+  const [pendingSendConfirm, setPendingSendConfirm] = useState<{
+    mode: 'single' | 'reminder' | 'batch_reminders';
+    items: Array<{
+      draftId: string;
+      candidateId: string;
+      candidateName: string;
+      to: string;
+      subject: string;
+      body: string;
+      callScript: string;
+      daysSinceSent?: number;
+      nextCount?: number;
+    }>;
+  } | null>(null);
+  const [isSendingGmail, setIsSendingGmail] = useState<boolean>(false);
+  const [gmailSendError, setGmailSendError] = useState<string | null>(null);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
   // Helper to compute follow-up status for any draft
@@ -172,7 +199,30 @@ export const OutreachQueueSection: React.FC<OutreachQueueSectionProps> = ({
     );
   };
 
-  // Handler: Mark initial draft as Dispatched / Sent
+  // Handler: Open confirmation modal to send initial draft directly via Gmail
+  const handleRequestSendSingleViaGmail = (draft: OutreachDraft) => {
+    setGmailSendError(null);
+    if (!isValidEmailAddress(draft.candidate_email)) {
+      showToast(`Please enter a valid email address for ${draft.candidate_name} before sending.`);
+      return;
+    }
+    setPendingSendConfirm({
+      mode: 'single',
+      items: [
+        {
+          draftId: draft.id,
+          candidateId: draft.candidate_id,
+          candidateName: draft.candidate_name,
+          to: draft.candidate_email.trim(),
+          subject: draft.subject,
+          body: draft.body,
+          callScript: draft.call_script,
+        },
+      ],
+    });
+  };
+
+  // Handler: Mark initial draft as Sent Manually (no email API call)
   const handleMarkAsSent = (draftId: string) => {
     const nowIso = new Date().toISOString();
     setOutreachQueue((prev) =>
@@ -189,11 +239,16 @@ export const OutreachQueueSection: React.FC<OutreachQueueSectionProps> = ({
     );
     const draft = outreachQueue.find((d) => d.id === draftId);
     showToast(`Marked outreach as Sent to ${draft?.candidate_name}`);
-    appendAudit('Recruiter', 'Dispatched outreach message to candidate', `${draft?.candidate_name} (${draft?.candidate_id})`);
+    appendAudit('Recruiter', 'Marked outreach as sent manually', `${draft?.candidate_name} (${draft?.candidate_id})`);
   };
 
-  // Handler: Generate and dispatch automated follow-up reminder email
+  // Handler: Prepare & confirm follow-up reminder email via Gmail
   const handleSendFollowUpReminder = (draft: OutreachDraft) => {
+    setGmailSendError(null);
+    if (!isValidEmailAddress(draft.candidate_email)) {
+      showToast(`Please enter a valid email address for ${draft.candidate_name} before sending.`);
+      return;
+    }
     const { daysSinceSent } = getDraftReminderStatus(draft);
     const reminder = recruitmentAgent.generateFollowUpReminderEmail(
       draft,
@@ -201,72 +256,172 @@ export const OutreachQueueSection: React.FC<OutreachQueueSectionProps> = ({
       brief?.job_title || 'AI/ML Engineer',
       brief?.company_name || 'Anthropic Tech'
     );
-
-    const nowIso = new Date().toISOString();
     const updatedCount = (draft.follow_up_sent_count || 0) + 1;
 
-    setOutreachQueue((prev) =>
-      prev.map((d) =>
-        d.id === draft.id
-          ? {
-              ...d,
-              subject: reminder.subject,
-              body: reminder.body,
-              call_script: reminder.call_script,
-              follow_up_sent_count: updatedCount,
-              last_follow_up_at: nowIso,
-              sent_at: nowIso, // reset timer for next follow-up window
-              status: 'Sent / Dispatched',
-            }
-          : d
-      )
-    );
-
-    showToast(`Dispatched Follow-Up Reminder #${updatedCount} to ${draft.candidate_name}`);
-    appendAudit(
-      'Automated Reminder Bot',
-      `Dispatched follow-up reminder #${updatedCount} (Candidate had not responded after ${daysSinceSent} days)`,
-      `${draft.candidate_name} (${draft.candidate_id})`
-    );
+    setPendingSendConfirm({
+      mode: 'reminder',
+      items: [
+        {
+          draftId: draft.id,
+          candidateId: draft.candidate_id,
+          candidateName: draft.candidate_name,
+          to: draft.candidate_email.trim(),
+          subject: reminder.subject,
+          body: reminder.body,
+          callScript: reminder.call_script,
+          daysSinceSent,
+          nextCount: updatedCount,
+        },
+      ],
+    });
   };
 
-  // Handler: Batch send all due reminders
+  // Handler: Prepare & confirm batch send for all due reminders via Gmail
   const handleBatchSendAllDueReminders = () => {
+    setGmailSendError(null);
     const dueDrafts = outreachQueue.filter((d) => getDraftReminderStatus(d).isOverdue);
     if (dueDrafts.length === 0) return;
 
-    const nowIso = new Date().toISOString();
-    setOutreachQueue((prev) =>
-      prev.map((d) => {
-        const status = getDraftReminderStatus(d);
-        if (!status.isOverdue) return d;
+    const invalid = dueDrafts.filter((d) => !isValidEmailAddress(d.candidate_email));
+    if (invalid.length > 0) {
+      showToast(
+        `Valid email required for: ${invalid.map((d) => d.candidate_name).join(', ')}`
+      );
+      return;
+    }
 
-        const reminder = recruitmentAgent.generateFollowUpReminderEmail(
-          d,
-          Math.max(1, status.daysSinceSent),
-          brief?.job_title || 'AI/ML Engineer',
-          brief?.company_name || 'Anthropic Tech'
+    const items = dueDrafts.map((d) => {
+      const status = getDraftReminderStatus(d);
+      const reminder = recruitmentAgent.generateFollowUpReminderEmail(
+        d,
+        Math.max(1, status.daysSinceSent),
+        brief?.job_title || 'AI/ML Engineer',
+        brief?.company_name || 'Anthropic Tech'
+      );
+      return {
+        draftId: d.id,
+        candidateId: d.candidate_id,
+        candidateName: d.candidate_name,
+        to: d.candidate_email.trim(),
+        subject: reminder.subject,
+        body: reminder.body,
+        callScript: reminder.call_script,
+        daysSinceSent: status.daysSinceSent,
+        nextCount: (d.follow_up_sent_count || 0) + 1,
+      };
+    });
+
+    setPendingSendConfirm({
+      mode: 'batch_reminders',
+      items,
+    });
+  };
+
+  const handleConfirmPendingGmailSend = async () => {
+    if (!pendingSendConfirm || pendingSendConfirm.items.length === 0) return;
+    setGmailSendError(null);
+    setIsSendingGmail(true);
+
+    try {
+      let token = gmailAccessToken;
+      if (!token) {
+        token = await connectGmail();
+      }
+      if (!token) {
+        setIsSendingGmail(false);
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const resultsByDraftId = new Map<
+        string,
+        {
+          messageId: string;
+          subject: string;
+          body: string;
+          callScript: string;
+          nextCount?: number;
+        }
+      >();
+
+      for (const item of pendingSendConfirm.items) {
+        const res = await sendCandidateEmailViaGmail({
+          to: item.to,
+          subject: item.subject,
+          body: item.body,
+          accessToken: token,
+        });
+        resultsByDraftId.set(item.draftId, {
+          messageId: res.id,
+          subject: item.subject,
+          body: item.body,
+          callScript: item.callScript,
+          nextCount: item.nextCount,
+        });
+      }
+
+      setOutreachQueue((prev) =>
+        prev.map((d) => {
+          const sentInfo = resultsByDraftId.get(d.id);
+          if (!sentInfo) return d;
+          return {
+            ...d,
+            subject: sentInfo.subject,
+            body: sentInfo.body,
+            call_script: sentInfo.callScript,
+            status: 'Sent / Dispatched',
+            sent_at: nowIso,
+            response_status: 'waiting',
+            delivery_channel: 'gmail',
+            gmail_message_id: sentInfo.messageId,
+            ...(sentInfo.nextCount
+              ? {
+                  follow_up_sent_count: sentInfo.nextCount,
+                  last_follow_up_at: nowIso,
+                }
+              : {}),
+          };
+        })
+      );
+
+      if (pendingSendConfirm.mode === 'single') {
+        const item = pendingSendConfirm.items[0];
+        showToast(`Email sent directly to ${item.to} via Gmail`);
+        appendAudit(
+          'Gmail',
+          `Sent email directly to ${item.to}`,
+          `${item.candidateName} (${item.candidateId})`
         );
+      } else if (pendingSendConfirm.mode === 'reminder') {
+        const item = pendingSendConfirm.items[0];
+        showToast(`Follow-up reminder #${item.nextCount} sent to ${item.to} via Gmail`);
+        appendAudit(
+          'Gmail',
+          `Sent follow-up reminder #${item.nextCount} directly to ${item.to}`,
+          `${item.candidateName} (${item.candidateId})`
+        );
+      } else {
+        showToast(
+          `Sent ${pendingSendConfirm.items.length} follow-up reminder emails via Gmail`
+        );
+        appendAudit(
+          'Gmail',
+          `Sent batch follow-up reminders directly to ${pendingSendConfirm.items.length} candidates`,
+          pendingSendConfirm.items.map((i) => i.to).join(', ')
+        );
+      }
 
-        return {
-          ...d,
-          subject: reminder.subject,
-          body: reminder.body,
-          call_script: reminder.call_script,
-          follow_up_sent_count: (d.follow_up_sent_count || 0) + 1,
-          last_follow_up_at: nowIso,
-          sent_at: nowIso,
-          status: 'Sent / Dispatched',
-        };
-      })
-    );
-
-    showToast(`Dispatched automated follow-up reminders to ${dueDrafts.length} candidate(s)`);
-    appendAudit(
-      'Automated Reminder Bot',
-      `Dispatched batch follow-up reminders to ${dueDrafts.length} candidate(s) with no response`,
-      `${dueDrafts.map((d) => d.candidate_name).join(', ')}`
-    );
+      setPendingSendConfirm(null);
+    } catch (err: unknown) {
+      if (err instanceof GmailAuthError) {
+        clearGmailAccessToken();
+      }
+      setGmailSendError(
+        err instanceof Error ? err.message : 'Failed to send email via Gmail.'
+      );
+    } finally {
+      setIsSendingGmail(false);
+    }
   };
 
   const handleDownloadDraft = (draft: OutreachDraft) => {
@@ -486,7 +641,28 @@ export const OutreachQueueSection: React.FC<OutreachQueueSectionProps> = ({
                       {draft.candidate_id}
                     </span>
                     <span className="text-slate-400">·</span>
-                    <span className="text-slate-600">{draft.candidate_email}</span>
+                    <input
+                      type="email"
+                      aria-label={`Recipient email for ${draft.candidate_name}`}
+                      value={draft.candidate_email}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setOutreachQueue((prev) =>
+                          prev.map((d) =>
+                            d.id === draft.id ? { ...d, candidate_email: val } : d
+                          )
+                        );
+                      }}
+                      placeholder="candidate@email.com"
+                      className="px-2 py-0.5 text-xs bg-white border border-slate-200 rounded text-slate-700 focus:outline-none focus:border-[#6743ee] min-w-[180px]"
+                    />
+
+                    {draft.delivery_channel === 'gmail' && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        <Mail className="w-3 h-3 shrink-0" />
+                        <span>Sent via Gmail</span>
+                      </span>
+                    )}
 
                     {/* Prominent Highlighting Badge */}
                     {status.isOverdue ? (
@@ -655,14 +831,33 @@ export const OutreachQueueSection: React.FC<OutreachQueueSectionProps> = ({
                 {/* Card Actions Bottom Strip */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70">
                   <div className="flex flex-wrap items-center gap-2">
-                    {!status.isSent && (
+                    {!status.isSent ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleRequestSendSingleViaGmail(draft)}
+                          className="px-3 py-1.5 bg-[#6743ee] hover:bg-[#5637d2] text-white rounded-lg font-semibold flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Send className="w-3 h-3" />
+                          <span>Send via Gmail</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMarkAsSent(draft.id)}
+                          className="px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-lg font-medium cursor-pointer"
+                          title="Mark as sent if you already emailed outside the app"
+                        >
+                          Mark Sent
+                        </button>
+                      </>
+                    ) : (
                       <button
                         type="button"
-                        onClick={() => handleMarkAsSent(draft.id)}
-                        className="px-3 py-1.5 bg-[#6743ee] hover:bg-[#5637d2] text-white rounded-lg font-semibold flex items-center gap-1 cursor-pointer"
+                        onClick={() => handleRequestSendSingleViaGmail(draft)}
+                        className="px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg font-medium flex items-center gap-1.5 cursor-pointer"
                       >
-                        <Send className="w-3 h-3" />
-                        <span>Dispatch Outreach</span>
+                        <Send className="w-3 h-3 text-[#6743ee]" />
+                        <span>Resend via Gmail</span>
                       </button>
                     )}
 
@@ -670,10 +865,10 @@ export const OutreachQueueSection: React.FC<OutreachQueueSectionProps> = ({
                       type="button"
                       onClick={() => handleSendFollowUpReminder(draft)}
                       className="px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg font-medium flex items-center gap-1 cursor-pointer"
-                      title="Generate automated reminder nudge"
+                      title="Compose and send a follow-up reminder email via Gmail"
                     >
                       <Sparkles className="w-3 h-3 text-[#6743ee]" />
-                      <span>{status.isOverdue ? 'Dispatch Reminder' : 'New Reminder'}</span>
+                      <span>{status.isOverdue ? 'Send Reminder via Gmail' : 'Follow-Up via Gmail'}</span>
                     </button>
 
                     <button
@@ -730,6 +925,127 @@ export const OutreachQueueSection: React.FC<OutreachQueueSectionProps> = ({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Mandatory Explicit Confirmation Modal Before Sending via Gmail */}
+      {pendingSendConfirm && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => !isSendingGmail && setPendingSendConfirm(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg p-5 space-y-4 text-xs"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-indigo-50 text-[#6743ee]">
+                  <Mail className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {pendingSendConfirm.items.length > 1
+                      ? `Confirm Sending ${pendingSendConfirm.items.length} Emails via Gmail`
+                      : 'Confirm Sending Email via Gmail'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Emails will be delivered directly from {user?.email || 'your Gmail account'}.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isSendingGmail}
+                onClick={() => setPendingSendConfirm(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="max-h-64 overflow-y-auto space-y-2.5">
+              {pendingSendConfirm.items.map((item) => (
+                <div
+                  key={item.draftId}
+                  className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-900">
+                      To: {item.candidateName} &lt;{item.to}&gt;
+                    </span>
+                  </div>
+                  <div className="text-slate-700 font-medium">
+                    Subject: {item.subject}
+                  </div>
+                  {pendingSendConfirm.items.length === 1 && (
+                    <div className="text-[11px] text-slate-600 whitespace-pre-wrap bg-white p-2 rounded-lg border border-slate-200 max-h-28 overflow-y-auto">
+                      {item.body}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {!gmailAccessToken && (
+              <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl flex flex-wrap items-center justify-between gap-2">
+                <span className="text-indigo-900">
+                  Connect your Gmail account to authorize sending emails.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGmailSendError(null);
+                    void connectGmail().catch((err) => {
+                      setGmailSendError(
+                        err instanceof Error ? err.message : 'Could not connect Gmail.'
+                      );
+                    });
+                  }}
+                  disabled={isSigningIn}
+                  className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 rounded-lg font-medium flex items-center gap-1.5 cursor-pointer"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 48 48" aria-hidden="true">
+                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+                  </svg>
+                  <span>{isSigningIn ? 'Connecting...' : 'Connect Gmail'}</span>
+                </button>
+              </div>
+            )}
+
+            {gmailSendError && (
+              <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800">
+                {gmailSendError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={isSendingGmail}
+                onClick={() => setPendingSendConfirm(null)}
+                className="px-4 py-2 font-semibold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isSendingGmail}
+                onClick={handleConfirmPendingGmailSend}
+                className="px-5 py-2 font-bold text-white bg-[#6743ee] hover:bg-[#5637d2] rounded-xl flex items-center gap-2 cursor-pointer disabled:opacity-60"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>
+                  {isSendingGmail
+                    ? 'Sending via Gmail...'
+                    : `Confirm & Send${pendingSendConfirm.items.length > 1 ? ` (${pendingSendConfirm.items.length})` : ''}`}
+                </span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </section>

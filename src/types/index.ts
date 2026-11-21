@@ -142,10 +142,29 @@ export interface Candidate {
   source_file_name?: string;
   persona?: CandidatePersona;
   ai_insights?: ResumeAIInsights;
+  ats_score?: number;
+  ats_analysis?: ResumeATSBreakdown;
   stage_dwell_times?: Partial<Record<HiringStage, number>>;
   interview_feedback_reports?: InterviewRoundFeedback[];
   custom_tags?: string[];
   processed_at?: string;
+}
+
+export type ATSTier = 'Excellent' | 'Strong' | 'Moderate' | 'Needs Optimization';
+
+export interface ResumeATSBreakdown {
+  overall_ats_score: number;
+  keyword_match_score: number;
+  section_completeness_score: number;
+  contact_info_score: number;
+  quantified_impact_score: number;
+  formatting_score: number;
+  matched_keywords: string[];
+  missing_keywords: string[];
+  detected_sections: string[];
+  passed_checks: string[];
+  warnings: string[];
+  tier: ATSTier;
 }
 
 export interface ResumePatternInsight {
@@ -258,6 +277,8 @@ export interface OutreachDraft {
   follow_up_sent_count?: number;
   last_follow_up_at?: string;
   notes?: string;
+  gmail_message_id?: string;
+  delivery_channel?: 'gmail' | 'queue';
 }
 
 export type EmailDraftType = 'progress' | 'rejection';

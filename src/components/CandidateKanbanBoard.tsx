@@ -7,6 +7,7 @@ import {
   EmailDraftType 
 } from '../types';
 import { getCandidateStage } from './HiringWorkflowTab';
+import { getCandidateATSScore, getAtsBadgeColors } from '../services/atsScoringEngine';
 import { 
   CheckCircle2, 
   AlertCircle, 
@@ -310,8 +311,8 @@ export const CandidateKanbanBoard: React.FC<CandidateKanbanBoardProps> = ({
                   stageCandidates.map((cand) => {
                     const isTopScore = cand.overall_score >= cutoffScore;
                     const isDragging = draggedCandidateId === cand.candidate_id;
-                    const stageOrder = ['Screening', 'Technical', 'Interview', 'Offered'];
-                    const currentIdx = stageOrder.indexOf(stage);
+                    const ats = getCandidateATSScore(cand, brief);
+                    const atsColors = getAtsBadgeColors(ats.overall_ats_score);
 
                     return (
                       <div
@@ -369,15 +370,23 @@ export const CandidateKanbanBoard: React.FC<CandidateKanbanBoardProps> = ({
                             )}
                           </div>
 
-                          {/* Score Badge */}
-                          <div className={`shrink-0 px-2 py-0.5 rounded-lg text-xs font-black border shadow-2xs ${
-                            isTopScore 
-                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
-                              : cand.overall_score >= 60
-                              ? 'bg-amber-50 text-amber-800 border-amber-200'
-                              : 'bg-rose-50 text-rose-800 border-rose-200'
-                          }`}>
-                            {cand.overall_score}%
+                          {/* Match & ATS Score Badges */}
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <div className={`px-2 py-0.5 rounded-lg text-xs font-black border shadow-2xs ${
+                              isTopScore 
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                                : cand.overall_score >= 60
+                                ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                : 'bg-rose-50 text-rose-800 border-rose-200'
+                            }`} title="Role Match Score">
+                              {cand.overall_score}%
+                            </div>
+                            <div
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${atsColors.badge}`}
+                              title={`Resume ATS Score: ${ats.overall_ats_score}% (${ats.tier})`}
+                            >
+                              ATS {ats.overall_ats_score}%
+                            </div>
                           </div>
                         </div>
 

@@ -206,6 +206,100 @@ async function startServer() {
     }
   });
 
+  app.post('/api/gmail/send', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || '';
+      const accessToken = authHeader.startsWith('Bearer ')
+        ? authHeader.slice(7).trim()
+        : '';
+
+      if (!accessToken) {
+        res.status(401).json({
+          error: 'Gmail permission token is missing. Please sign in with Google to connect Gmail.',
+          requiresReauth: true,
+        });
+        return;
+      }
+
+      const { to, subject, body } = req.body || {};
+      const cleanTo = typeof to === 'string' ? to.trim() : '';
+      const cleanSubject = typeof subject === 'string' ? subject.trim() : '';
+      const cleanBody = typeof body === 'string' ? body : '';
+
+      if (!cleanTo || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanTo)) {
+        res.status(400).json({ error: 'Valid candidate recipient email is required.' });
+        return;
+      }
+      if (!cleanSubject) {
+        res.status(400).json({ error: 'Email subject is required.' });
+        return;
+      }
+      if (!cleanBody.trim()) {
+        res.status(400).json({ error: 'Email body is required.' });
+        return;
+      }
+
+      const encodedSubject = `=?UTF-8?B?${Buffer.from(cleanSubject, 'utf8').toString('base64')}?=`;
+      const mimeMessage = [
+        `To: ${cleanTo}`,
+        `Subject: ${encodedSubject}`,
+        'MIME-Version: 1.0',
+        'Content-Type: text/plain; charset="UTF-8"',
+        'Content-Transfer-Encoding: 8bit',
+        '',
+        cleanBody,
+      ].join('\r\n');
+
+      const raw = Buffer.from(mimeMessage, 'utf8')
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+
+      const gmailRes = await fetch(
+        'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ raw }),
+        }
+      );
+
+      const gmailData = (await gmailRes.json().catch(() => ({}))) as {
+        id?: string;
+        threadId?: string;
+        error?: { message?: string; code?: number };
+      };
+
+      if (!gmailRes.ok) {
+        const isAuthIssue = gmailRes.status === 401 || gmailRes.status === 403;
+        const gmailErrMsg =
+          gmailData?.error?.message ||
+          (isAuthIssue
+            ? 'Gmail authorization expired or missing send permission. Please reconnect Gmail.'
+            : `Gmail delivery failed (${gmailRes.status}).`);
+        res.status(gmailRes.status).json({
+          error: gmailErrMsg,
+          requiresReauth: isAuthIssue,
+        });
+        return;
+      }
+
+      res.json({
+        ok: true,
+        id: gmailData.id || `msg-${Date.now()}`,
+        threadId: gmailData.threadId,
+        to: cleanTo,
+      });
+    } catch (error) {
+      console.error('POST /api/gmail/send failed:', error);
+      res.status(500).json({ error: 'Failed to send email via Gmail.' });
+    }
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({

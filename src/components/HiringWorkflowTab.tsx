@@ -19,7 +19,9 @@ import { parseResumeText, ParsedResumeData, extractNameFromFileName } from '../s
 import { extractTextFromResumeFile } from '../services/resumeFileReader';
 import { generateResumeAIInsights } from '../services/resumeInsightsApi';
 import { buildLocalResumeInsights } from '../services/localResumeInsights';
+import { computeResumeATSScore, getAtsBadgeColors, getCandidateATSScore } from '../services/atsScoringEngine';
 import { CandidateResumeInsightsPanel } from './CandidateResumeInsightsPanel';
+import { CandidateATSScorePanel } from './CandidateATSScorePanel';
 import { TeamSkillsGapAnalysis } from './TeamSkillsGapAnalysis';
 import { SkillRadarChart } from './SkillRadarChart';
 import { CandidateRubricRadarChart } from './CandidateRubricRadarChart';
@@ -181,7 +183,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   const [lastParsedData, setLastParsedData] = useState<ParsedResumeData | null>(null);
 
   // Candidate list sorting & filtering state
-  const [sortField, setSortField] = useState<'score' | 'technical' | 'experience' | 'name'>('score');
+  const [sortField, setSortField] = useState<'score' | 'ats' | 'technical' | 'experience' | 'name'>('score');
   const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -326,6 +328,10 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
       let comparison = 0;
       if (sortField === 'score') {
         comparison = b.overall_score - a.overall_score;
+      } else if (sortField === 'ats') {
+        comparison =
+          getCandidateATSScore(b, brief).overall_ats_score -
+          getCandidateATSScore(a, brief).overall_ats_score;
       } else if (sortField === 'technical') {
         comparison = (b.dimension_scores?.technical ?? 0) - (a.dimension_scores?.technical ?? 0);
       } else if (sortField === 'experience') {
@@ -340,7 +346,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
     });
 
     return result;
-  }, [candidates, sortField, sortDirection, statusFilter, searchQuery, selectedSkillTag, selectedCustomTag]);
+  }, [candidates, sortField, sortDirection, statusFilter, searchQuery, selectedSkillTag, selectedCustomTag, brief]);
 
   // Active selected candidate for the Selected Candidate Details view
   const activeCandidate = useMemo(() => {
@@ -598,7 +604,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
 
       appendAudit(
         'AI Screener',
-        `Uploaded & evaluated ${extracted.fileType} resume "${file.name}" (Score: ${screenedCandidate.overall_score}%)`,
+        `Uploaded & evaluated ${extracted.fileType} resume "${file.name}" (Match: ${screenedCandidate.overall_score}%, ATS: ${screenedCandidate.ats_score ?? getCandidateATSScore(screenedCandidate, activeBrief).overall_ats_score}%)`,
         `${screenedCandidate.role}: ${screenedCandidate.name} (${screenedCandidate.candidate_id})`
       );
 
@@ -621,18 +627,28 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
   };
 
   const handleQueueEmailDraft = (draft: OutreachDraft, reasonCategory: string) => {
+    const isSent =
+      draft.delivery_channel === 'gmail' || draft.status === 'Sent / Dispatched';
     const stampedDraft: OutreachDraft = {
       ...draft,
-      sent_at: draft.sent_at || new Date().toISOString(),
+      sent_at: isSent ? draft.sent_at || new Date().toISOString() : undefined,
       reminder_days: draft.reminder_days ?? 3,
-      response_status: draft.response_status ?? 'waiting',
-      status: 'Sent / Dispatched',
+      response_status: isSent ? draft.response_status ?? 'waiting' : undefined,
+      status: isSent ? 'Sent / Dispatched' : 'Draft — not sent or scheduled',
     };
     setOutreachQueue((prev) => [stampedDraft, ...prev]);
     appendAudit(
-      'Recruiter',
-      `Queued & dispatched ${draft.type} email draft (${reasonCategory.replace(/_/g, ' ')})`,
+      isSent && draft.delivery_channel === 'gmail' ? 'Gmail' : 'Recruiter',
+      isSent && draft.delivery_channel === 'gmail'
+        ? `Sent ${draft.type} email directly to ${draft.candidate_email}`
+        : `Saved ${draft.type} email draft (${reasonCategory.replace(/_/g, ' ')})`,
       `${draft.candidate_name} (${draft.candidate_id})`
+    );
+  };
+
+  const handleUpdateCandidateEmail = (candidateId: string, email: string) => {
+    setCandidates((prev) =>
+      prev.map((c) => (c.candidate_id === candidateId ? { ...c, email } : c))
     );
   };
 
@@ -1270,7 +1286,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
 
     appendAudit(
       'AI Screener',
-      `Screened resume (Score: ${screenedCandidate.overall_score}%)`,
+      `Screened resume (Match: ${screenedCandidate.overall_score}%, ATS: ${screenedCandidate.ats_score ?? getCandidateATSScore(screenedCandidate, activeBrief).overall_ats_score}%)`,
       `${activeBrief.job_title}: ${screenedCandidate.name} (${screenedCandidate.candidate_id})`
     );
 
@@ -1913,11 +1929,12 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                       aria-label="Sort candidates by"
                       value={sortField}
                       onChange={(e) =>
-                        setSortField(e.target.value as 'score' | 'technical' | 'experience' | 'name')
+                        setSortField(e.target.value as 'score' | 'ats' | 'technical' | 'experience' | 'name')
                       }
                       className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-[#6743ee]"
                     >
                       <option value="score">Sort: Match Score</option>
+                      <option value="ats">Sort: Resume ATS Score</option>
                       <option value="technical">Sort: Technical</option>
                       <option value="experience">Sort: Experience</option>
                       <option value="name">Sort: Name</option>
@@ -2058,6 +2075,8 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                         .sort((a, b) => b[1] - a[1])
                         .slice(0, 4);
                       const latestFeedback = cand.interview_feedback_reports?.[0];
+                      const ats = getCandidateATSScore(cand, brief);
+                      const atsColors = getAtsBadgeColors(ats.overall_ats_score);
 
                       return (
                         <div
@@ -2093,18 +2112,31 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                               )}
                             </label>
 
-                            {/* Tabular Match Score */}
-                            <div className="w-12 shrink-0 text-left">
-                              <div
-                                className={`text-base font-bold tabular-nums leading-tight ${
-                                  isAboveCutoff ? 'text-slate-900' : 'text-slate-500'
-                                }`}
-                              >
-                                {cand.overall_score}%
-                              </div>
-                              <div className="text-[11px] text-slate-400 tabular-nums">
-                                #{index + 1}
-                              </div>
+                            {/* Tabular Match & ATS Score */}
+                            <div className="w-16 shrink-0 text-left">
+                              {sortField === 'ats' ? (
+                                <>
+                                  <div className={`text-base font-bold tabular-nums leading-tight ${atsColors.text}`}>
+                                    {ats.overall_ats_score}%
+                                  </div>
+                                  <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-tight">
+                                    ATS · #{index + 1}
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <div
+                                    className={`text-base font-bold tabular-nums leading-tight ${
+                                      isAboveCutoff ? 'text-slate-900' : 'text-slate-500'
+                                    }`}
+                                  >
+                                    {cand.overall_score}%
+                                  </div>
+                                  <div className="text-[11px] text-slate-400 tabular-nums">
+                                    #{index + 1}
+                                  </div>
+                                </>
+                              )}
                             </div>
 
                             {/* Name, Explicit Status & Real Resume Summary */}
@@ -2116,6 +2148,13 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                                   }`}
                                 >
                                   {cand.name}
+                                </span>
+
+                                <span
+                                  className={`inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded border tabular-nums ${atsColors.badge}`}
+                                  title={`Resume ATS Score: ${ats.overall_ats_score}% (${ats.tier}) · Keyword Match ${ats.keyword_match_score}%`}
+                                >
+                                  ATS {ats.overall_ats_score}%
                                 </span>
 
                                 <span className="text-slate-300">·</span>
@@ -2499,7 +2538,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                   >
                     {candidates.map((c) => (
                       <option key={c.candidate_id} value={c.candidate_id}>
-                        {c.name} ({c.overall_score}%)
+                        {c.name} ({c.overall_score}% · ATS {getCandidateATSScore(c, brief).overall_ats_score}%)
                       </option>
                     ))}
                   </select>
@@ -2514,6 +2553,24 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                         : 'Below cutoff'}
                     </div>
                   </div>
+
+                  {(() => {
+                    const activeAts = getCandidateATSScore(activeCandidate, brief);
+                    const atsColors = getAtsBadgeColors(activeAts.overall_ats_score);
+                    return (
+                      <div
+                        className={`px-3 py-1 border rounded-lg text-right ${atsColors.badge}`}
+                        title={`Resume ATS Score: ${activeAts.overall_ats_score}% (${activeAts.tier})`}
+                      >
+                        <div className="text-sm font-bold tabular-nums leading-tight">
+                          {activeAts.overall_ats_score}%
+                        </div>
+                        <div className="text-[10px] font-semibold">
+                          ATS · {activeAts.tier}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {candidates.length >= 2 && (
                     <button
@@ -2612,6 +2669,12 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                       isAnalyzing={Boolean(analyzingInsightIds[activeCandidate.candidate_id])}
                       errorMessage={insightErrors[activeCandidate.candidate_id] || null}
                       onAnalyze={(force = true) => void runResumeAIAnalysis(activeCandidate, force)}
+                    />
+
+                    {/* Resume ATS Score & Parseability Breakdown */}
+                    <CandidateATSScorePanel
+                      candidate={activeCandidate}
+                      brief={brief}
                     />
 
                     {/* 6-Dimension Evaluation Rubric & Spider Radar Analysis */}
@@ -3326,6 +3389,17 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                 : null);
 
             if (!displayParsed) return null;
+
+            const previewAts = computeResumeATSScore({
+              resumeText: resumeTextInput,
+              requiredSkills: requiredSkillsList,
+              jdText: brief?.jd,
+              email: candidateEmailInput || displayParsed.candidateEmail,
+              phone: candidatePhoneInput || displayParsed.candidatePhone,
+              extractedSkills: displayParsed.extractedSkills,
+            });
+            const previewAtsColors = getAtsBadgeColors(previewAts.overall_ats_score);
+
             return (
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3339,9 +3413,16 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
                       </span>
                     )}
                   </div>
-                  <span className="font-medium text-[#6743ee]">
-                    {displayParsed.extractedSkills.length} resume skills · {displayParsed.matchedSkills.length}/{requiredSkillsList.length} brief match ({displayParsed.matchRatePercent}%)
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`px-2 py-0.5 rounded-md font-bold border tabular-nums ${previewAtsColors.badge}`}
+                    >
+                      ATS Score: {previewAts.overall_ats_score}% ({previewAts.tier})
+                    </span>
+                    <span className="font-medium text-[#6743ee]">
+                      {displayParsed.extractedSkills.length} resume skills · {displayParsed.matchedSkills.length}/{requiredSkillsList.length} brief match ({displayParsed.matchRatePercent}%)
+                    </span>
+                  </div>
                 </div>
                 {displayParsed.summaryText && (
                   <p className="text-slate-600 line-clamp-2">{displayParsed.summaryText}</p>
@@ -3710,6 +3791,7 @@ export const HiringWorkflowTab: React.FC<HiringWorkflowTabProps> = ({
           brief={brief}
           initialType={emailModalInitialType}
           onQueueDraft={handleQueueEmailDraft}
+          onUpdateCandidateEmail={handleUpdateCandidateEmail}
         />
       )}
 

@@ -11,6 +11,7 @@ import {
   OutreachDraft
 } from '../types';
 import { computeMultidimScore } from './scoringEngine';
+import { computeResumeATSScore } from './atsScoringEngine';
 import { maskSensitiveAttributes } from './fairnessEngine';
 import { parseResumeText, resumeContainsSkill, extractNameFromFileName } from './resumeParser';
 import { generateCandidatePersona } from './personaGenerator';
@@ -243,6 +244,16 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
       ? parsed.extractedSkills
       : Object.entries(skillScores).filter(([, s]) => s >= 7).map(([k]) => k);
 
+    const atsAnalysis = computeResumeATSScore({
+      resumeText,
+      requiredSkills,
+      jdText: brief?.jd || '',
+      email: resolvedEmail,
+      phone: resolvedPhone,
+      extractedSkills: verifiedResumeSkills,
+      skillScores,
+    });
+
     const enrichedEvidence: Record<string, string> = {
       technical: verifiedResumeSkills.length > 0
         ? `Documented in resume: ${verifiedResumeSkills.slice(0, 6).join(', ')} (${multiDim.dimension_scores.technical}% technical score).`
@@ -322,6 +333,8 @@ ${company} is proud to be an equal opportunity employer. We celebrate diversity 
       resume_text: resumeText,
       resume_profile: executiveProfile,
       overall_score: multiDim.final_score,
+      ats_score: atsAnalysis.overall_ats_score,
+      ats_analysis: atsAnalysis,
       stage: 'Screening',
       stage_dwell_times: {
         Screening: 0.2,

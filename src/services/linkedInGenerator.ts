@@ -1,5 +1,6 @@
 import { Candidate, HiringBrief } from '../types';
 import { computeMultidimScore } from './scoringEngine';
+import { computeResumeATSScore } from './atsScoringEngine';
 import { generateCandidatePersona } from './personaGenerator';
 
 export interface LinkedInGenerateOptions {
@@ -141,6 +142,15 @@ ${requiredSkills.map(s => `- ${s} (Highly endorsed by engineering peers)`).join(
   const candidateId = `CAN-LI-${Math.floor(1000 + Math.random() * 9000)}`;
   const cutoffScore = 75;
   const multiDim = computeMultidimScore(resumeText, "", requiredSkills, skillScores, cutoffScore);
+  const atsAnalysis = computeResumeATSScore({
+    resumeText,
+    requiredSkills,
+    jdText: brief?.jd || "",
+    email,
+    phone,
+    extractedSkills: Object.keys(skillScores),
+    skillScores,
+  });
 
   const candidate: Candidate = {
     candidate_id: candidateId,
@@ -151,6 +161,8 @@ ${requiredSkills.map(s => `- ${s} (Highly endorsed by engineering peers)`).join(
     resume_text: resumeText,
     resume_profile: `${headlineRole} at ${currentCompany} with ${yearsExp}+ years of experience. Sourced via LinkedIn Talent Agent.`,
     overall_score: multiDim.final_score,
+    ats_score: atsAnalysis.overall_ats_score,
+    ats_analysis: atsAnalysis,
     stage: 'Screening',
     recruiter_decision: multiDim.final_score >= cutoffScore ? 'advance' : 'hold',
     decision_status: 'Pending recruiter review',

@@ -8,6 +8,12 @@ import {
   FollowUpEmailResult
 } from '../types';
 import { recruitmentAgent } from '../services/recruitmentAgent';
+import { useAuth } from '../contexts/AuthContext';
+import {
+  GmailAuthError,
+  isValidEmailAddress,
+  sendCandidateEmailViaGmail,
+} from '../services/gmailService';
 import { 
   Mail, 
   Sparkles, 
@@ -36,6 +42,7 @@ interface EmailDraftModalProps {
   brief: HiringBrief | null;
   initialType?: EmailDraftType;
   onQueueDraft: (draft: OutreachDraft, reasonCategory: string) => void;
+  onUpdateCandidateEmail?: (candidateId: string, email: string) => void;
 }
 
 export const EmailDraftModal: React.FC<EmailDraftModalProps> = ({
@@ -45,8 +52,11 @@ export const EmailDraftModal: React.FC<EmailDraftModalProps> = ({
   brief,
   initialType = 'progress',
   onQueueDraft,
+  onUpdateCandidateEmail,
 }) => {
   if (!isOpen || !candidate) return null;
+
+  const { user, gmailAccessToken, connectGmail, clearGmailAccessToken, isSigningIn } = useAuth();
 
   const [emailType, setEmailType] = useState<EmailDraftType>(initialType);
   const [reasonCategory, setReasonCategory] = useState<string>(
@@ -65,6 +75,7 @@ export const EmailDraftModal: React.FC<EmailDraftModalProps> = ({
   const [includeRecruiterNotes, setIncludeRecruiterNotes] = useState<boolean>(false);
 
   // Output draft state
+  const [recipientEmail, setRecipientEmail] = useState<string>(candidate.email || '');
   const [draftResult, setDraftResult] = useState<FollowUpEmailResult | null>(null);
   const [editableSubject, setEditableSubject] = useState<string>('');
   const [editableBody, setEditableBody] = useState<string>('');
@@ -73,15 +84,25 @@ export const EmailDraftModal: React.FC<EmailDraftModalProps> = ({
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [queuedFeedback, setQueuedFeedback] = useState<boolean>(false);
 
+  // Direct Gmail send & confirmation dialog state
+  const [showSendConfirm, setShowSendConfirm] = useState<boolean>(false);
+  const [isSendingGmail, setIsSendingGmail] = useState<boolean>(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sentSuccessMessage, setSentSuccessMessage] = useState<string | null>(null);
+
   // Reset or initialize when modal opens or candidate changes
   useEffect(() => {
     const isReject = candidate.decision_status?.includes('Not proceeding') || candidate.recruiter_decision === 'reject';
     const chosenType = initialType || (isReject ? 'rejection' : 'progress');
     setEmailType(chosenType);
     setReasonCategory(chosenType === 'progress' ? 'next_round_invitation' : 'skills_gap');
+    setRecipientEmail(candidate.email || '');
     setSpecificFeedback('');
     setQueuedFeedback(false);
-  }, [candidate.candidate_id, initialType]);
+    setShowSendConfirm(false);
+    setSendError(null);
+    setSentSuccessMessage(null);
+  }, [candidate.candidate_id, candidate.email, initialType]);
 
   // Core generator function
   const handleGenerate = (typeOverride?: EmailDraftType, categoryOverride?: string) => {
@@ -154,7 +175,7 @@ export const EmailDraftModal: React.FC<EmailDraftModalProps> = ({
   };
 
   const handleDownloadTxt = () => {
-    const text = `To: ${candidate.email}\nCandidate: ${candidate.name} (${candidate.candidate_id})\nType: ${emailType.toUpperCase()}\nSubject: ${editableSubject}\n\n${editableBody}\n\n--------------------\nRECRUITER PHONE SCRIPT:\n${draftResult?.call_script || 'N/A'}`;
+    const text = `To: ${recipientEmail || candidate.email}\nCandidate: ${candidate.name} (${candidate.candidate_id})\nType: ${emailType.toUpperCase()}\nSubject: ${editableSubject}\n\n${editableBody}\n\n--------------------\nRECRUITER PHONE SCRIPT:\n${draftResult?.call_script || 'N/A'}`;
     const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -165,18 +186,24 @@ export const EmailDraftModal: React.FC<EmailDraftModalProps> = ({
   };
 
   const handlePushToQueue = () => {
+    const cleanEmail = recipientEmail.trim();
+    if (cleanEmail && cleanEmail !== candidate.email) {
+      onUpdateCandidateEmail?.(candidate.candidate_id, cleanEmail);
+    }
+
     const newDraft: OutreachDraft = {
       id: `draft-${Date.now()}`,
       type: emailType,
       candidate_id: candidate.candidate_id,
       candidate_name: candidate.name,
-      candidate_email: candidate.email,
+      candidate_email: cleanEmail,
       candidate_phone: candidate.phone,
       subject: editableSubject,
       body: editableBody,
       call_script: draftResult?.call_script || '',
       availability: emailType === 'progress' ? 'Scheduled via calendar link' : 'N/A',
-      status: 'Draft — not sent or scheduled'
+      status: 'Draft — not sent or scheduled',
+      delivery_channel: 'queue',
     };
 
     onQueueDraft(newDraft, reasonCategory);
@@ -184,7 +211,90 @@ export const EmailDraftModal: React.FC<EmailDraftModalProps> = ({
     setTimeout(() => {
       setQueuedFeedback(false);
       onClose();
-    }, 1200);
+    }, 1100);
+  };
+
+  const handleOpenSendConfirm = () => {
+    setSendError(null);
+    if (!isValidEmailAddress(recipientEmail)) {
+      setSendError('Please enter a valid candidate email address in the "To" field before sending.');
+      return;
+    }
+    if (!editableSubject.trim() || !editableBody.trim()) {
+      setSendError('Subject and email body are required before sending.');
+      return;
+    }
+    setShowSendConfirm(true);
+  };
+
+  const handleConnectGmailAndConfirm = async () => {
+    setSendError(null);
+    try {
+      await connectGmail();
+    } catch (err: unknown) {
+      setSendError(err instanceof Error ? err.message : 'Could not connect Gmail account.');
+    }
+  };
+
+  const handleConfirmSendViaGmail = async () => {
+    setSendError(null);
+    setIsSendingGmail(true);
+    try {
+      let token = gmailAccessToken;
+      if (!token) {
+        token = await connectGmail();
+      }
+      if (!token) {
+        setIsSendingGmail(false);
+        return;
+      }
+
+      const cleanEmail = recipientEmail.trim();
+      const result = await sendCandidateEmailViaGmail({
+        to: cleanEmail,
+        subject: editableSubject,
+        body: editableBody,
+        accessToken: token,
+      });
+
+      if (cleanEmail !== candidate.email) {
+        onUpdateCandidateEmail?.(candidate.candidate_id, cleanEmail);
+      }
+
+      const sentDraft: OutreachDraft = {
+        id: `draft-${Date.now()}`,
+        type: emailType,
+        candidate_id: candidate.candidate_id,
+        candidate_name: candidate.name,
+        candidate_email: cleanEmail,
+        candidate_phone: candidate.phone,
+        subject: editableSubject,
+        body: editableBody,
+        call_script: draftResult?.call_script || '',
+        availability: emailType === 'progress' ? 'Scheduled via calendar link' : 'N/A',
+        status: 'Sent / Dispatched',
+        sent_at: new Date().toISOString(),
+        reminder_days: 3,
+        response_status: 'waiting',
+        delivery_channel: 'gmail',
+        gmail_message_id: result.id,
+      };
+
+      onQueueDraft(sentDraft, reasonCategory);
+      setShowSendConfirm(false);
+      setSentSuccessMessage(`Email sent directly to ${cleanEmail} via Gmail.`);
+      setTimeout(() => {
+        setSentSuccessMessage(null);
+        onClose();
+      }, 1500);
+    } catch (err: unknown) {
+      if (err instanceof GmailAuthError) {
+        clearGmailAccessToken();
+      }
+      setSendError(err instanceof Error ? err.message : 'Failed to send email via Gmail.');
+    } finally {
+      setIsSendingGmail(false);
+    }
   };
 
   const progressReasonOptions = [
@@ -235,7 +345,7 @@ export const EmailDraftModal: React.FC<EmailDraftModalProps> = ({
               <p className="text-xs text-slate-300 flex items-center gap-2 mt-0.5">
                 <span>Candidate: <strong className="text-white font-semibold">{candidate.name}</strong></span>
                 <span>•</span>
-                <span className="font-mono">{candidate.email}</span>
+                <span className="font-mono">{recipientEmail || 'No email listed — enter below'}</span>
                 <span>•</span>
                 <span>Score: <strong className="text-purple-300">{candidate.overall_score}%</strong></span>
               </p>
@@ -484,6 +594,44 @@ export const EmailDraftModal: React.FC<EmailDraftModalProps> = ({
 
           {/* Right Column: Generated Email Preview & Polish (7 cols) */}
           <div className="lg:col-span-7 flex flex-col space-y-4">
+
+            {/* Recipient Email (To) Field */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-2 shadow-2xs">
+              <div className="flex items-center justify-between gap-2">
+                <label
+                  htmlFor="candidate-recipient-email"
+                  className="text-xs font-bold text-slate-800 flex items-center gap-1.5"
+                >
+                  <Mail className="w-3.5 h-3.5 text-[#6743ee]" />
+                  <span>To (Candidate Email)</span>
+                </label>
+                {user?.email && (
+                  <span className="text-[10px] text-slate-500">
+                    From: <strong className="text-slate-700">{user.email}</strong>
+                  </span>
+                )}
+              </div>
+              <input
+                id="candidate-recipient-email"
+                type="email"
+                value={recipientEmail}
+                onChange={(e) => {
+                  setRecipientEmail(e.target.value);
+                  if (sendError) setSendError(null);
+                }}
+                placeholder="Enter candidate email address (e.g. candidate@domain.com)"
+                className={`w-full text-xs font-medium p-2.5 bg-slate-50 border rounded-lg text-slate-900 focus:outline-none focus:ring-1 ${
+                  recipientEmail && !isValidEmailAddress(recipientEmail)
+                    ? 'border-amber-400 focus:ring-amber-500'
+                    : 'border-slate-300 focus:ring-[#6743ee]'
+                }`}
+              />
+              {!recipientEmail.trim() && (
+                <p className="text-[11px] text-amber-700">
+                  No email address was detected on this resume—enter the candidate’s email above to send directly.
+                </p>
+              )}
+            </div>
             
             {/* Subject Line & Suggestions */}
             <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-2 shadow-2xs">
@@ -578,38 +726,65 @@ export const EmailDraftModal: React.FC<EmailDraftModalProps> = ({
           </div>
         </div>
 
+        {/* Status Banners Above Footer */}
+        {(sendError || sentSuccessMessage) && (
+          <div className="px-4 pt-3 bg-white border-t border-slate-200">
+            {sendError && !showSendConfirm && (
+              <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{sendError}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSendError(null)}
+                  className="font-semibold hover:underline cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+            {sentSuccessMessage && (
+              <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 font-semibold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{sentSuccessMessage}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Footer Actions */}
         <div className="p-4 bg-white border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={handleCopyToClipboard}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs ${
+              className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer ${
                 copied
                   ? 'bg-emerald-600 text-white'
                   : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
               }`}
             >
               {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              <span>{copied ? 'Copied to Clipboard!' : 'Copy Email'}</span>
+              <span>{copied ? 'Copied!' : 'Copy'}</span>
             </button>
 
             <button
               type="button"
               onClick={handleDownloadTxt}
-              className="px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5"
+              className="px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold transition-all shadow-2xs flex items-center gap-1.5 cursor-pointer"
               title="Download text file"
             >
               <Download className="w-4 h-4" />
-              <span>Download (.txt)</span>
+              <span>.txt</span>
             </button>
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition-colors"
+              className="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition-colors cursor-pointer"
             >
               Close
             </button>
@@ -617,27 +792,147 @@ export const EmailDraftModal: React.FC<EmailDraftModalProps> = ({
             <button
               type="button"
               onClick={handlePushToQueue}
-              disabled={queuedFeedback}
-              className={`flex-1 sm:flex-none px-5 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-xs ${
+              disabled={queuedFeedback || isSendingGmail}
+              className={`px-4 py-2 rounded-xl text-xs font-semibold border flex items-center justify-center gap-1.5 transition-all shadow-2xs cursor-pointer ${
                 queuedFeedback
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-[#6743ee] hover:bg-[#5637d2] text-white'
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                  : 'bg-white hover:bg-slate-50 border-slate-300 text-slate-700'
               }`}
             >
               {queuedFeedback ? (
                 <>
-                  <Check className="w-4 h-4" />
-                  <span>Added to Queue!</span>
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Saved Draft</span>
                 </>
               ) : (
                 <>
-                  <Send className="w-4 h-4" />
-                  <span>Save to Outreach Queue & Log Audit</span>
+                  <Layers className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Save Draft to Queue</span>
                 </>
               )}
             </button>
+
+            <button
+              type="button"
+              onClick={handleOpenSendConfirm}
+              disabled={isSendingGmail || Boolean(sentSuccessMessage)}
+              className="flex-1 sm:flex-none px-5 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-xs bg-[#6743ee] hover:bg-[#5637d2] text-white cursor-pointer disabled:opacity-60"
+            >
+              <Send className="w-4 h-4" />
+              <span>Send to Candidate via Gmail</span>
+            </button>
           </div>
         </div>
+
+        {/* Mandatory Explicit Confirmation Dialog Before Sending Gmail */}
+        {showSendConfirm && (
+          <div
+            className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
+            onClick={() => !isSendingGmail && setShowSendConfirm(false)}
+          >
+            <div
+              className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg p-5 space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-indigo-50 text-[#6743ee]">
+                    <Mail className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900">
+                      Confirm Sending Email to Candidate
+                    </h4>
+                    <p className="text-xs text-slate-500">
+                      This will immediately send an email from your Gmail account.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={isSendingGmail}
+                  onClick={() => setShowSendConfirm(false)}
+                  className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-500 font-medium">From:</span>
+                  <span className="font-semibold text-slate-800">
+                    {user?.email || 'Your Google / Gmail account'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-500 font-medium">To:</span>
+                  <span className="font-semibold text-slate-900">
+                    {candidate.name} &lt;{recipientEmail.trim()}&gt;
+                  </span>
+                </div>
+                <div className="pt-1 border-t border-slate-200">
+                  <span className="text-slate-500 font-medium block mb-0.5">Subject:</span>
+                  <span className="font-semibold text-slate-900">{editableSubject}</span>
+                </div>
+                <div className="pt-1 border-t border-slate-200">
+                  <span className="text-slate-500 font-medium block mb-1">Message Preview:</span>
+                  <div className="max-h-28 overflow-y-auto whitespace-pre-wrap text-[11px] text-slate-700 bg-white p-2.5 rounded-lg border border-slate-200">
+                    {editableBody}
+                  </div>
+                </div>
+              </div>
+
+              {!gmailAccessToken && (
+                <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-indigo-900">
+                    Connect your Gmail account to authorize sending this message.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleConnectGmailAndConfirm}
+                    disabled={isSigningIn}
+                    className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 rounded-lg font-medium flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 48 48" aria-hidden="true">
+                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+                      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+                      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+                    </svg>
+                    <span>{isSigningIn ? 'Connecting...' : 'Connect Gmail'}</span>
+                  </button>
+                </div>
+              )}
+
+              {sendError && (
+                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800">
+                  {sendError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={isSendingGmail}
+                  onClick={() => setShowSendConfirm(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isSendingGmail}
+                  onClick={handleConfirmSendViaGmail}
+                  className="px-5 py-2 text-xs font-bold text-white bg-[#6743ee] hover:bg-[#5637d2] rounded-xl flex items-center gap-2 cursor-pointer disabled:opacity-60"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{isSendingGmail ? 'Sending via Gmail...' : 'Confirm & Send Email'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>
